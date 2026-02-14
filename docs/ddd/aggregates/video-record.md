@@ -22,6 +22,9 @@ VideoRecord (Aggregate Root)
 ├── download_url: String
 ├── thumbnail_url: String?
 ├── tags: List<String>
+├── notes: List<Note>                   -- Internal annotations added by curators
+├── owners: List<UUID>                  -- Users responsible for this video's content
+├── moderators: List<UUID>              -- Users who can manage/curate this video
 ├── metadata_extra: JSONB?
 ├── status: VideoStatus [VO]
 ├── curated_by: UUID?
@@ -78,8 +81,10 @@ VideoRecord (Aggregate Root)
    - `PUBLISHING -> FAILED`: When a `PublishFailed` event is received.
    - `FAILED -> APPROVED`: When a curator re-approves for retry.
 3. **Publish Gate**: Only videos in `APPROVED` status may be published. Attempting to publish a `DISCOVERED` or `SKIPPED` video is rejected.
-4. **Search Vector**: Must be recomputed whenever `title`, `description`, `tags`, `participants`, or `transcript_text` changes.
+4. **Search Vector**: Must be recomputed whenever `title`, `description`, `tags`, `participants`, `transcript_text`, or `notes` changes.
 5. **Download URL Freshness**: The `download_url` may expire. Before publishing, the system must verify or refresh it via the source adapter.
+6. **Ownership**: A video must have at least one owner. Owners are initially set from the meeting organizer or uploader from the source platform. Owners and moderators can be edited by any user with ADMIN role or by an existing owner/moderator of the video.
+7. **Moderation**: Moderators can approve, skip, add notes, and edit metadata on videos they moderate. ADMIN users can moderate any video.
 
 ## Commands
 
@@ -94,6 +99,9 @@ VideoRecord (Aggregate Root)
 | `MarkPublished` | Record destination info and transition to `PUBLISHED` | Status is `PUBLISHING`, valid destination data |
 | `MarkFailed` | Record failure and transition to `FAILED` | Status is `PUBLISHING` |
 | `UpdateMetadata` | Update mutable fields (title, description, tags) | Record exists, user is ADMIN or PUBLISHER |
+| `AddNote` | Append an internal note to the video | Record exists, user is ADMIN, PUBLISHER, owner, or moderator |
+| `AssignOwners` | Set or update the owners list | User is ADMIN or an existing owner |
+| `AssignModerators` | Set or update the moderators list | User is ADMIN, or an existing owner/moderator |
 
 ## Queries
 
@@ -106,3 +114,5 @@ VideoRecord (Aggregate Root)
 | `GetRecentVideos(limit, offset)` | Dashboard view of latest indexed videos |
 | `GetVideosByPlatform(platform)` | Filter by source platform |
 | `GetApprovedVideos(limit, offset)` | Videos ready to be pushed to destinations |
+| `GetVideosByOwner(owner_id)` | All videos owned by a specific user |
+| `GetVideosByModerator(moderator_id)` | All videos moderated by a specific user |

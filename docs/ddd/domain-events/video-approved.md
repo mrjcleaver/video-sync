@@ -27,6 +27,9 @@ MetadataEdits {
   title:       String?              -- New title (if changed)
   description: String?              -- New description (if changed)
   tags:        List<String>?        -- New tags (if changed)
+  notes:       List<String>?        -- Notes to add during approval
+  owners:      List<UUID>?          -- Owners to assign (if changed)
+  moderators:  List<UUID>?          -- Moderators to assign (if changed)
 }
 ```
 
@@ -50,7 +53,10 @@ MetadataEdits {
   "metadata_edits": {
     "title": "Weekly Product Standup - Feb 14, 2026",
     "description": "Sprint 42 progress review and blocker discussion.",
-    "tags": ["standup", "product", "sprint-42"]
+    "tags": ["standup", "product", "sprint-42"],
+    "notes": ["Approved for external sharing - covers public roadmap items only"],
+    "owners": ["u-001"],
+    "moderators": ["u-001", "u-003"]
   }
 }
 ```

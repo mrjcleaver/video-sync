@@ -24,6 +24,9 @@ VideoRecord {
   download_url:      String
   thumbnail_url:     String (nullable)
   tags:              List<String>
+  notes:             List<Note>                    -- Internal annotations added by curators
+  owners:            List<UUID>                    -- Users responsible for this content
+  moderators:        List<UUID>                    -- Users who can manage/curate this video
   metadata_extra:    JSONB (nullable)              -- Source-specific overflow
   status:            VideoStatus                   -- DISCOVERED | APPROVED | SKIPPED | PUBLISHING | PUBLISHED | FAILED
   curated_by:        UUID (nullable)               -- User who approved/skipped
@@ -40,7 +43,8 @@ VideoRecord {
 - `source_id` + `source_platform` is unique (no duplicate indexing).
 - `status` transitions follow the curation lifecycle (ADR-009): `DISCOVERED -> APPROVED -> PUBLISHING -> PUBLISHED`, with `DISCOVERED -> SKIPPED` (reversible) and `PUBLISHING -> FAILED -> APPROVED` (retry).
 - Only videos in `APPROVED` status may be published.
-- `search_vector` is recomputed on any change to `title`, `description`, `tags`, `participants`, or `transcript_text`.
+- `search_vector` is recomputed on any change to `title`, `description`, `tags`, `participants`, `transcript_text`, or `notes`.
+- A video must have at least one owner.
 
 ### Value Objects
 
@@ -49,10 +53,18 @@ SourcePlatform: Enum(ZOOM, LOOM, FIREFLIES)
 
 VideoStatus: Enum(DISCOVERED, APPROVED, SKIPPED, PUBLISHING, PUBLISHED, FAILED)
 
+Note {
+  id:               UUID
+  author_id:        UUID                           -- User who wrote the note
+  text:             String                         -- Note content
+  created_at:       DateTime (UTC)
+}
+
 SearchQuery {
   text:             String                         -- Full-text search term
   source_filter:    SourcePlatform (nullable)
   status_filter:    VideoStatus (nullable)         -- Filter by curation status
+  owner_filter:     UUID (nullable)                -- Filter by owner
   date_from:        DateTime (nullable)
   date_to:          DateTime (nullable)
   participant:      String (nullable)
@@ -84,10 +96,12 @@ Consumes `VideoDiscovered` events and creates or updates `VideoRecord` entries:
 
 Manages the checklist workflow (ADR-009):
 
-1. **Approve**: Transitions a video from `DISCOVERED` / `SKIPPED` / `FAILED` to `APPROVED`. Optionally applies metadata edits (title, description, tags). Emits `VideoApproved`.
+1. **Approve**: Transitions a video from `DISCOVERED` / `SKIPPED` / `FAILED` to `APPROVED`. Optionally applies metadata edits (title, description, tags, notes, owners, moderators). Emits `VideoApproved`.
 2. **Skip**: Transitions a video from `DISCOVERED` to `SKIPPED`. Emits `VideoSkipped`.
 3. **Bulk Approve/Skip**: Applies the same action to multiple selected videos in one operation.
-4. Only users with ADMIN or PUBLISHER role may curate.
+4. **Add Note**: Appends an internal note to a video at any point in its lifecycle.
+5. **Assign Owners/Moderators**: Updates who is responsible for and who can manage a video.
+6. Only users with ADMIN or PUBLISHER role may curate. Owners and moderators may add notes and edit metadata on their assigned videos.
 
 ### SearchService
 

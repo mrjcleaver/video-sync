@@ -20,6 +20,9 @@ This directory contains the Domain-Driven Design artifacts for the **Unified Vid
 | **Approved** | A video that a curator has reviewed and marked as eligible for publishing. |
 | **Skipped** | A video that a curator has decided not to publish. Reversible. |
 | **Curator** | A user (ADMIN or PUBLISHER role) who reviews the checklist and approves/skips videos. |
+| **Note** | An internal annotation attached to a video by a curator, owner, or moderator. Not published to destinations. |
+| **Owner** | A user responsible for a video's content. Derived initially from the source platform (e.g., meeting organizer). Can manage the video and assign moderators. |
+| **Moderator** | A user granted permission to curate (approve/skip), annotate, and edit metadata on a specific video. |
 | **Transcript** | The text transcription of a video's audio content. |
 
 ## Bounded Contexts
