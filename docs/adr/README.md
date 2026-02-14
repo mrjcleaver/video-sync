@@ -14,6 +14,7 @@ This directory contains the Architecture Decision Records for the **Unified Vide
 | [ADR-006](ADR-006-search-engine-selection.md) | Search Engine for Full-Text Video Search | Accepted |
 | [ADR-007](ADR-007-oauth2-token-management.md) | OAuth 2.0 and API Token Management | Accepted |
 | [ADR-008](ADR-008-ddd-bounded-contexts.md) | Domain-Driven Design Bounded Contexts | Accepted |
+| [ADR-009](ADR-009-checklist-curation.md) | Checklist-Based Video Curation | Accepted |
 
 ## ADR Format
 

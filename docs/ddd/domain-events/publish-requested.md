@@ -27,7 +27,7 @@ PublishRequested {
 
 ## Validation Rules
 
-- `video_record_id` must reference an existing VideoRecord with status `INDEXED` or `FAILED`.
+- `video_record_id` must reference an existing VideoRecord with status `APPROVED` (see [ADR-009](../../adr/ADR-009-checklist-curation.md)).
 - `requested_by` must be a user with ADMIN or PUBLISHER role.
 - `destination_conn_id` must reference an active DestinationConnection.
 - `metadata_override.title` must be non-empty.
