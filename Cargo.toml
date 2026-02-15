@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Unified Video Indexing & Publishing Bridge - Catalog domain"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
