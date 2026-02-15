@@ -75,7 +75,7 @@ impl Note {
 }
 
 /// Identity of the user performing a command, used for authorization checks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Actor {
     pub user_id: Uuid,
     pub role: UserRole,
