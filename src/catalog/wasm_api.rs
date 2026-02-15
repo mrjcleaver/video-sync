@@ -166,6 +166,34 @@ impl WasmVideoRecord {
         serde_json::to_string(&self.inner.moderators)
             .map_err(|e| JsError::new(&e.to_string()))
     }
+
+    /// Get locations as JSON array.
+    pub fn locations(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.inner.locations)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Add a platform location. Returns JSON array of emitted events.
+    pub fn add_location(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: AddLocation =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .add_location(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Remove a platform location. Returns JSON array of emitted events.
+    pub fn remove_location(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: RemoveLocation =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .remove_location(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
 }
 
 impl WasmVideoRecord {

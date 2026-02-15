@@ -34,6 +34,8 @@ pub struct VideoRecord {
     pub published_at: Option<DateTime<Utc>>,
     pub destination_id: Option<String>,
     pub destination_url: Option<String>,
+    #[serde(default)]
+    pub locations: Vec<PlatformLocation>,
     pending_events: Vec<CatalogEvent>,
 }
 
@@ -59,6 +61,14 @@ impl VideoRecord {
             title: cmd.title.clone(),
         });
 
+        let origin_location = PlatformLocation {
+            platform: Platform::from(cmd.source_platform),
+            external_id: cmd.source_id.clone(),
+            external_url: Some(cmd.download_url.clone()),
+            role: LocationRole::Origin,
+            synced_at: now,
+        };
+
         let record = Self {
             id,
             source_id: cmd.source_id,
@@ -83,6 +93,7 @@ impl VideoRecord {
             published_at: None,
             destination_id: None,
             destination_url: None,
+            locations: vec![origin_location],
             pending_events: Vec::new(),
         };
 
@@ -216,18 +227,92 @@ impl VideoRecord {
         }
 
         let from = self.status;
+        let now = Utc::now();
         self.status = VideoStatus::Published;
-        self.published_at = Some(Utc::now());
-        self.destination_id = Some(cmd.destination_id);
-        self.destination_url = Some(cmd.destination_url);
+        self.published_at = Some(now);
+        self.destination_id = Some(cmd.destination_id.clone());
+        self.destination_url = Some(cmd.destination_url.clone());
+
+        let dest_platform = cmd.destination_platform.unwrap_or(Platform::YouTube);
+        let dest_location = PlatformLocation {
+            platform: dest_platform,
+            external_id: cmd.destination_id,
+            external_url: Some(cmd.destination_url),
+            role: LocationRole::Destination,
+            synced_at: now,
+        };
+        // Only add if not already present
+        if !self.locations.iter().any(|l| l.platform == dest_location.platform && l.external_id == dest_location.external_id) {
+            self.locations.push(dest_location);
+        }
 
         Ok(vec![CatalogEvent::StatusChanged(StatusChanged {
             event_id: Uuid::new_v4(),
-            timestamp: Utc::now(),
+            timestamp: now,
             video_record_id: self.id,
             from,
             to: VideoStatus::Published,
         })])
+    }
+
+    /// Add a platform location to this video.
+    pub fn add_location(&mut self, cmd: AddLocation) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        if self.locations.iter().any(|l| l.platform == cmd.platform && l.external_id == cmd.external_id) {
+            return Err(CatalogError::DuplicateLocation {
+                platform: cmd.platform,
+                external_id: cmd.external_id,
+            });
+        }
+
+        let now = Utc::now();
+        self.locations.push(PlatformLocation {
+            platform: cmd.platform,
+            external_id: cmd.external_id.clone(),
+            external_url: cmd.external_url.clone(),
+            role: cmd.role,
+            synced_at: now,
+        });
+
+        Ok(vec![CatalogEvent::LocationAdded(LocationAdded {
+            event_id: Uuid::new_v4(),
+            timestamp: now,
+            video_record_id: self.id,
+            added_by: cmd.actor.user_id,
+            platform: cmd.platform,
+            external_id: cmd.external_id,
+            external_url: cmd.external_url,
+            role: cmd.role,
+        })])
+    }
+
+    /// Remove a platform location from this video.
+    pub fn remove_location(&mut self, cmd: RemoveLocation) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        let pos = self.locations.iter().position(|l| l.platform == cmd.platform && l.external_id == cmd.external_id);
+        match pos {
+            Some(idx) => {
+                self.locations.remove(idx);
+                Ok(vec![CatalogEvent::LocationRemoved(LocationRemoved {
+                    event_id: Uuid::new_v4(),
+                    timestamp: Utc::now(),
+                    video_record_id: self.id,
+                    removed_by: cmd.actor.user_id,
+                    platform: cmd.platform,
+                    external_id: cmd.external_id,
+                })])
+            }
+            None => Err(CatalogError::LocationNotFound {
+                platform: cmd.platform,
+                external_id: cmd.external_id,
+            }),
+        }
     }
 
     /// Mark this video as failed to publish.

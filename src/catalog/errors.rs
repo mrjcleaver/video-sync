@@ -1,4 +1,4 @@
-use crate::catalog::value_objects::VideoStatus;
+use crate::catalog::value_objects::{Platform, VideoStatus};
 use thiserror::Error;
 
 /// Domain errors for the Catalog bounded context.
@@ -20,5 +20,17 @@ pub enum CatalogError {
     DuplicateVideo {
         source_id: String,
         platform: super::value_objects::SourcePlatform,
+    },
+
+    #[error("Duplicate location: platform={platform:?} external_id={external_id}")]
+    DuplicateLocation {
+        platform: Platform,
+        external_id: String,
+    },
+
+    #[error("Location not found: platform={platform:?} external_id={external_id}")]
+    LocationNotFound {
+        platform: Platform,
+        external_id: String,
     },
 }

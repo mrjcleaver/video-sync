@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { VideoRecordJSON } from "../lib/wasm";
+import type { VideoRecordJSON, PlatformLocationJSON } from "../lib/wasm";
 import { videoStore } from "../lib/store";
+
+const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura"] as const;
+const ROLES = ["Origin", "Intermediate", "Destination"] as const;
 
 function formatDuration(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -34,6 +37,11 @@ interface Props {
 export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
+  const [showLocationForm, setShowLocationForm] = useState(false);
+  const [locPlatform, setLocPlatform] = useState<string>("Loom");
+  const [locExternalId, setLocExternalId] = useState("");
+  const [locExternalUrl, setLocExternalUrl] = useState("");
+  const [locRole, setLocRole] = useState<string>("Intermediate");
 
   function approve() {
     videoStore.mutate(video.id, (r) =>
@@ -82,6 +90,40 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       r.mark_failed(JSON.stringify({ error_message: "Manual failure from dashboard" }))
     );
     onEvent(`StatusChanged: "${video.title}" -> Failed`);
+    onMutated();
+  }
+
+  function addLocation() {
+    if (!locExternalId.trim()) return;
+    videoStore.mutate(video.id, (r) =>
+      r.add_location(
+        JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          platform: locPlatform,
+          external_id: locExternalId.trim(),
+          external_url: locExternalUrl.trim() || null,
+          role: locRole,
+        })
+      )
+    );
+    onEvent(`LocationAdded: "${video.title}" — ${locPlatform}/${locExternalId}`);
+    setLocExternalId("");
+    setLocExternalUrl("");
+    setShowLocationForm(false);
+    onMutated();
+  }
+
+  function removeLocation(loc: PlatformLocationJSON) {
+    videoStore.mutate(video.id, (r) =>
+      r.remove_location(
+        JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          platform: loc.platform,
+          external_id: loc.external_id,
+        })
+      )
+    );
+    onEvent(`LocationRemoved: "${video.title}" — ${loc.platform}/${loc.external_id}`);
     onMutated();
   }
 
@@ -138,9 +180,69 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
-      {video.destination_url && (
-        <div style={{ fontSize: "0.8rem", color: "var(--purple)", marginBottom: 8 }}>
-          Published to: {video.destination_url}
+      {/* Locations */}
+      {video.locations && video.locations.length > 0 && (
+        <div className="locations-section">
+          {video.locations.map((loc) => (
+            <div key={`${loc.platform}-${loc.external_id}`} className="location-row">
+              <span className="location-platform">{loc.platform}</span>
+              {loc.external_url ? (
+                <a
+                  className="location-link"
+                  href={loc.external_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {loc.external_id}
+                </a>
+              ) : (
+                <span style={{ fontSize: "0.8rem" }}>{loc.external_id}</span>
+              )}
+              <span className={`location-role role-${loc.role}`}>{loc.role}</span>
+              <button
+                className="location-remove"
+                onClick={() => removeLocation(loc)}
+                title="Remove location"
+              >
+                x
+              </button>
+            </div>
+          ))}
+          {!showLocationForm && (
+            <button
+              className="btn btn-sm"
+              style={{ marginTop: 6 }}
+              onClick={() => setShowLocationForm(true)}
+            >
+              + Location
+            </button>
+          )}
+          {showLocationForm && (
+            <div className="location-add-form">
+              <select value={locPlatform} onChange={(e) => setLocPlatform(e.target.value)}>
+                {PLATFORMS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <input
+                placeholder="External ID"
+                value={locExternalId}
+                onChange={(e) => setLocExternalId(e.target.value)}
+              />
+              <input
+                placeholder="URL (optional)"
+                value={locExternalUrl}
+                onChange={(e) => setLocExternalUrl(e.target.value)}
+              />
+              <select value={locRole} onChange={(e) => setLocRole(e.target.value)}>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              <button className="btn btn-sm btn-primary" onClick={addLocation}>Add</button>
+              <button className="btn btn-sm" onClick={() => setShowLocationForm(false)}>Cancel</button>
+            </div>
+          )}
         </div>
       )}
 

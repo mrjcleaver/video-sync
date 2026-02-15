@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::events::MetadataEdits;
-use crate::catalog::value_objects::{Actor, SourcePlatform};
+use crate::catalog::value_objects::{Actor, LocationRole, Platform, SourcePlatform};
 
 /// Commands accepted by the VideoRecord aggregate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +17,8 @@ pub enum VideoCommand {
     AddNote(AddNote),
     AssignOwners(AssignOwners),
     AssignModerators(AssignModerators),
+    AddLocation(AddLocation),
+    RemoveLocation(RemoveLocation),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +58,8 @@ pub struct RequestPublish {
 pub struct MarkPublished {
     pub destination_id: String,
     pub destination_url: String,
+    #[serde(default)]
+    pub destination_platform: Option<Platform>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,4 +89,20 @@ pub struct AssignOwners {
 pub struct AssignModerators {
     pub actor: Actor,
     pub moderators: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddLocation {
+    pub actor: Actor,
+    pub platform: Platform,
+    pub external_id: String,
+    pub external_url: Option<String>,
+    pub role: LocationRole,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveLocation {
+    pub actor: Actor,
+    pub platform: Platform,
+    pub external_id: String,
 }

@@ -7,12 +7,14 @@
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/rust:1": {},
     "ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
     "ghcr.io/EliiseS/devcontainer-features/bash-profile:1": {
         "command": "alias cfa='npx claude-flow@alpha' && alias dsp='claude --dangerously-skip-permissions'"
     }
   },
-  "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && cargo install wasm-pack && cd web && npm install",
+  "forwardPorts": [3000],
   "postStartCommand": "bash -lc 'if [ -n \"$ANTHROPIC_API_KEY\" ]; then echo \"Claude key present\"; else echo \"⚠ Set ANTHROPIC_API_KEY or run claude login\"; fi'",
   "customizations": {
     "vscode": {

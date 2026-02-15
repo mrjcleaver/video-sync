@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::catalog::value_objects::{SourcePlatform, VideoStatus};
+use crate::catalog::value_objects::{LocationRole, Platform, SourcePlatform, VideoStatus};
 
 /// Domain events emitted by the Catalog bounded context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,6 +16,8 @@ pub enum CatalogEvent {
     ModeratorsAssigned(ModeratorsAssigned),
     MetadataUpdated(MetadataUpdated),
     StatusChanged(StatusChanged),
+    LocationAdded(LocationAdded),
+    LocationRemoved(LocationRemoved),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,6 +92,28 @@ pub struct StatusChanged {
     pub video_record_id: Uuid,
     pub from: VideoStatus,
     pub to: VideoStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocationAdded {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub added_by: Uuid,
+    pub platform: Platform,
+    pub external_id: String,
+    pub external_url: Option<String>,
+    pub role: LocationRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocationRemoved {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub removed_by: Uuid,
+    pub platform: Platform,
+    pub external_id: String,
 }
 
 /// Mutable metadata fields that can be edited during approval or update.

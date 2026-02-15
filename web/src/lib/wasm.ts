@@ -35,6 +35,7 @@ export interface VideoRecordJSON {
   published_at: string | null;
   destination_id: string | null;
   destination_url: string | null;
+  locations: PlatformLocationJSON[];
 }
 
 export interface NoteJSON {
@@ -42,6 +43,28 @@ export interface NoteJSON {
   author_id: string;
   text: string;
   created_at: string;
+}
+
+export interface PlatformLocationJSON {
+  platform: string;
+  external_id: string;
+  external_url: string | null;
+  role: string;
+  synced_at: string;
+}
+
+export interface AddLocationCmd {
+  actor: { user_id: string; role: string };
+  platform: string;
+  external_id: string;
+  external_url?: string;
+  role: string;
+}
+
+export interface RemoveLocationCmd {
+  actor: { user_id: string; role: string };
+  platform: string;
+  external_id: string;
 }
 
 export interface IndexVideoCmd {

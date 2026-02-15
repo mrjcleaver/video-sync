@@ -1,6 +1,7 @@
 use super::*;
 use crate::catalog::errors::CatalogError;
 use crate::catalog::events::{CatalogEvent, MetadataEdits};
+use crate::catalog::value_objects::{LocationRole, Platform};
 use uuid::Uuid;
 
 fn make_index_cmd() -> IndexVideo {
@@ -132,6 +133,7 @@ fn test_approve_rejects_already_published() {
     record.mark_published(MarkPublished {
         destination_id: "yt-1".into(),
         destination_url: "https://youtube.com/1".into(),
+        destination_platform: None,
     }).unwrap();
 
     let result = record.approve(ApproveVideo {
@@ -199,6 +201,7 @@ fn test_full_publish_lifecycle() {
         .mark_published(MarkPublished {
             destination_id: "yt-abc".to_string(),
             destination_url: "https://youtube.com/watch?v=abc".to_string(),
+            destination_platform: None,
         })
         .unwrap();
 
@@ -536,4 +539,130 @@ fn test_json_roundtrip() {
     assert_eq!(restored.notes.len(), 1);
     assert_eq!(restored.owners.len(), 1);
     assert_eq!(restored.status, record.status);
+}
+
+// ── Locations ────────────────────────────────────────────
+
+#[test]
+fn test_index_creates_origin_location() {
+    let (record, _) = VideoRecord::index(make_index_cmd());
+    assert_eq!(record.locations.len(), 1);
+    assert_eq!(record.locations[0].role, LocationRole::Origin);
+    assert_eq!(record.locations[0].platform, Platform::Zoom);
+    assert_eq!(record.locations[0].external_id, "zoom-123");
+    assert_eq!(record.locations[0].external_url, Some("https://zoom.us/rec/123".to_string()));
+}
+
+#[test]
+fn test_add_location_intermediate() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let actor = admin_actor();
+
+    let events = record
+        .add_location(AddLocation {
+            actor,
+            platform: Platform::Loom,
+            external_id: "loom-456".to_string(),
+            external_url: Some("https://loom.com/share/456".to_string()),
+            role: LocationRole::Intermediate,
+        })
+        .unwrap();
+
+    assert_eq!(record.locations.len(), 2);
+    assert_eq!(record.locations[1].platform, Platform::Loom);
+    assert_eq!(record.locations[1].role, LocationRole::Intermediate);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::LocationAdded(_)));
+}
+
+#[test]
+fn test_add_location_duplicate_fails() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let actor = admin_actor();
+
+    // Origin already has Zoom/zoom-123, try adding same
+    let result = record.add_location(AddLocation {
+        actor,
+        platform: Platform::Zoom,
+        external_id: "zoom-123".to_string(),
+        external_url: None,
+        role: LocationRole::Origin,
+    });
+
+    assert!(matches!(result, Err(CatalogError::DuplicateLocation { .. })));
+}
+
+#[test]
+fn test_remove_location() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let actor = admin_actor();
+
+    // Add then remove
+    record
+        .add_location(AddLocation {
+            actor,
+            platform: Platform::Loom,
+            external_id: "loom-789".to_string(),
+            external_url: None,
+            role: LocationRole::Intermediate,
+        })
+        .unwrap();
+    assert_eq!(record.locations.len(), 2);
+
+    let events = record
+        .remove_location(RemoveLocation {
+            actor,
+            platform: Platform::Loom,
+            external_id: "loom-789".to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(record.locations.len(), 1);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::LocationRemoved(_)));
+}
+
+#[test]
+fn test_remove_location_not_found() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let result = record.remove_location(RemoveLocation {
+        actor: admin_actor(),
+        platform: Platform::Kaltura,
+        external_id: "nonexistent".to_string(),
+    });
+    assert!(matches!(result, Err(CatalogError::LocationNotFound { .. })));
+}
+
+#[test]
+fn test_add_location_unauthorized_viewer() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let result = record.add_location(AddLocation {
+        actor: viewer_actor(),
+        platform: Platform::Loom,
+        external_id: "loom-1".to_string(),
+        external_url: None,
+        role: LocationRole::Intermediate,
+    });
+    assert_eq!(result, Err(CatalogError::Unauthorized));
+}
+
+#[test]
+fn test_mark_published_adds_destination_location() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record
+        .mark_published(MarkPublished {
+            destination_id: "yt-abc".to_string(),
+            destination_url: "https://youtube.com/watch?v=abc".to_string(),
+            destination_platform: None,
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::Published);
+    // Should have Origin + Destination
+    assert_eq!(record.locations.len(), 2);
+    let dest = record.locations.iter().find(|l| l.role == LocationRole::Destination).unwrap();
+    assert_eq!(dest.platform, Platform::YouTube);
+    assert_eq!(dest.external_id, "yt-abc");
 }

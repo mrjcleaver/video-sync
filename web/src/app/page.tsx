@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
 import IndexForm from "../components/IndexForm";
+import ConnectionsPanel from "../components/ConnectionsPanel";
 import VideoCard from "../components/VideoCard";
 import EventLog from "../components/EventLog";
 
@@ -66,6 +67,8 @@ export default function Dashboard() {
       </div>
 
       <IndexForm onIndexed={refresh} onEvent={addEvent} />
+
+      <ConnectionsPanel />
 
       <div className="filter-tabs">
         {ALL_STATUSES.map((s) => (

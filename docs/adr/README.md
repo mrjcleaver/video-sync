@@ -15,6 +15,7 @@ This directory contains the Architecture Decision Records for the **Unified Vide
 | [ADR-007](ADR-007-oauth2-token-management.md) | OAuth 2.0 and API Token Management | Accepted |
 | [ADR-008](ADR-008-ddd-bounded-contexts.md) | Domain-Driven Design Bounded Contexts | Accepted |
 | [ADR-009](ADR-009-checklist-curation.md) | Checklist-Based Video Curation | Accepted |
+| [ADR-010](ADR-010-authentication-configuration.md) | Authentication Configuration for External Services | Proposed |
 
 ## ADR Format
 

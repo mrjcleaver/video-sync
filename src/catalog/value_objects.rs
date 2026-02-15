@@ -12,6 +12,46 @@ pub enum SourcePlatform {
     Fireflies,
 }
 
+/// Any platform a video can exist on (source or destination).
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Platform {
+    Zoom,
+    Loom,
+    Fireflies,
+    YouTube,
+    Kaltura,
+}
+
+impl From<SourcePlatform> for Platform {
+    fn from(sp: SourcePlatform) -> Self {
+        match sp {
+            SourcePlatform::Zoom => Platform::Zoom,
+            SourcePlatform::Loom => Platform::Loom,
+            SourcePlatform::Fireflies => Platform::Fireflies,
+        }
+    }
+}
+
+/// Role of a platform location in the video lifecycle.
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LocationRole {
+    Origin,
+    Intermediate,
+    Destination,
+}
+
+/// A platform where this video exists, with its external identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlatformLocation {
+    pub platform: Platform,
+    pub external_id: String,
+    pub external_url: Option<String>,
+    pub role: LocationRole,
+    pub synced_at: DateTime<Utc>,
+}
+
 /// Lifecycle status of a video within the curation pipeline.
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

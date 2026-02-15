@@ -70,6 +70,7 @@ fn main() {
         .mark_published(MarkPublished {
             destination_id: "yt-xyz789".into(),
             destination_url: "https://youtube.com/watch?v=xyz789".into(),
+            destination_platform: None,
         })
         .unwrap();
     println!("5. Published!");
@@ -99,6 +100,8 @@ fn format_events(events: &[video_sync::catalog::events::CatalogEvent]) -> String
             }
             video_sync::catalog::events::CatalogEvent::MetadataUpdated(_) => "MetadataUpdated",
             video_sync::catalog::events::CatalogEvent::StatusChanged(_) => "StatusChanged",
+            video_sync::catalog::events::CatalogEvent::LocationAdded(_) => "LocationAdded",
+            video_sync::catalog::events::CatalogEvent::LocationRemoved(_) => "LocationRemoved",
         })
         .collect::<Vec<_>>()
         .join(", ")
