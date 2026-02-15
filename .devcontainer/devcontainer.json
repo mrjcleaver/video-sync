@@ -1,0 +1,30 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "runArgs": [
+    "--privileged"
+  ],
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
+    "ghcr.io/EliiseS/devcontainer-features/bash-profile:1": {
+        "command": "alias cfa='npx claude-flow@alpha'" 
+    }
+  },
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+  "postStartCommand": "bash -lc 'if [ -n \"$ANTHROPIC_API_KEY\" ]; then echo \"Claude key present\"; else echo \"⚠ Set ANTHROPIC_API_KEY or run claude login\"; fi'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "rooveterinaryinc.roo-cline",
+        "vsls-contrib.gistfs",
+        "github.copilot",
+        "github.copilot-chat",
+        "bierner.markdown-mermaid"
+      ]
+    }
+  },
+  "shutdownAction": "none"
+}
