@@ -35,6 +35,8 @@ pub struct VideoRecord {
     pub destination_id: Option<String>,
     pub destination_url: Option<String>,
     #[serde(default)]
+    pub recorded_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub locations: Vec<PlatformLocation>,
     pending_events: Vec<CatalogEvent>,
 }
@@ -61,12 +63,18 @@ impl VideoRecord {
             title: cmd.title.clone(),
         });
 
+        let recorded_at = cmd.recorded_at.as_ref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
+        });
+
         let origin_location = PlatformLocation {
             platform: Platform::from(cmd.source_platform),
             external_id: cmd.source_id.clone(),
             external_url: Some(cmd.download_url.clone()),
             role: LocationRole::Origin,
+            ordinal: 0,
             synced_at: now,
+            status: None,
         };
 
         let record = Self {
@@ -90,6 +98,7 @@ impl VideoRecord {
             curated_by: None,
             curated_at: None,
             indexed_at: now,
+            recorded_at,
             published_at: None,
             destination_id: None,
             destination_url: None,
@@ -127,6 +136,29 @@ impl VideoRecord {
     }
 
     // ── Commands ─────────────────────────────────────────────
+
+    /// Mark this video as in-scope for batch ingestion.
+    pub fn mark_in_scope(&mut self, cmd: MarkInScope) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !cmd.actor.is_admin_or_publisher() {
+            return Err(CatalogError::Unauthorized);
+        }
+        if !self.status.can_scope() {
+            return Err(CatalogError::InvalidStatusTransition {
+                from: self.status,
+                to: VideoStatus::InScope,
+            });
+        }
+
+        self.status = VideoStatus::InScope;
+
+        Ok(vec![CatalogEvent::VideoScoped(VideoScoped {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            scoped_by: cmd.actor.user_id,
+            rule_id: cmd.rule_id,
+        })])
+    }
 
     /// Approve this video for publishing.
     /// Optionally applies metadata edits (title, description, tags, notes, owners, moderators).
@@ -239,7 +271,9 @@ impl VideoRecord {
             external_id: cmd.destination_id,
             external_url: Some(cmd.destination_url),
             role: LocationRole::Destination,
+            ordinal: 0,
             synced_at: now,
+            status: None,
         };
         // Only add if not already present
         if !self.locations.iter().any(|l| l.platform == dest_location.platform && l.external_id == dest_location.external_id) {
@@ -274,7 +308,9 @@ impl VideoRecord {
             external_id: cmd.external_id.clone(),
             external_url: cmd.external_url.clone(),
             role: cmd.role,
+            ordinal: cmd.ordinal.unwrap_or(0),
             synced_at: now,
+            status: None,
         });
 
         Ok(vec![CatalogEvent::LocationAdded(LocationAdded {
@@ -315,9 +351,95 @@ impl VideoRecord {
         }
     }
 
-    /// Mark this video as failed to publish.
+    /// Update the status of a specific platform location.
+    pub fn update_location_status(
+        &mut self,
+        cmd: UpdateLocationStatus,
+    ) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        let loc = self
+            .locations
+            .iter_mut()
+            .find(|l| l.platform == cmd.platform && l.external_id == cmd.external_id);
+
+        match loc {
+            Some(location) => {
+                let old_status = location.status.clone();
+                location.status = Some(cmd.status.clone());
+                Ok(vec![CatalogEvent::LocationStatusUpdated(
+                    LocationStatusUpdated {
+                        event_id: Uuid::new_v4(),
+                        timestamp: Utc::now(),
+                        video_record_id: self.id,
+                        updated_by: cmd.actor.user_id,
+                        platform: cmd.platform,
+                        external_id: cmd.external_id,
+                        old_status,
+                        new_status: cmd.status,
+                    },
+                )])
+            }
+            None => Err(CatalogError::LocationNotFound {
+                platform: cmd.platform,
+                external_id: cmd.external_id,
+            }),
+        }
+    }
+
+    /// Abandon this video — terminal state, no further processing.
+    pub fn abandon(&mut self, cmd: AbandonVideo) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !cmd.actor.is_admin_or_publisher() {
+            return Err(CatalogError::Unauthorized);
+        }
+        if !self.status.can_abandon() {
+            return Err(CatalogError::InvalidStatusTransition {
+                from: self.status,
+                to: VideoStatus::Abandoned,
+            });
+        }
+
+        let previous_status = self.status;
+        self.status = VideoStatus::Abandoned;
+
+        Ok(vec![CatalogEvent::VideoAbandoned(VideoAbandoned {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            abandoned_by: cmd.actor.user_id,
+            previous_status,
+            reason: cmd.reason,
+        })])
+    }
+
+    /// Mark this video for retry after failure.
+    pub fn mark_to_retry(&mut self, cmd: MarkToRetry) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !cmd.actor.is_admin_or_publisher() {
+            return Err(CatalogError::Unauthorized);
+        }
+        if !self.status.can_mark_to_retry() {
+            return Err(CatalogError::InvalidStatusTransition {
+                from: self.status,
+                to: VideoStatus::ToRetry,
+            });
+        }
+
+        self.status = VideoStatus::ToRetry;
+
+        Ok(vec![CatalogEvent::VideoMarkedToRetry(VideoMarkedToRetry {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            marked_by: cmd.actor.user_id,
+            reason: cmd.reason,
+        })])
+    }
+
+    /// Mark this video as failed to publish (or post-publish failure).
     pub fn mark_failed(&mut self, _cmd: MarkFailed) -> Result<Vec<CatalogEvent>, CatalogError> {
-        if self.status != VideoStatus::Publishing {
+        if !matches!(self.status, VideoStatus::Publishing | VideoStatus::Published) {
             return Err(CatalogError::InvalidStatusTransition {
                 from: self.status,
                 to: VideoStatus::Failed,
@@ -454,6 +576,11 @@ impl VideoRecord {
         }
         if let Some(ref moderators) = edits.moderators {
             self.moderators = moderators.clone();
+        }
+        if let Some(ref recorded_at_str) = edits.recorded_at {
+            if let Ok(dt) = DateTime::parse_from_rfc3339(recorded_at_str) {
+                self.recorded_at = Some(dt.with_timezone(&Utc));
+            }
         }
         Ok(())
     }

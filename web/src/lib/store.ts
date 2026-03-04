@@ -29,18 +29,34 @@ class VideoStore {
       if (!raw) return;
       const snapshots: string[] = JSON.parse(raw);
       for (const json of snapshots) {
-        const record = WasmVideoRecord.fromJson(json);
-        this.records.set(record.id(), record);
+        try {
+          const record = WasmVideoRecord.fromJson(json);
+          // Verify the record can serialize without crashing
+          record.to_json();
+          this.records.set(record.id(), record);
+        } catch {
+          console.warn("Skipping corrupt record during hydrate");
+        }
+      }
+      // Re-persist to drop any corrupt records
+      if (this.records.size < snapshots.length) {
+        this.persist();
       }
     } catch {
-      // ignore corrupt storage
+      // Storage completely corrupt — clear it
+      localStorage.removeItem(STORAGE_KEY);
     }
   }
 
   private persist() {
     const snapshots: string[] = [];
-    for (const record of this.records.values()) {
-      snapshots.push(record.to_json());
+    for (const [id, record] of this.records.entries()) {
+      try {
+        snapshots.push(record.to_json());
+      } catch {
+        console.warn(`Dropping record ${id} — serialization failed`);
+        this.records.delete(id);
+      }
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
   }
@@ -55,20 +71,40 @@ class VideoStore {
   }
 
   getAll(): VideoRecordJSON[] {
-    return Array.from(this.records.values()).map((r) =>
-      JSON.parse(r.to_json())
-    );
+    const result: VideoRecordJSON[] = [];
+    for (const [id, r] of this.records.entries()) {
+      try {
+        result.push(JSON.parse(r.to_json()));
+      } catch {
+        console.warn(`Dropping unserializable record ${id}`);
+        this.records.delete(id);
+      }
+    }
+    return result;
   }
 
   size(): number {
     return this.records.size;
   }
 
+  remove(id: string) {
+    this.records.delete(id);
+    this.notify();
+  }
+
   /** Mutate a record and re-notify. Returns the events JSON string. */
   mutate(id: string, fn: (r: WasmVideoRecord) => string): string {
     const record = this.records.get(id);
     if (!record) throw new Error(`Record ${id} not found`);
-    const events = fn(record);
+    let events: string;
+    try {
+      events = fn(record);
+    } catch (err) {
+      // Defer notify to ensure WASM RefCell borrow is fully released
+      // before any subsequent to_json() calls in persist()
+      queueMicrotask(() => this.notify());
+      throw err;
+    }
     this.notify();
     return events;
   }
@@ -78,6 +114,11 @@ export const videoStore = new VideoStore();
 
 /** Boot: init WASM + hydrate store */
 export async function bootStore(): Promise<void> {
+  // If URL has ?reset, clear corrupt records
+  if (typeof window !== "undefined" && window.location.search.includes("reset")) {
+    localStorage.removeItem(STORAGE_KEY);
+    window.history.replaceState({}, "", window.location.pathname);
+  }
   await ensureWasm();
   videoStore.hydrate();
 }

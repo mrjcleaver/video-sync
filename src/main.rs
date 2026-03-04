@@ -22,6 +22,7 @@ fn main() {
         tags: vec!["standup".into(), "engineering".into()],
         metadata_extra: None,
         initial_owner: Some(admin.user_id),
+        recorded_at: None,
     };
 
     let (mut record, events) = video_sync::VideoRecord::index(cmd);
@@ -93,6 +94,7 @@ fn format_events(events: &[video_sync::catalog::events::CatalogEvent]) -> String
             video_sync::catalog::events::CatalogEvent::VideoIndexed(_) => "VideoIndexed",
             video_sync::catalog::events::CatalogEvent::VideoApproved(_) => "VideoApproved",
             video_sync::catalog::events::CatalogEvent::VideoSkipped(_) => "VideoSkipped",
+            video_sync::catalog::events::CatalogEvent::VideoScoped(_) => "VideoScoped",
             video_sync::catalog::events::CatalogEvent::NoteAdded(_) => "NoteAdded",
             video_sync::catalog::events::CatalogEvent::OwnersAssigned(_) => "OwnersAssigned",
             video_sync::catalog::events::CatalogEvent::ModeratorsAssigned(_) => {
@@ -102,6 +104,13 @@ fn format_events(events: &[video_sync::catalog::events::CatalogEvent]) -> String
             video_sync::catalog::events::CatalogEvent::StatusChanged(_) => "StatusChanged",
             video_sync::catalog::events::CatalogEvent::LocationAdded(_) => "LocationAdded",
             video_sync::catalog::events::CatalogEvent::LocationRemoved(_) => "LocationRemoved",
+            video_sync::catalog::events::CatalogEvent::LocationStatusUpdated(_) => {
+                "LocationStatusUpdated"
+            }
+            video_sync::catalog::events::CatalogEvent::VideoAbandoned(_) => "VideoAbandoned",
+            video_sync::catalog::events::CatalogEvent::VideoMarkedToRetry(_) => {
+                "VideoMarkedToRetry"
+            }
         })
         .collect::<Vec<_>>()
         .join(", ")

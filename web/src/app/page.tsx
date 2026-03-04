@@ -3,19 +3,26 @@
 import { useEffect, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
+import { loadExclusions } from "../lib/rules";
+import { useRuleRunner } from "../lib/useRuleRunner";
 import IndexForm from "../components/IndexForm";
+import ZoomImport from "../components/ZoomImport";
 import ConnectionsPanel from "../components/ConnectionsPanel";
+import RulesPanel from "../components/RulesPanel";
 import VideoCard from "../components/VideoCard";
 import EventLog from "../components/EventLog";
 
 const ALL_STATUSES = [
   "All",
   "Discovered",
+  "InScope",
   "Approved",
   "Publishing",
   "Published",
   "Skipped",
   "Failed",
+  "ToRetry",
+  "Abandoned",
 ] as const;
 
 export default function Dashboard() {
@@ -39,6 +46,26 @@ export default function Dashboard() {
     setEvents((prev) => [...prev, ev]);
   }, []);
 
+  const { isRunning: isRunnerRunning, lastRun, matchCount, runNow } = useRuleRunner({
+    onEvent: addEvent,
+    onMutated: refresh,
+  });
+
+  function bulkApprove() {
+    const inScope = videos.filter((v) => v.status === "InScope");
+    for (const v of inScope) {
+      videoStore.mutate(v.id, (r) =>
+        r.approve(
+          JSON.stringify({
+            actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
+          })
+        )
+      );
+    }
+    addEvent(`Bulk approved ${inScope.length} InScope videos`);
+    refresh();
+  }
+
   if (!ready) {
     return <div className="loading">Loading WASM module...</div>;
   }
@@ -50,6 +77,7 @@ export default function Dashboard() {
   for (const v of videos) {
     counts[v.status] = (counts[v.status] || 0) + 1;
   }
+  const exclusionCount = loadExclusions().length;
 
   return (
     <div className="container">
@@ -68,7 +96,29 @@ export default function Dashboard() {
 
       <IndexForm onIndexed={refresh} onEvent={addEvent} />
 
+      <ZoomImport onImported={refresh} onEvent={addEvent} />
+
       <ConnectionsPanel />
+
+      <RulesPanel
+        isRunnerRunning={isRunnerRunning}
+        lastRun={lastRun}
+        matchCount={matchCount}
+        onRunNow={runNow}
+      />
+
+      {/* Burndown stats */}
+      <div className="burndown-stats">
+        <span>Total: {videos.length}</span>
+        {exclusionCount > 0 && <span>Excluded: {exclusionCount}</span>}
+        {Object.entries(counts)
+          .sort(([a], [b]) => ALL_STATUSES.indexOf(a as typeof ALL_STATUSES[number]) - ALL_STATUSES.indexOf(b as typeof ALL_STATUSES[number]))
+          .map(([status, count]) => (
+            <span key={status}>
+              {status}: {count}
+            </span>
+          ))}
+      </div>
 
       <div className="filter-tabs">
         {ALL_STATUSES.map((s) => (
@@ -83,6 +133,14 @@ export default function Dashboard() {
           </button>
         ))}
       </div>
+
+      {filter === "InScope" && (counts["InScope"] ?? 0) > 0 && (
+        <div className="bulk-approve-bar">
+          <button className="btn btn-green" onClick={bulkApprove}>
+            Bulk Approve All InScope ({counts["InScope"]})
+          </button>
+        </div>
+      )}
 
       <div className="video-list">
         {filtered.length === 0 && (

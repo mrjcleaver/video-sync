@@ -11,6 +11,7 @@ pub enum CatalogEvent {
     VideoIndexed(VideoIndexed),
     VideoApproved(VideoApproved),
     VideoSkipped(VideoSkipped),
+    VideoScoped(VideoScoped),
     NoteAdded(NoteAdded),
     OwnersAssigned(OwnersAssigned),
     ModeratorsAssigned(ModeratorsAssigned),
@@ -18,6 +19,9 @@ pub enum CatalogEvent {
     StatusChanged(StatusChanged),
     LocationAdded(LocationAdded),
     LocationRemoved(LocationRemoved),
+    LocationStatusUpdated(LocationStatusUpdated),
+    VideoAbandoned(VideoAbandoned),
+    VideoMarkedToRetry(VideoMarkedToRetry),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +50,15 @@ pub struct VideoSkipped {
     pub video_record_id: Uuid,
     pub skipped_by: Uuid,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VideoScoped {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub scoped_by: Uuid,
+    pub rule_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +129,37 @@ pub struct LocationRemoved {
     pub external_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocationStatusUpdated {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub updated_by: Uuid,
+    pub platform: Platform,
+    pub external_id: String,
+    pub old_status: Option<String>,
+    pub new_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VideoAbandoned {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub abandoned_by: Uuid,
+    pub previous_status: VideoStatus,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VideoMarkedToRetry {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub marked_by: Uuid,
+    pub reason: Option<String>,
+}
+
 /// Mutable metadata fields that can be edited during approval or update.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MetadataEdits {
@@ -125,4 +169,5 @@ pub struct MetadataEdits {
     pub notes: Option<Vec<String>>,
     pub owners: Option<Vec<Uuid>>,
     pub moderators: Option<Vec<Uuid>>,
+    pub recorded_at: Option<String>,
 }

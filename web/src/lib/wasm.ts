@@ -32,6 +32,7 @@ export interface VideoRecordJSON {
   curated_by: string | null;
   curated_at: string | null;
   indexed_at: string;
+  recorded_at: string | null;
   published_at: string | null;
   destination_id: string | null;
   destination_url: string | null;
@@ -50,7 +51,9 @@ export interface PlatformLocationJSON {
   external_id: string;
   external_url: string | null;
   role: string;
+  ordinal: number;
   synced_at: string;
+  status: string | null;
 }
 
 export interface AddLocationCmd {
@@ -80,4 +83,5 @@ export interface IndexVideoCmd {
   tags: string[];
   metadata_extra?: unknown;
   initial_owner?: string;
+  recorded_at?: string;
 }

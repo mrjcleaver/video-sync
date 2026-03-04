@@ -1,0 +1,260 @@
+"use client";
+
+import { useState } from "react";
+import { WasmVideoRecord } from "../lib/wasm";
+import { videoStore } from "../lib/store";
+import { isExcluded } from "../lib/rules";
+
+const CONNECTIONS_KEY = "video-sync:connections";
+
+interface ZoomRecordingFile {
+  file_type: string;
+  download_url?: string;
+  play_url?: string;
+}
+
+interface ZoomMeeting {
+  uuid: string;
+  id: number;
+  topic: string;
+  start_time: string;
+  duration: number; // minutes
+  share_url?: string;
+  description?: string;
+  recording_files?: ZoomRecordingFile[];
+}
+
+interface Props {
+  onImported: () => void;
+  onEvent: (event: string) => void;
+}
+
+function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {
+  try {
+    const raw = localStorage.getItem(CONNECTIONS_KEY);
+    if (!raw) return null;
+    const connections = JSON.parse(raw);
+    const zoom = connections["Zoom"];
+    if (!zoom?.connected) return null;
+    const { accountId, clientId, clientSecret } = zoom.credentials;
+    if (!accountId || !clientId || !clientSecret) return null;
+    return { accountId, clientId, clientSecret };
+  } catch {
+    return null;
+  }
+}
+
+export default function ZoomImport({ onImported, onEvent }: Props) {
+  const [meetings, setMeetings] = useState<ZoomMeeting[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fetched, setFetched] = useState(false);
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(Date.now() - 30 * 86400000);
+    return d.toISOString().slice(0, 10);
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filterTitle, setFilterTitle] = useState("");
+  const [filterMinLen, setFilterMinLen] = useState("2");
+  const [filterMaxLen, setFilterMaxLen] = useState("");
+  const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
+
+  async function fetchRecordings() {
+    const creds = getZoomCredentials();
+    if (!creds) {
+      setError("Zoom credentials not configured. Go to Connections and add your Account ID, Client ID, and Client Secret.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/zoom/recordings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...creds, from: dateFrom, to: dateTo }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || `Request failed (${res.status})`);
+        return;
+      }
+      setMeetings(data.meetings ?? []);
+      setSelected(new Set());
+      setFetched(true);
+      if ((data.meetings ?? []).length === 0) {
+        setError("No recordings found in the selected date range.");
+      }
+    } catch (err) {
+      setError(`Network error: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleSelect(uuid: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(uuid)) next.delete(uuid);
+      else next.add(uuid);
+      return next;
+    });
+  }
+
+  function importSelected() {
+    let count = 0;
+    let skipped = 0;
+    for (const meeting of meetings) {
+      if (!selected.has(meeting.uuid)) continue;
+
+      const sourceId = `zoom-${meeting.uuid}`;
+      if (isExcluded("Zoom", sourceId)) {
+        skipped++;
+        continue;
+      }
+
+      const downloadUrl = `zoom://recording/${meeting.uuid}`;
+
+      const cmd: Record<string, unknown> = {
+        source_id: sourceId,
+        source_platform: "Zoom",
+        title: meeting.topic,
+        description: meeting.description || undefined,
+        duration_seconds: meeting.duration * 60,
+        participants: [],
+        download_url: downloadUrl,
+        tags: ["zoom-import"],
+        recorded_at: meeting.start_time,
+      };
+      if (meeting.share_url) {
+        cmd.metadata_extra = { share_url: meeting.share_url };
+      }
+
+      const record = new WasmVideoRecord(JSON.stringify(cmd));
+      videoStore.add(record);
+      onEvent(`VideoIndexed: "${meeting.topic}" (Zoom import)`);
+      count++;
+    }
+
+    if (skipped > 0) {
+      onEvent(`Zoom import: ${skipped} excluded recording(s) skipped`);
+    }
+
+    if (count > 0) {
+      onImported();
+      setMeetings([]);
+      setSelected(new Set());
+      setFetched(false);
+    }
+  }
+
+  return (
+    <div className="zoom-import">
+      <div className="zoom-import-header">
+        <h2>Zoom Recordings</h2>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+          />
+          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+          />
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={fetchRecordings}
+            disabled={loading}
+          >
+            {loading ? "Fetching..." : "Fetch from Zoom"}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="zoom-import-error">{error}</div>}
+
+      {fetched && meetings.length > 0 && (
+        <>
+          <div className="zoom-import-filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+            <input
+              placeholder="Filter by title..."
+              value={filterTitle}
+              onChange={(e) => setFilterTitle(e.target.value)}
+              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 140px" }}
+            />
+            <input
+              placeholder="Min (min)"
+              type="number"
+              value={filterMinLen}
+              onChange={(e) => setFilterMinLen(e.target.value)}
+              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+            />
+            <input
+              placeholder="Max (min)"
+              type="number"
+              value={filterMaxLen}
+              onChange={(e) => setFilterMaxLen(e.target.value)}
+              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+            />
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Days:</span>
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
+              <button
+                key={d}
+                className={`btn btn-sm ${filterDays.has(i) ? "btn-primary" : ""}`}
+                style={{ padding: "2px 6px", fontSize: "0.7rem" }}
+                onClick={() => setFilterDays((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(i)) next.delete(i); else next.add(i);
+                  return next;
+                })}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+          <div className="zoom-import-list">
+            {meetings.filter((m) => {
+              if (filterTitle && !m.topic.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+              if (filterMinLen && m.duration < Number(filterMinLen)) return false;
+              if (filterMaxLen && m.duration > Number(filterMaxLen)) return false;
+              if (filterDays.size > 0 && !filterDays.has(new Date(m.start_time).getDay())) return false;
+              return true;
+            }).map((m) => (
+              <label key={m.uuid} className="zoom-import-item">
+                <input
+                  type="checkbox"
+                  checked={selected.has(m.uuid)}
+                  onChange={() => toggleSelect(m.uuid)}
+                />
+                <div>
+                  <span className="zoom-import-topic">{m.topic}</span>
+                  <span className="zoom-import-meta">
+                    {new Date(m.start_time).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                    {" \u00b7 "}
+                    {m.duration} min
+                  </span>
+                </div>
+              </label>
+            ))}
+          </div>
+          {selected.size > 0 && (
+            <button className="btn btn-primary" onClick={importSelected}>
+              Import {selected.size} selected
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

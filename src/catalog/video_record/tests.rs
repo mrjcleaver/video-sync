@@ -18,6 +18,7 @@ fn make_index_cmd() -> IndexVideo {
         tags: vec!["standup".to_string(), "engineering".to_string()],
         metadata_extra: None,
         initial_owner: None,
+        recorded_at: None,
     }
 }
 
@@ -565,6 +566,7 @@ fn test_add_location_intermediate() {
             external_id: "loom-456".to_string(),
             external_url: Some("https://loom.com/share/456".to_string()),
             role: LocationRole::Intermediate,
+            ordinal: None,
         })
         .unwrap();
 
@@ -587,6 +589,7 @@ fn test_add_location_duplicate_fails() {
         external_id: "zoom-123".to_string(),
         external_url: None,
         role: LocationRole::Origin,
+        ordinal: None,
     });
 
     assert!(matches!(result, Err(CatalogError::DuplicateLocation { .. })));
@@ -605,6 +608,7 @@ fn test_remove_location() {
             external_id: "loom-789".to_string(),
             external_url: None,
             role: LocationRole::Intermediate,
+            ordinal: None,
         })
         .unwrap();
     assert_eq!(record.locations.len(), 2);
@@ -642,6 +646,7 @@ fn test_add_location_unauthorized_viewer() {
         external_id: "loom-1".to_string(),
         external_url: None,
         role: LocationRole::Intermediate,
+        ordinal: None,
     });
     assert_eq!(result, Err(CatalogError::Unauthorized));
 }
@@ -665,4 +670,315 @@ fn test_mark_published_adds_destination_location() {
     let dest = record.locations.iter().find(|l| l.role == LocationRole::Destination).unwrap();
     assert_eq!(dest.platform, Platform::YouTube);
     assert_eq!(dest.external_id, "yt-abc");
+}
+
+// ── InScope ──────────────────────────────────────────────
+
+#[test]
+fn test_mark_in_scope_from_discovered_succeeds() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let events = record
+        .mark_in_scope(MarkInScope {
+            actor: admin_actor(),
+            rule_id: Some("rule-1".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::InScope);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::VideoScoped(_)));
+}
+
+#[test]
+fn test_mark_in_scope_from_approved_fails() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record
+        .approve(ApproveVideo {
+            actor: admin_actor(),
+            metadata_edits: None,
+        })
+        .unwrap();
+
+    let result = record.mark_in_scope(MarkInScope {
+        actor: admin_actor(),
+        rule_id: None,
+    });
+    assert!(matches!(
+        result,
+        Err(CatalogError::InvalidStatusTransition { .. })
+    ));
+}
+
+#[test]
+fn test_approve_from_in_scope_succeeds() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record
+        .mark_in_scope(MarkInScope {
+            actor: admin_actor(),
+            rule_id: None,
+        })
+        .unwrap();
+
+    let events = record
+        .approve(ApproveVideo {
+            actor: admin_actor(),
+            metadata_edits: None,
+        })
+        .unwrap();
+    assert_eq!(record.status, VideoStatus::Approved);
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_skip_from_in_scope_succeeds() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record
+        .mark_in_scope(MarkInScope {
+            actor: admin_actor(),
+            rule_id: None,
+        })
+        .unwrap();
+
+    let events = record
+        .skip(SkipVideo {
+            actor: publisher_actor(),
+            reason: Some("Not needed".to_string()),
+        })
+        .unwrap();
+    assert_eq!(record.status, VideoStatus::Skipped);
+    assert_eq!(events.len(), 1);
+}
+
+// ── Update Location Status ───────────────────────────────
+
+#[test]
+fn test_update_location_status() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let events = record
+        .update_location_status(UpdateLocationStatus {
+            actor: admin_actor(),
+            platform: Platform::Zoom,
+            external_id: "zoom-123".to_string(),
+            status: "Processing".to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::LocationStatusUpdated(_)));
+    assert_eq!(record.locations[0].status, Some("Processing".to_string()));
+}
+
+#[test]
+fn test_update_location_status_not_found() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let result = record.update_location_status(UpdateLocationStatus {
+        actor: admin_actor(),
+        platform: Platform::YouTube,
+        external_id: "nonexistent".to_string(),
+        status: "Live".to_string(),
+    });
+    assert!(matches!(result, Err(CatalogError::LocationNotFound { .. })));
+}
+
+// ── Abandon ──────────────────────────────────────────────
+
+#[test]
+fn test_abandon_from_failed() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_failed(MarkFailed { error_message: "timeout".into() }).unwrap();
+
+    let events = record
+        .abandon(AbandonVideo {
+            actor: admin_actor(),
+            reason: Some("Giving up".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::Abandoned);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::VideoAbandoned(_)));
+}
+
+#[test]
+fn test_abandon_from_discovered() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let events = record
+        .abandon(AbandonVideo {
+            actor: admin_actor(),
+            reason: None,
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::Abandoned);
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_abandon_from_published_succeeds() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_published(MarkPublished {
+        destination_id: "yt-1".into(),
+        destination_url: "https://youtube.com/1".into(),
+        destination_platform: None,
+    }).unwrap();
+
+    let events = record.abandon(AbandonVideo {
+        actor: admin_actor(),
+        reason: Some("Video removed from YouTube".to_string()),
+    }).unwrap();
+    assert_eq!(record.status, VideoStatus::Abandoned);
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_mark_to_retry_from_published() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_published(MarkPublished {
+        destination_id: "yt-1".into(),
+        destination_url: "https://youtube.com/1".into(),
+        destination_platform: None,
+    }).unwrap();
+
+    let events = record.mark_to_retry(MarkToRetry {
+        actor: admin_actor(),
+        reason: Some("Re-upload needed".to_string()),
+    }).unwrap();
+    assert_eq!(record.status, VideoStatus::ToRetry);
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_mark_failed_from_published() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_published(MarkPublished {
+        destination_id: "yt-1".into(),
+        destination_url: "https://youtube.com/1".into(),
+        destination_platform: None,
+    }).unwrap();
+
+    let events = record.mark_failed(MarkFailed {
+        error_message: "YouTube processing failed".to_string(),
+    }).unwrap();
+    assert_eq!(record.status, VideoStatus::Failed);
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_abandon_from_approved_fails() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+
+    let result = record.abandon(AbandonVideo {
+        actor: admin_actor(),
+        reason: None,
+    });
+    assert!(matches!(result, Err(CatalogError::InvalidStatusTransition { .. })));
+}
+
+// ── ToRetry ──────────────────────────────────────────────
+
+#[test]
+fn test_mark_to_retry_from_failed() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_failed(MarkFailed { error_message: "timeout".into() }).unwrap();
+
+    let events = record
+        .mark_to_retry(MarkToRetry {
+            actor: admin_actor(),
+            reason: Some("Will retry later".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::ToRetry);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], CatalogEvent::VideoMarkedToRetry(_)));
+}
+
+#[test]
+fn test_mark_to_retry_from_discovered_fails() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let result = record.mark_to_retry(MarkToRetry {
+        actor: admin_actor(),
+        reason: None,
+    });
+    assert!(matches!(result, Err(CatalogError::InvalidStatusTransition { .. })));
+}
+
+#[test]
+fn test_approve_from_to_retry() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    record.mark_failed(MarkFailed { error_message: "timeout".into() }).unwrap();
+    record.mark_to_retry(MarkToRetry { actor: admin_actor(), reason: None }).unwrap();
+
+    let events = record
+        .approve(ApproveVideo {
+            actor: admin_actor(),
+            metadata_edits: None,
+        })
+        .unwrap();
+
+    assert_eq!(record.status, VideoStatus::Approved);
+    assert_eq!(events.len(), 1);
+}
+
+// ── Recorded At ──────────────────────────────────────────
+
+#[test]
+fn test_index_with_recorded_at() {
+    let mut cmd = make_index_cmd();
+    cmd.recorded_at = Some("2024-06-15T10:30:00Z".to_string());
+    let (record, _) = VideoRecord::index(cmd);
+
+    assert!(record.recorded_at.is_some());
+    assert_eq!(record.recorded_at.unwrap().to_rfc3339().contains("2024-06-15"), true);
+}
+
+#[test]
+fn test_metadata_edit_recorded_at() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    assert!(record.recorded_at.is_none());
+
+    record
+        .update_metadata(UpdateMetadata {
+            actor: admin_actor(),
+            edits: MetadataEdits {
+                recorded_at: Some("2024-01-01T00:00:00Z".to_string()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    assert!(record.recorded_at.is_some());
+}
+
+#[test]
+fn test_add_location_with_ordinal() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    let actor = admin_actor();
+
+    record
+        .add_location(AddLocation {
+            actor,
+            platform: Platform::Loom,
+            external_id: "loom-ord".to_string(),
+            external_url: None,
+            role: LocationRole::Intermediate,
+            ordinal: Some(3),
+        })
+        .unwrap();
+
+    assert_eq!(record.locations.len(), 2);
+    assert_eq!(record.locations[1].ordinal, 3);
 }

@@ -10,6 +10,7 @@ pub enum VideoCommand {
     IndexVideo(IndexVideo),
     ApproveVideo(ApproveVideo),
     SkipVideo(SkipVideo),
+    MarkInScope(MarkInScope),
     RequestPublish(RequestPublish),
     MarkPublished(MarkPublished),
     MarkFailed(MarkFailed),
@@ -19,6 +20,9 @@ pub enum VideoCommand {
     AssignModerators(AssignModerators),
     AddLocation(AddLocation),
     RemoveLocation(RemoveLocation),
+    UpdateLocationStatus(UpdateLocationStatus),
+    AbandonVideo(AbandonVideo),
+    MarkToRetry(MarkToRetry),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +39,7 @@ pub struct IndexVideo {
     pub tags: Vec<String>,
     pub metadata_extra: Option<serde_json::Value>,
     pub initial_owner: Option<Uuid>,
+    pub recorded_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,12 +97,20 @@ pub struct AssignModerators {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkInScope {
+    pub actor: Actor,
+    pub rule_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddLocation {
     pub actor: Actor,
     pub platform: Platform,
     pub external_id: String,
     pub external_url: Option<String>,
     pub role: LocationRole,
+    #[serde(default)]
+    pub ordinal: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,4 +118,24 @@ pub struct RemoveLocation {
     pub actor: Actor,
     pub platform: Platform,
     pub external_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateLocationStatus {
+    pub actor: Actor,
+    pub platform: Platform,
+    pub external_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbandonVideo {
+    pub actor: Actor,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkToRetry {
+    pub actor: Actor,
+    pub reason: Option<String>,
 }

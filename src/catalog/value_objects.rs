@@ -21,6 +21,7 @@ pub enum Platform {
     Fireflies,
     YouTube,
     Kaltura,
+    Veedio,
 }
 
 impl From<SourcePlatform> for Platform {
@@ -49,7 +50,11 @@ pub struct PlatformLocation {
     pub external_id: String,
     pub external_url: Option<String>,
     pub role: LocationRole,
+    #[serde(default)]
+    pub ordinal: u32,
     pub synced_at: DateTime<Utc>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Lifecycle status of a video within the curation pipeline.
@@ -57,30 +62,51 @@ pub struct PlatformLocation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VideoStatus {
     Discovered,
+    InScope,
     Approved,
     Skipped,
     Publishing,
     Published,
     Failed,
+    Abandoned,
+    ToRetry,
 }
 
 impl VideoStatus {
+    /// Returns true if this status can transition to `InScope`.
+    pub fn can_scope(&self) -> bool {
+        matches!(self, VideoStatus::Discovered)
+    }
+
     /// Returns true if this status can transition to `Approved`.
     pub fn can_approve(&self) -> bool {
         matches!(
             self,
-            VideoStatus::Discovered | VideoStatus::Skipped | VideoStatus::Failed
+            VideoStatus::Discovered | VideoStatus::InScope | VideoStatus::Skipped | VideoStatus::Failed | VideoStatus::ToRetry
         )
     }
 
     /// Returns true if this status can transition to `Skipped`.
     pub fn can_skip(&self) -> bool {
-        matches!(self, VideoStatus::Discovered)
+        matches!(self, VideoStatus::Discovered | VideoStatus::InScope)
     }
 
     /// Returns true if this status can transition to `Publishing`.
     pub fn can_publish(&self) -> bool {
         matches!(self, VideoStatus::Approved)
+    }
+
+    /// Returns true if this status can transition to `Abandoned`.
+    pub fn can_abandon(&self) -> bool {
+        matches!(
+            self,
+            VideoStatus::Failed | VideoStatus::InScope | VideoStatus::Discovered | VideoStatus::Skipped | VideoStatus::Published
+        )
+    }
+
+    /// Returns true if this status can transition to `ToRetry`.
+    pub fn can_mark_to_retry(&self) -> bool {
+        matches!(self, VideoStatus::Failed | VideoStatus::Published)
     }
 }
 

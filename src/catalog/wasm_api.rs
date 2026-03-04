@@ -47,6 +47,17 @@ impl WasmVideoRecord {
         Ok(Self { inner: record })
     }
 
+    /// Mark in-scope. Returns JSON array of emitted events.
+    pub fn mark_in_scope(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: MarkInScope =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .mark_in_scope(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
     /// Approve the video. Returns JSON array of emitted events.
     pub fn approve(&mut self, cmd_json: &str) -> Result<String, JsError> {
         let cmd: ApproveVideo =
@@ -180,6 +191,39 @@ impl WasmVideoRecord {
         let events = self
             .inner
             .add_location(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Update a location's status. Returns JSON array of emitted events.
+    pub fn update_location_status(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: UpdateLocationStatus =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .update_location_status(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Abandon a video. Returns JSON array of emitted events.
+    pub fn abandon(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: AbandonVideo =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .abandon(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Mark a video for retry. Returns JSON array of emitted events.
+    pub fn mark_to_retry(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: MarkToRetry =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .mark_to_retry(cmd)
             .map_err(|e| JsError::new(&e.to_string()))?;
         Self::events_to_json(&events)
     }
