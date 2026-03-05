@@ -170,4 +170,5 @@ pub struct MetadataEdits {
     pub owners: Option<Vec<Uuid>>,
     pub moderators: Option<Vec<Uuid>>,
     pub recorded_at: Option<String>,
+    pub transcript_text: Option<String>,
 }

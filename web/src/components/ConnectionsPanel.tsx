@@ -68,6 +68,15 @@ const PLATFORMS: PlatformInfo[] = [
       { key: "apiKey", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
     ],
   },
+  {
+    name: "OpenRouter",
+    description: "LLM transcript summarisation",
+    credentialType: "API_KEY",
+    fields: [
+      { key: "apiKey", label: "API Key", type: "password", placeholder: "sk-or-...", required: true },
+      { key: "model", label: "Model (optional)", type: "text", placeholder: "google/gemini-2.0-flash-001", required: false },
+    ],
+  },
 ];
 
 interface ConnectionState {

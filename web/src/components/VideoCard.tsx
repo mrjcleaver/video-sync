@@ -2,8 +2,14 @@
 
 import { useState } from "react";
 import type { VideoRecordJSON, PlatformLocationJSON } from "../lib/wasm";
-import { videoStore } from "../lib/store";
+import { videoStore, bootStore } from "../lib/store";
 import { addExclusion } from "../lib/rules";
+import {
+  loadProcessingRules,
+  applyProcessingRules,
+  requestLlmSummary,
+  type PublishAttributes,
+} from "../lib/processingRules";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -41,11 +47,15 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPhase, setUploadPhase] = useState("");
+  const [publishAttrs, setPublishAttrs] = useState<PublishAttributes | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   const [locPlatform, setLocPlatform] = useState<string>("Loom");
   const [locExternalId, setLocExternalId] = useState("");
   const [locExternalUrl, setLocExternalUrl] = useState("");
   const [locRole, setLocRole] = useState<string>("Intermediate");
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   function approve() {
     videoStore.mutate(video.id, (r) =>
@@ -100,7 +110,39 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     onMutated();
   }
 
+  async function preparePublish() {
+    const rules = loadProcessingRules();
+    let attrs = applyProcessingRules(rules, video);
+
+    // If any rule uses transcript_llm and we have a transcript, fetch summary
+    const needsLlm = rules.some(
+      (r) =>
+        r.enabled &&
+        (r.transforms.title?.mode === "transcript_llm" ||
+          r.transforms.description?.mode === "transcript_llm"),
+    );
+    if (needsLlm && video.transcript_text) {
+      try {
+        setUploadPhase("Summarising transcript…");
+        const summary = await requestLlmSummary(video.transcript_text);
+        // Re-apply with summary injected as description fallback
+        const enriched = { ...video, description: summary.summary };
+        attrs = applyProcessingRules(rules, enriched);
+      } catch (err) {
+        onEvent(`LlmSummarizeFailed: "${video.title}" — ${String(err)}`);
+        // Fall through with non-LLM attrs
+      } finally {
+        setUploadPhase("");
+      }
+    }
+
+    setPublishAttrs(attrs);
+    setShowPreview(true);
+  }
+
   async function publishToYouTube() {
+    const attrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+
     let connections: Record<string, { credentials?: Record<string, string> }> = {};
     try {
       const raw = localStorage.getItem("video-sync:connections");
@@ -113,6 +155,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       return;
     }
 
+    setShowPreview(false);
     setUploading(true);
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
@@ -125,11 +168,11 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         refreshToken: ytCreds.refreshToken,
         clientId: ytCreds.clientId,
         clientSecret: ytCreds.clientSecret,
-        title: video.title,
-        description: video.description || "",
-        tags: video.tags,
+        title: attrs.title,
+        description: attrs.description,
+        tags: attrs.tags,
         downloadUrl: video.download_url,
-        privacyStatus: "unlisted",
+        privacyStatus: attrs.privacy_status,
         recordedAt: video.recorded_at || undefined,
       };
 
@@ -202,6 +245,62 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     );
     onEvent(`VideoMarkedToRetry: "${video.title}"`);
     onMutated();
+  }
+
+  async function loadZoomTranscript() {
+    // Guard: if the store lost this record (e.g. after WASM HMR swap), re-hydrate
+    if (!videoStore.get(video.id)) {
+      await bootStore();
+      if (!videoStore.get(video.id)) {
+        setTranscriptError("Record not in store — please reload the page (Ctrl+R).");
+        return;
+      }
+    }
+
+    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      if (raw) connections = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    const zoomCreds = connections["Zoom"]?.credentials;
+    if (!zoomCreds?.accountId || !zoomCreds?.clientId || !zoomCreds?.clientSecret) {
+      setTranscriptError("Zoom credentials not configured. Go to Connections first.");
+      return;
+    }
+
+    // Extract the Zoom meeting UUID from source_id (format: "zoom-<uuid>")
+    const meetingUuid = video.source_id.replace(/^zoom-/, "");
+
+    setLoadingTranscript(true);
+    setTranscriptError(null);
+    try {
+      const res = await fetch("/api/zoom/transcript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: zoomCreds.accountId,
+          clientId: zoomCreds.clientId,
+          clientSecret: zoomCreds.clientSecret,
+          meetingUuid,
+        }),
+      });
+      if (!res.ok) {
+        let errMsg = `Transcript fetch failed (${res.status})`;
+        try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON error body */ }
+        setTranscriptError(errMsg);
+        return;
+      }
+      const data = await res.json();
+
+      videoStore.setTranscript(video.id, data.transcript);
+      onEvent(`TranscriptLoaded: "${video.title}" (${data.chars} chars)`);
+      onMutated();
+    } catch (err) {
+      setTranscriptError(`Error: ${String(err)}`);
+    } finally {
+      setLoadingTranscript(false);
+    }
   }
 
   async function checkYouTubeStatus(loc: PlatformLocationJSON) {
@@ -398,6 +497,32 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
+      {/* Transcript */}
+      {(video.source_platform === "Zoom" || video.source_platform === "Fireflies") && (
+        <div style={{ fontSize: "0.75rem", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+          {video.transcript_text ? (
+            <span style={{ color: "var(--green)" }}>
+              Transcript loaded ({Math.round(video.transcript_text.length / 5)} words est.)
+            </span>
+          ) : video.source_platform === "Zoom" ? (
+            <>
+              <span style={{ color: "var(--text-muted)" }}>No transcript</span>
+              <button
+                className="btn btn-sm"
+                style={{ padding: "1px 8px", fontSize: "0.7rem" }}
+                onClick={loadZoomTranscript}
+                disabled={loadingTranscript}
+              >
+                {loadingTranscript ? "Loading…" : "Load Transcript"}
+              </button>
+            </>
+          ) : null}
+          {transcriptError && (
+            <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
+          )}
+        </div>
+      )}
+
       {/* Locations */}
       {video.locations && video.locations.length > 0 && (
         <div className="locations-section">
@@ -500,6 +625,70 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
+      {/* Fireflies publish warning */}
+      {showPreview && video.source_platform === "Fireflies" && (
+        <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 8 }}>
+          Fireflies CDN URLs expire. Download the video file from Fireflies and upload manually, or use the original Zoom recording instead.
+        </div>
+      )}
+
+      {/* Publish preview — shown after preparePublish() */}
+      {showPreview && publishAttrs && (
+        <div className="rule-form" style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: "0.7rem", color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>
+            Publish preview — confirm before uploading
+          </div>
+          <div className="form-field">
+            <label>Title</label>
+            <input
+              value={publishAttrs.title}
+              onChange={(e) => setPublishAttrs({ ...publishAttrs, title: e.target.value })}
+            />
+          </div>
+          <div className="form-field">
+            <label>Description</label>
+            <textarea
+              value={publishAttrs.description}
+              onChange={(e) => setPublishAttrs({ ...publishAttrs, description: e.target.value })}
+              rows={3}
+              style={{ width: "100%", fontSize: "0.75rem", padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", resize: "vertical" }}
+            />
+          </div>
+          <div className="form-field">
+            <label>Tags (comma-separated)</label>
+            <input
+              value={publishAttrs.tags.join(", ")}
+              onChange={(e) =>
+                setPublishAttrs({
+                  ...publishAttrs,
+                  tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean),
+                })
+              }
+            />
+          </div>
+          <div className="form-field">
+            <label>Privacy</label>
+            <select
+              value={publishAttrs.privacy_status}
+              onChange={(e) => setPublishAttrs({ ...publishAttrs, privacy_status: e.target.value as PublishAttributes["privacy_status"] })}
+              style={{ width: "100%", fontSize: "0.75rem", padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
+            >
+              <option value="unlisted">Unlisted</option>
+              <option value="private">Private</option>
+              <option value="public">Public</option>
+            </select>
+          </div>
+          <div className="form-actions">
+            <button className="btn btn-sm btn-green" onClick={publishToYouTube}>
+              Confirm &amp; Upload
+            </button>
+            <button className="btn btn-sm" onClick={() => { setShowPreview(false); setPublishAttrs(null); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="video-card-actions">
         {canApprove && (
           <button className="btn btn-sm btn-green" onClick={approve}>
@@ -545,8 +734,12 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           <>
             {uploading ? (
               <span className="upload-progress">{uploadPhase}</span>
+            ) : showPreview && publishAttrs ? (
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                Preview ready ↓
+              </span>
             ) : (
-              <button className="btn btn-sm btn-primary" onClick={publishToYouTube}>
+              <button className="btn btn-sm btn-primary" onClick={preparePublish}>
                 Publish to YouTube
               </button>
             )}

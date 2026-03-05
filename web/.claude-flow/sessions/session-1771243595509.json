@@ -1,0 +1,15 @@
+{
+  "id": "session-1771243595509",
+  "startedAt": "2026-02-16T12:06:35.509Z",
+  "platform": "linux",
+  "cwd": "/workspaces/video-sync/web",
+  "context": {},
+  "metrics": {
+    "edits": 28,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-03-05T00:29:18.898Z",
+  "duration": 1426963389
+}

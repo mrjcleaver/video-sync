@@ -7,8 +7,10 @@ import { loadExclusions } from "../lib/rules";
 import { useRuleRunner } from "../lib/useRuleRunner";
 import IndexForm from "../components/IndexForm";
 import ZoomImport from "../components/ZoomImport";
+import FirefliesImport from "../components/FirefliesImport";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import RulesPanel from "../components/RulesPanel";
+import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
 import VideoCard from "../components/VideoCard";
 import EventLog from "../components/EventLog";
 
@@ -98,6 +100,8 @@ export default function Dashboard() {
 
       <ZoomImport onImported={refresh} onEvent={addEvent} />
 
+      <FirefliesImport onImported={refresh} onEvent={addEvent} />
+
       <ConnectionsPanel />
 
       <RulesPanel
@@ -106,6 +110,8 @@ export default function Dashboard() {
         matchCount={matchCount}
         onRunNow={runNow}
       />
+
+      <ProcessingRulesPanel />
 
       {/* Burndown stats */}
       <div className="burndown-stats">

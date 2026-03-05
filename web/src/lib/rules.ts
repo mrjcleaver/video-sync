@@ -97,8 +97,7 @@ export function isExcluded(platform: string, sourceId: string): boolean {
 
 // ── Rule matching ────────────────────────────────────────
 
-export function matchesRule(rule: IngestionRule, video: VideoRecordJSON): boolean {
-  const c = rule.criteria;
+export function matchesCriteria(c: RuleCriteria, video: VideoRecordJSON): boolean {
 
   if (c.title_pattern) {
     try {
@@ -142,6 +141,10 @@ export function matchesRule(rule: IngestionRule, video: VideoRecordJSON): boolea
   }
 
   return true;
+}
+
+export function matchesRule(rule: IngestionRule, video: VideoRecordJSON): boolean {
+  return matchesCriteria(rule.criteria, video);
 }
 
 // ── Rule runner ──────────────────────────────────────────

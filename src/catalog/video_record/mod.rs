@@ -582,6 +582,9 @@ impl VideoRecord {
                 self.recorded_at = Some(dt.with_timezone(&Utc));
             }
         }
+        if let Some(ref transcript) = edits.transcript_text {
+            self.transcript_text = Some(transcript.clone());
+        }
         Ok(())
     }
 
