@@ -3,39 +3,8 @@
 import { useState, FormEvent } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
+import HelpTip from "./HelpTip";
 
-const SAMPLE_VIDEOS = [
-  {
-    source_id: "zoom-weekly-001",
-    source_platform: "Zoom",
-    title: "Weekly Engineering Standup",
-    description: "Monday team standup recording",
-    duration_seconds: 1800,
-    participants: ["alice@co.com", "bob@co.com"],
-    download_url: "https://zoom.us/rec/weekly-001",
-    tags: ["standup", "engineering"],
-  },
-  {
-    source_id: "loom-demo-002",
-    source_platform: "Loom",
-    title: "Product Demo — Q1 Features",
-    description: "Walkthrough of new Q1 features for stakeholders",
-    duration_seconds: 900,
-    participants: ["carol@co.com"],
-    download_url: "https://loom.com/share/demo-002",
-    tags: ["demo", "product", "q1"],
-  },
-  {
-    source_id: "fireflies-retro-003",
-    source_platform: "Fireflies",
-    title: "Sprint Retrospective",
-    description: "Team retro with action items",
-    duration_seconds: 2700,
-    participants: ["alice@co.com", "bob@co.com", "dave@co.com"],
-    download_url: "https://app.fireflies.ai/retro-003",
-    tags: ["retro", "agile"],
-  },
-];
 
 interface Props {
   onIndexed: () => void;
@@ -83,12 +52,6 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
     setTags("");
   }
 
-  function loadSamples() {
-    for (const sample of SAMPLE_VIDEOS) {
-      indexVideo(sample);
-    }
-  }
-
   return (
     <div className="index-form">
       <div
@@ -99,18 +62,20 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
         }}
       >
         <h2>Index New Video</h2>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button className="btn btn-sm" onClick={loadSamples}>
-            Load Samples
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? "Collapse" : "Manual Entry"}
-          </button>
-        </div>
+        <button
+          className="btn btn-sm"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Collapse" : "Manual Entry"}
+        </button>
       </div>
+
+      <HelpTip>
+        Manually index a single video into the pipeline. Use this to add recordings that aren&apos;t
+        available via Zoom or Fireflies — paste any URL, assign a platform, and tag the entry.
+        Indexed videos immediately appear in the library and can be approved, processed, and
+        uploaded to YouTube through the normal workflow.
+      </HelpTip>
 
       {expanded && (
         <form onSubmit={handleSubmit} className="form-grid" style={{ marginTop: 12 }}>

@@ -10,6 +10,7 @@ import {
   type RuleAction,
 } from "../lib/rules";
 import { videoStore } from "../lib/store";
+import HelpTip from "./HelpTip";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -120,6 +121,16 @@ export default function RulesPanel({
 
       {expanded && (
         <>
+          <HelpTip>
+            Ingestion rules auto-classify recordings as they arrive. Each rule has criteria
+            (title pattern, day of week, duration range, date window) and an action:{" "}
+            <em>Mark In Scope</em> flags a video for review, <em>Auto Approve</em> immediately
+            approves it for publishing, and <em>Auto Skip</em> excludes it permanently. Rules
+            run in priority order (lower number = first). Use <em>Dry Run</em> to preview
+            matches without applying changes, or <em>Run Now</em> to apply all rules
+            to the current library immediately.
+          </HelpTip>
+
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <button className="btn btn-sm btn-primary" onClick={() => startEdit()}>
               Add Rule

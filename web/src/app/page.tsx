@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { loadExclusions } from "../lib/rules";
+import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
 import IndexForm from "../components/IndexForm";
 import ZoomImport from "../components/ZoomImport";
@@ -11,8 +12,10 @@ import FirefliesImport from "../components/FirefliesImport";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
+import BackfillPanel from "../components/BackfillPanel";
 import VideoCard from "../components/VideoCard";
 import EventLog from "../components/EventLog";
+import ErrorBoundary from "../components/ErrorBoundary";
 
 const ALL_STATUSES = [
   "All",
@@ -32,6 +35,7 @@ export default function Dashboard() {
   const [videos, setVideos] = useState<VideoRecordJSON[]>([]);
   const [events, setEvents] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>("All");
+  const [showLogs, setShowLogs] = useState(false);
 
   useEffect(() => {
     bootStore().then(() => {
@@ -46,6 +50,7 @@ export default function Dashboard() {
 
   const addEvent = useCallback((ev: string) => {
     setEvents((prev) => [...prev, ev]);
+    clientLog("info", "event", ev);
   }, []);
 
   const { isRunning: isRunnerRunning, lastRun, matchCount, runNow } = useRuleRunner({
@@ -82,6 +87,7 @@ export default function Dashboard() {
   const exclusionCount = loadExclusions().length;
 
   return (
+    <ErrorBoundary>
     <div className="container">
       <div className="header">
         <h1>Video Sync</h1>
@@ -93,6 +99,13 @@ export default function Dashboard() {
           {counts["Published"] && (
             <span className="stat-badge">{counts["Published"]} published</span>
           )}
+          <button
+            className={`btn btn-sm ${showLogs ? "btn-primary" : ""}`}
+            onClick={() => setShowLogs((v) => !v)}
+            style={{ marginLeft: 8 }}
+          >
+            {showLogs ? "Hide Logs" : "View Logs"}
+          </button>
         </div>
       </div>
 
@@ -112,6 +125,8 @@ export default function Dashboard() {
       />
 
       <ProcessingRulesPanel />
+
+      <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
       {/* Burndown stats */}
       <div className="burndown-stats">
@@ -152,7 +167,7 @@ export default function Dashboard() {
         {filtered.length === 0 && (
           <div className="empty-state">
             {videos.length === 0
-              ? "No videos indexed yet. Click \"Load Samples\" or add one manually."
+              ? "No videos indexed yet. Use Zoom Import, Fireflies Import, or Manual Entry above."
               : `No videos with status "${filter}".`}
           </div>
         )}
@@ -166,7 +181,8 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <EventLog events={events} />
+      {showLogs && <EventLog events={events} forceShow />}
     </div>
+    </ErrorBoundary>
   );
 }

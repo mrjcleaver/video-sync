@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   let body: { accountId?: string; clientId?: string; clientSecret?: string; from?: string; to?: string };
   try {
     body = await req.json();
@@ -17,11 +18,13 @@ export async function POST(req: NextRequest) {
   }
 
   // Exchange credentials for access token (Server-to-Server OAuth)
+  const rid = req.headers.get("x-request-id") ?? "n/a";
   const tokenUrl = `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`;
   const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
   let accessToken: string;
   try {
+    const t0 = Date.now();
     const tokenRes = await fetch(tokenUrl, {
       method: "POST",
       headers: {
@@ -29,8 +32,10 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/x-www-form-urlencoded",
       },
     });
+    serverLog("info", "ext:zoom-token", "fetch", { duration_ms: Date.now() - t0, status: tokenRes.status, rid });
     if (!tokenRes.ok) {
       const text = await tokenRes.text();
+      serverLog("error", "ext:zoom-token", "auth failed", { status: tokenRes.status, rid });
       return NextResponse.json(
         { error: `Zoom token error (${tokenRes.status}): ${text}` },
         { status: 502 },
@@ -39,6 +44,7 @@ export async function POST(req: NextRequest) {
     const tokenData = await tokenRes.json();
     accessToken = tokenData.access_token;
   } catch (err) {
+    serverLog("error", "ext:zoom-token", "unreachable", { error: String(err), rid });
     return NextResponse.json(
       { error: `Failed to reach Zoom auth: ${String(err)}` },
       { status: 502 },
@@ -96,14 +102,18 @@ export async function POST(req: NextRequest) {
       windowFrom = new Date(windowTo.getTime() + MS_PER_DAY);
     }
 
+    serverLog("info", "ext:zoom-recordings", "done", { count: allMeetings.length, rid });
     return NextResponse.json({
       meetings: allMeetings,
       total: allMeetings.length,
     });
   } catch (err) {
+    serverLog("error", "ext:zoom-recordings", "failed", { error: String(err), rid });
     return NextResponse.json(
       { error: `Failed to fetch recordings: ${String(err)}` },
       { status: 502 },
     );
   }
 }
+
+export const POST = withRequestLogging("api:zoom/recordings", handler);

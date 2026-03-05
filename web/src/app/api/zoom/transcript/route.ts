@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 
 /** Parse WebVTT to plain text, stripping timestamps and cue metadata. */
 function vttToPlainText(vtt: string): string {
@@ -27,7 +28,7 @@ function vttToPlainText(vtt: string): string {
     .trim();
 }
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   let body: {
     accountId?: string;
     clientId?: string;
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const rid = req.headers.get("x-request-id") ?? "n/a";
   const { accountId, clientId, clientSecret, meetingUuid } = body;
   if (!accountId || !clientId || !clientSecret || !meetingUuid) {
     return NextResponse.json(
@@ -135,11 +137,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    serverLog("info", "ext:zoom-transcript", "fetched", { chars: plainText.length, rid });
     return NextResponse.json({ transcript: plainText, chars: plainText.length });
   } catch (err) {
+    serverLog("error", "ext:zoom-transcript", "vtt download failed", { error: String(err), rid });
     return NextResponse.json(
       { error: `Transcript fetch error: ${String(err)}` },
       { status: 502 },
     );
   }
 }
+
+export const POST = withRequestLogging("api:zoom/transcript", handler);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import HelpTip from "./HelpTip";
 
 const STORAGE_KEY = "video-sync:connections";
 
@@ -187,6 +188,15 @@ export default function ConnectionsPanel() {
           {show ? "Hide" : "Configure"}
         </button>
       </h2>
+      <HelpTip>
+        Store API credentials for external services. Credentials are saved only in your
+        browser&apos;s localStorage — nothing is sent to any server until you use a feature that
+        requires them. <strong>Zoom</strong> and <strong>YouTube</strong> use OAuth 2.0
+        (Account ID + Client ID + Secret). <strong>Fireflies</strong>, <strong>Loom</strong>,
+        and <strong>Kaltura</strong> use API keys. <strong>OpenRouter</strong> powers LLM
+        transcript summarisation in Processing Rules.
+      </HelpTip>
+
       {show && (
         <div className="connections-grid">
           {PLATFORMS.map((p) => (

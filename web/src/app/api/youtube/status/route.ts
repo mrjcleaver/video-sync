@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging } from "../../../../lib/serverLogger";
 
-export async function GET(req: NextRequest) {
+async function handler(req: NextRequest) {
   const videoId = req.nextUrl.searchParams.get("videoId");
   if (!videoId) {
     return NextResponse.json({ error: "videoId query param required" }, { status: 400 });
@@ -98,3 +99,5 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+export const GET = withRequestLogging("api:youtube/status", handler);

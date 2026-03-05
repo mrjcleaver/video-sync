@@ -6,6 +6,7 @@ import {
   saveProcessingRules,
   applyProcessingRules,
   renderTemplate,
+  requestLlmSummary,
   type ProcessingRule,
   type AttributeTransform,
   type AttributeTransformMode,
@@ -13,6 +14,7 @@ import {
 } from "../lib/processingRules";
 import { videoStore } from "../lib/store";
 import type { RuleCriteria } from "../lib/rules";
+import HelpTip from "./HelpTip";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -41,6 +43,8 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   const [editing, setEditing] = useState<ProcessingRule | null>(null);
   const [previewVideoId, setPreviewVideoId] = useState<string>("");
   const [previewResult, setPreviewResult] = useState<ReturnType<typeof applyProcessingRules> | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const persist = useCallback((updated: ProcessingRule[]) => {
     setRules(updated);
@@ -112,7 +116,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
     });
   }
 
-  function runPreview() {
+  async function runPreview() {
     const videos = videoStore.getAll();
     const video = previewVideoId
       ? videos.find((v) => v.id === previewVideoId)
@@ -121,7 +125,26 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
       setPreviewResult(null);
       return;
     }
-    setPreviewResult(applyProcessingRules(rules, video));
+
+    const needsLlm = rules.some(
+      (r) => r.enabled && r.transforms.description?.mode === "transcript_llm"
+    );
+
+    setPreviewLoading(needsLlm && !!video.transcript_text);
+    setPreviewError(null);
+
+    let enriched = video;
+    if (needsLlm && video.transcript_text) {
+      try {
+        const summary = await requestLlmSummary(video.transcript_text);
+        enriched = { ...video, description: summary.summary };
+      } catch (err) {
+        setPreviewError(`LLM summary failed: ${String(err)}`);
+      }
+    }
+
+    setPreviewResult(applyProcessingRules(rules, enriched));
+    setPreviewLoading(false);
   }
 
   function previewTemplate(template: string) {
@@ -148,6 +171,16 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
 
       {expanded && (
         <>
+          <HelpTip>
+            Processing rules transform video metadata at publish time — before a video is
+            uploaded to YouTube. Each rule matches recordings by title pattern or day of week,
+            then applies transforms to <strong>title</strong> (template or literal),{" "}
+            <strong>description</strong> (template, literal, first N chars of transcript, or
+            LLM summary via OpenRouter), <strong>tags</strong> (append or replace), and{" "}
+            <strong>privacy</strong>. Use the Preview dropdown to see the output for a
+            specific video before saving. Rules run in priority order (lower = first).
+          </HelpTip>
+
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             <button className="btn btn-sm btn-primary" onClick={() => startEdit()}>
               Add Rule
@@ -163,11 +196,15 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               ))}
             </select>
             {rules.length > 0 && (
-              <button className="btn btn-sm" onClick={runPreview}>
-                Preview
+              <button className="btn btn-sm" onClick={runPreview} disabled={previewLoading}>
+                {previewLoading ? "Generating…" : "Preview"}
               </button>
             )}
           </div>
+
+          {previewError && (
+            <div style={{ fontSize: "0.8rem", color: "var(--red)", marginBottom: 8 }}>{previewError}</div>
+          )}
 
           {previewResult && (
             <div className="rule-form" style={{ marginBottom: 12 }}>
@@ -177,12 +214,18 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
                 <strong>Title:</strong> {previewResult.title}
               </div>
-              {previewResult.description && (
-                <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
-                  <strong>Description:</strong>{" "}
+              <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
+                <strong>Description:</strong>{" "}
+                {previewResult.description ? (
                   <span style={{ color: "var(--text-muted)" }}>{previewResult.description.slice(0, 200)}{previewResult.description.length > 200 ? "…" : ""}</span>
-                </div>
-              )}
+                ) : (() => {
+                  const hasDescTransform = rules.some(r => r.enabled && r.transforms.description);
+                  if (!hasDescTransform) {
+                    return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No description transform configured — add one in the rule editor</span>;
+                  }
+                  return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>(empty — video has no description and no transcript loaded)</span>;
+                })()}
+              </div>
               <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
                 <strong>Tags:</strong> {previewResult.tags.join(", ") || "—"}
               </div>

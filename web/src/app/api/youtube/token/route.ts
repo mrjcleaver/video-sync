@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging } from "../../../../lib/serverLogger";
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   let body: { code?: string; clientId?: string; clientSecret?: string; redirectUri?: string };
   try {
     body = await req.json();
@@ -50,3 +51,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withRequestLogging("api:youtube/token", handler);

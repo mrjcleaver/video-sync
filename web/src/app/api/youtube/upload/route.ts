@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { execFile } from "child_process";
 import { createWriteStream, createReadStream } from "fs";
 import { promises as fs } from "fs";
@@ -197,7 +198,7 @@ async function downloadLoomToFile(videoId: string, outPath: string): Promise<voi
   throw new Error("Could not find a downloadable video URL on the Loom page. The video may be private or password-protected.");
 }
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   let body: UploadRequest;
   try {
     body = await req.json();
@@ -384,6 +385,7 @@ export async function POST(req: NextRequest) {
     const videoId = result.id;
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
+    serverLog("info", "ext:youtube-upload", "published", { platform: "YouTube", rid: req.headers.get("x-request-id") ?? "n/a" });
     return NextResponse.json({ videoId, videoUrl });
   } catch (err) {
     return NextResponse.json(
@@ -394,3 +396,5 @@ export async function POST(req: NextRequest) {
     fs.unlink(tmpPath).catch(() => {});
   }
 }
+
+export const POST = withRequestLogging("api:youtube/upload", handler);

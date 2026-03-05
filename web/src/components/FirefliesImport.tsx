@@ -4,6 +4,7 @@ import { useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
+import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
@@ -139,6 +140,11 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
   }
 
   const durationMinutes = (t: NormalisedTranscript) => Math.round(t.duration_seconds / 60);
+  function fmtHHMM(totalMinutes: number): string {
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}:${String(m).padStart(2, "0")}`;
+  }
 
   const visible = transcripts.filter((t) => {
     const mins = durationMinutes(t);
@@ -176,6 +182,14 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
           </button>
         </div>
       </div>
+
+      <HelpTip>
+        Import meeting transcripts from Fireflies.ai. Choose a date range and filter by title,
+        duration, or day of week. Meetings with a <strong>✓ transcript</strong> badge include
+        full text that will be stored alongside the video record — useful for LLM-generated
+        descriptions in Processing Rules. Your Fireflies API key must be configured in
+        Connections first.
+      </HelpTip>
 
       {error && <div className="zoom-import-error">{error}</div>}
 
@@ -236,7 +250,7 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
                       minute: "2-digit",
                     })}
                     {" · "}
-                    {durationMinutes(t)} min
+                    <span title={`${durationMinutes(t)} min`}>{fmtHHMM(durationMinutes(t))}</span>
                     {t.transcript_text && (
                       <span style={{ color: "var(--green)", marginLeft: 4 }}>✓ transcript</span>
                     )}

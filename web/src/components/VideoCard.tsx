@@ -15,9 +15,9 @@ const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] 
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
 
 function formatDuration(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return `${h}:${String(m).padStart(2, "0")}`;
 }
 
 function formatDate(iso: string): string {
@@ -56,6 +56,8 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [showAttrsPreview, setShowAttrsPreview] = useState(false);
+  const [attrsPreview, setAttrsPreview] = useState<PublishAttributes | null>(null);
 
   function approve() {
     videoStore.mutate(video.id, (r) =>
@@ -453,6 +455,16 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     onMutated();
   }
 
+  function toggleAttrsPreview() {
+    if (showAttrsPreview) {
+      setShowAttrsPreview(false);
+      return;
+    }
+    const attrs = applyProcessingRules(loadProcessingRules(), video);
+    setAttrsPreview(attrs);
+    setShowAttrsPreview(true);
+  }
+
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
@@ -474,7 +486,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
 
       <div className="video-card-meta">
         <span>{video.source_platform}</span>
-        <span>{formatDuration(video.duration_seconds)}</span>
+        <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
         {video.participants.length > 0 && (
           <span>{video.participants.length} participants</span>
@@ -520,6 +532,39 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           {transcriptError && (
             <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
           )}
+        </div>
+      )}
+
+      {/* Processing rules preview (pre-approve) */}
+      {showAttrsPreview && attrsPreview && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, padding: "10px 12px", marginBottom: 8, fontSize: "0.78rem" }}>
+          <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 6, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Processing rules preview
+          </div>
+          {attrsPreview.title !== video.title && (
+            <div style={{ marginBottom: 6 }}>
+              <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Title → </span>
+              <span style={{ fontWeight: 600 }}>{attrsPreview.title}</span>
+            </div>
+          )}
+          {attrsPreview.description && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ color: "var(--text-muted)", fontSize: "0.7rem", marginBottom: 2 }}>Description</div>
+              <div style={{ whiteSpace: "pre-wrap", color: "var(--text)", lineHeight: 1.5 }}>{attrsPreview.description}</div>
+            </div>
+          )}
+          {attrsPreview.tags.length > 0 && (
+            <div style={{ marginBottom: 4 }}>
+              <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Tags: </span>
+              {attrsPreview.tags.map(t => (
+                <span key={t} style={{ display: "inline-block", fontSize: "0.68rem", padding: "1px 6px", borderRadius: 10, background: "var(--bg)", border: "1px solid var(--border)", marginRight: 4 }}>{t}</span>
+              ))}
+            </div>
+          )}
+          <div>
+            <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Privacy: </span>
+            <span>{attrsPreview.privacy_status}</span>
+          </div>
         </div>
       )}
 
@@ -693,6 +738,11 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         {canApprove && (
           <button className="btn btn-sm btn-green" onClick={approve}>
             Approve
+          </button>
+        )}
+        {canApprove && (
+          <button className="btn btn-sm" onClick={toggleAttrsPreview} style={{ fontSize: "0.72rem" }}>
+            {showAttrsPreview ? "Hide preview" : "Preview"}
           </button>
         )}
         {canScope && (

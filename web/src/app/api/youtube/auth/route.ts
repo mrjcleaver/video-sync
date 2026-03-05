@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging } from "../../../../lib/serverLogger";
 
-export async function GET(req: NextRequest) {
+async function handler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get("clientId");
 
@@ -26,3 +27,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.redirect(authUrl.toString());
 }
+
+export const GET = withRequestLogging("api:youtube/auth", handler);

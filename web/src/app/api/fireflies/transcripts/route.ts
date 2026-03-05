@@ -7,6 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 
 const FIREFLIES_GRAPHQL = "https://api.fireflies.ai/graphql";
 const PAGE_SIZE = 50; // Fireflies max per query
@@ -146,7 +147,7 @@ async function graphql(apiKey: string, variables: Record<string, unknown>) {
   return json.data?.transcripts as FirefliesTranscript[];
 }
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   let body: { apiKey?: string; from?: string; to?: string };
   try {
     body = await req.json();
@@ -162,6 +163,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const rid = req.headers.get("x-request-id") ?? "n/a";
   const toDate = to || new Date().toISOString().slice(0, 10);
   const fromDate = from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
 
@@ -185,14 +187,18 @@ export async function POST(req: NextRequest) {
       skip += PAGE_SIZE;
     }
 
+    serverLog("info", "ext:fireflies", "done", { count: all.length, pages: Math.ceil(all.length / PAGE_SIZE), rid });
     return NextResponse.json({
       transcripts: all.map(normalise),
       total: all.length,
     });
   } catch (err) {
+    serverLog("error", "ext:fireflies", "failed", { error: String(err), rid });
     return NextResponse.json(
       { error: String(err) },
       { status: 502 },
     );
   }
 }
+
+export const POST = withRequestLogging("api:fireflies/transcripts", handler);

@@ -5,6 +5,7 @@
  */
 
 import { WasmVideoRecord, VideoRecordJSON, ensureWasm } from "./wasm";
+import { clientLog } from "./logger";
 
 const STORAGE_KEY = "video-sync:records";
 const TRANSCRIPTS_KEY = "video-sync:transcripts";
@@ -59,7 +60,7 @@ class VideoStore {
           record.to_json();
           this.records.set(record.id(), record);
         } catch {
-          console.warn("Skipping corrupt record during hydrate");
+          clientLog("warn", "store", "Skipping corrupt record during hydrate");
         }
       }
       if (this.records.size < snapshots.length) {
@@ -76,7 +77,7 @@ class VideoStore {
       try {
         snapshots.push(record.to_json());
       } catch {
-        console.warn(`Dropping record ${id} — serialization failed`);
+        clientLog("warn", "store", "Dropping record — serialization failed", { video_id: id });
         this.records.delete(id);
       }
     }
@@ -91,7 +92,7 @@ class VideoStore {
       localStorage.setItem(TRANSCRIPTS_KEY, JSON.stringify(transcriptMap));
     } catch {
       // Quota exceeded for transcripts — not fatal, WASM records still persist
-      console.warn("Transcript cache too large for localStorage — transcripts will be lost on reload");
+      clientLog("warn", "store", "Transcript cache too large for localStorage — transcripts will be lost on reload");
     }
   }
 
@@ -114,7 +115,7 @@ class VideoStore {
         if (transcript) json.transcript_text = transcript;
         result.push(json);
       } catch {
-        console.warn(`Dropping unserializable record ${id}`);
+        clientLog("warn", "store", "Dropping unserializable record", { video_id: id });
         this.records.delete(id);
       }
     }
@@ -152,15 +153,19 @@ class VideoStore {
       }
       throw new Error(`Record ${id} not found`);
     }
+    const statusBefore = (() => { try { return (JSON.parse(record.to_json()) as { status?: string }).status; } catch { return "unknown"; } })();
     let events: string;
     try {
       events = fn(record);
     } catch (err) {
+      clientLog("error", "wasm", "transition failed", { video_id: id, status_before: statusBefore, error: String(err) });
       // Defer notify to ensure WASM RefCell borrow is fully released
       // before any subsequent to_json() calls in persist()
       queueMicrotask(() => this.notify());
       throw err;
     }
+    const statusAfter = (() => { try { return (JSON.parse(record.to_json()) as { status?: string }).status; } catch { return "unknown"; } })();
+    clientLog("debug", "wasm", "transition", { video_id: id, status_before: statusBefore, status_after: statusAfter });
     this.notify();
     return events;
   }

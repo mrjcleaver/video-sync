@@ -4,6 +4,7 @@ import { useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
+import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
@@ -11,6 +12,13 @@ interface ZoomRecordingFile {
   file_type: string;
   download_url?: string;
   play_url?: string;
+  status?: string;
+}
+
+function fmtHHMM(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
 }
 
 interface ZoomMeeting {
@@ -177,6 +185,14 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
         </div>
       </div>
 
+      <HelpTip>
+        Fetch and import recordings from your Zoom account. Select a date range, apply filters
+        by title, duration, or day of week, then check the recordings you want to bring into
+        the pipeline. Zoom credentials (Account ID, Client ID, Client Secret) must be configured
+        in Connections first. A <strong>✓ transcript</strong> badge means Zoom has a
+        transcript file available for that recording.
+      </HelpTip>
+
       {error && <div className="zoom-import-error">{error}</div>}
 
       {fetched && meetings.length > 0 && (
@@ -241,8 +257,11 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
-                    {" \u00b7 "}
-                    {m.duration} min
+                    {" · "}
+                    <span title={`${m.duration} min`}>{fmtHHMM(m.duration)}</span>
+                    {m.recording_files?.some(f => f.file_type === "TRANSCRIPT") && (
+                      <span style={{ color: "var(--green)", marginLeft: 4 }}>✓ transcript</span>
+                    )}
                   </span>
                 </div>
               </label>
