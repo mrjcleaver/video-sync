@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::events::MetadataEdits;
-use crate::catalog::value_objects::{Actor, LocationRole, Platform, SourcePlatform};
+use crate::catalog::value_objects::{Actor, DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform};
 
 /// Commands accepted by the VideoRecord aggregate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,4 +138,31 @@ pub struct AbandonVideo {
 pub struct MarkToRetry {
     pub actor: Actor,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkUpstream {
+    pub actor: Actor,
+    /// Catalog ID of the upstream VideoRecord. None = phantom node.
+    pub video_id: Option<uuid::Uuid>,
+    pub platform: Platform,
+    pub external_id: String,
+    pub account_hint: Option<String>,
+    pub relation: DerivationType,
+    #[serde(default = "LinkUpstream::default_origin")]
+    pub linked_by: LinkOrigin,
+}
+
+impl LinkUpstream {
+    fn default_origin() -> LinkOrigin { LinkOrigin::Manual }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnlinkUpstream {
+    pub actor: Actor,
+    pub platform: Platform,
+    pub external_id: String,
+    /// If true, add to rejected_links to suppress future auto-suggestions.
+    #[serde(default)]
+    pub reject: bool,
 }

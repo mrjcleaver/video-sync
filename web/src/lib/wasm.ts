@@ -37,6 +37,9 @@ export interface VideoRecordJSON {
   destination_id: string | null;
   destination_url: string | null;
   locations: PlatformLocationJSON[];
+  upstream_links: UpstreamLinkJSON[];
+  rejected_links: RejectedLinkJSON[];
+  metadata_extra: Record<string, unknown> | null;
 }
 
 export interface NoteJSON {
@@ -54,6 +57,39 @@ export interface PlatformLocationJSON {
   ordinal: number;
   synced_at: string;
   status: string | null;
+}
+
+export interface UpstreamLinkJSON {
+  video_id: string | null;
+  platform: string;
+  external_id: string;
+  account_hint: string | null;
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  linked_by: "Auto" | "Manual";
+  linked_at: string;
+}
+
+export interface RejectedLinkJSON {
+  platform: string;
+  external_id: string;
+  rejected_at: string;
+}
+
+export interface LinkUpstreamCmd {
+  actor: { user_id: string; role: string };
+  video_id?: string | null;
+  platform: string;
+  external_id: string;
+  account_hint?: string;
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  linked_by?: "Auto" | "Manual";
+}
+
+export interface UnlinkUpstreamCmd {
+  actor: { user_id: string; role: string };
+  platform: string;
+  external_id: string;
+  reject?: boolean;
 }
 
 export interface AddLocationCmd {

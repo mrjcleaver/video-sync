@@ -1,0 +1,22 @@
+# Build artifacts
+target/
+web/.next/
+web/node_modules/
+web/data/
+
+# Dev tooling
+.devcontainer/
+.claude-flow/
+web/.claude-flow/
+**/.git/
+
+# Secrets — never baked into image
+.env
+.env.*
+web/.env
+web/.env.*
+
+# Docs and tests (not needed at runtime)
+docs/
+**/*.md
+!web/public/**/*.md

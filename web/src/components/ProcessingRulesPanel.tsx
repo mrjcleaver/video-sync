@@ -11,6 +11,7 @@ import {
   type AttributeTransform,
   type AttributeTransformMode,
   type TagTransform,
+  type TrimSnapMode,
 } from "../lib/processingRules";
 import { videoStore } from "../lib/store";
 import type { RuleCriteria } from "../lib/rules";
@@ -229,9 +230,14 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
                 <strong>Tags:</strong> {previewResult.tags.join(", ") || "—"}
               </div>
-              <div style={{ fontSize: "0.8rem" }}>
+              <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
                 <strong>Privacy:</strong> {previewResult.privacy_status}
               </div>
+              {previewResult.trim_start_seconds > 0 && (
+                <div style={{ fontSize: "0.8rem" }}>
+                  <strong>Trim start:</strong> {previewResult.trim_start_seconds}s (skip first {Math.floor(previewResult.trim_start_seconds / 60)}m {previewResult.trim_start_seconds % 60}s)
+                </div>
+              )}
             </div>
           )}
 
@@ -260,6 +266,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                 )}
                 {rule.transforms.tags && (
                   <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>tags</span>
+                )}
+                {rule.transforms.trim && (
+                  <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>trim</span>
                 )}
                 <button className="btn btn-sm" onClick={() => startEdit(rule)}>Edit</button>
                 <button className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Del</button>
@@ -310,6 +319,28 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                   onChange={(e) => updateCriteria({ title_pattern: e.target.value || undefined })}
                   placeholder="e.g. Live Vibe Coding"
                 />
+              </div>
+              <div className="form-field">
+                <label>Source platforms</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["Zoom", "Fireflies", "Loom"].map((p) => (
+                    <button
+                      key={p}
+                      className={`btn btn-sm ${(editing.criteria.source_platforms ?? []).includes(p) ? "btn-primary" : ""}`}
+                      onClick={() => {
+                        const cur = editing.criteria.source_platforms ?? [];
+                        const next = cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p];
+                        updateCriteria({ source_platforms: next.length > 0 ? next : undefined });
+                      }}
+                      style={{ minWidth: 72 }}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: 2 }}>
+                  Leave unselected to match any platform. For trim rules, select Zoom and/or Fireflies only.
+                </div>
               </div>
               <div className="form-field">
                 <label>Days of week</label>
@@ -496,6 +527,51 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                       placeholder="live-coding, rust, webdev"
                     />
                   </div>
+                </div>
+              )}
+
+              {/* Trim transform */}
+              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
+                Pre-processing: start trim (ADR-021)
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.75rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!editing.transforms.trim}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        transforms: {
+                          ...editing.transforms,
+                          trim: e.target.checked ? { snap: "hour" } : undefined,
+                        },
+                      })
+                    }
+                  />
+                  Snap start to boundary
+                </label>
+              </div>
+              {editing.transforms.trim && (
+                <div className="form-field">
+                  <label>Snap to</label>
+                  <select
+                    value={editing.transforms.trim.snap}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        transforms: {
+                          ...editing.transforms,
+                          trim: { snap: e.target.value as TrimSnapMode },
+                        },
+                      })
+                    }
+                    style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)", width: "100%" }}
+                  >
+                    <option value="hour">:00 (top of hour only)</option>
+                    <option value="half">:00 / :30</option>
+                    <option value="quarter">:00 / :15 / :30 / :45</option>
+                  </select>
                 </div>
               )}
 

@@ -1,0 +1,63 @@
+# ADR-018: Cloud Build pipeline
+# Trigger substitutions set in the Cloud Build trigger UI:
+#   _REGION      e.g. europe-west1
+#   _REPO        e.g. video-sync            (Artifact Registry repo name)
+#   _SERVICE     e.g. video-sync            (Cloud Run service name)
+#   _PROJECT_ID  automatically available as $PROJECT_ID
+
+substitutions:
+  _REGION: europe-west1
+  _REPO: video-sync
+  _SERVICE: video-sync
+
+steps:
+  # 1. Build the image
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:$SHORT_SHA
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:latest
+      - --cache-from
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:latest
+      - .
+
+  # 2. Push both tags
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app
+    waitFor: [build]
+
+  # 3. Deploy to Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --timeout=3600
+      - --concurrency=1
+      - --memory=512Mi
+      - --cpu=1
+      - --min-instances=0
+      - --max-instances=3
+      - --set-env-vars=NODE_ENV=production
+      - --update-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
+      - --no-allow-unauthenticated
+    waitFor: [push]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY

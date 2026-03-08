@@ -18,7 +18,7 @@ interface ZoomRecordingFile {
 function fmtHHMM(totalMinutes: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  return `${h}:${String(m).padStart(2, "0")}`;
+  return `${h}:${String(m).padStart(2, "0")}:00`;
 }
 
 interface ZoomMeeting {
@@ -135,9 +135,10 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
         tags: ["zoom-import"],
         recorded_at: meeting.start_time,
       };
-      if (meeting.share_url) {
-        cmd.metadata_extra = { share_url: meeting.share_url };
-      }
+      const meta: Record<string, string> = {};
+      if (meeting.share_url) meta.share_url = meeting.share_url;
+      if (meeting.id) meta.zoom_meeting_id = String(meeting.id);
+      if (Object.keys(meta).length > 0) cmd.metadata_extra = meta;
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);

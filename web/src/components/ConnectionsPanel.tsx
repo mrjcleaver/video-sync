@@ -98,8 +98,9 @@ function saveConnections(data: Record<string, ConnectionState>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
-export default function ConnectionsPanel() {
-  const [show, setShow] = useState(false);
+interface Props { open: boolean; onToggle: () => void; }
+
+export default function ConnectionsPanel({ open, onToggle }: Props) {
   const [connections, setConnections] = useState<Record<string, ConnectionState>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -182,12 +183,7 @@ export default function ConnectionsPanel() {
 
   return (
     <div className="connections-panel">
-      <h2>
-        Connections
-        <button className="btn btn-sm" onClick={() => setShow(!show)}>
-          {show ? "Hide" : "Configure"}
-        </button>
-      </h2>
+      <h2>Connections</h2>
       <HelpTip>
         Store API credentials for external services. Credentials are saved only in your
         browser&apos;s localStorage — nothing is sent to any server until you use a feature that
@@ -197,7 +193,7 @@ export default function ConnectionsPanel() {
         transcript summarisation in Processing Rules.
       </HelpTip>
 
-      {show && (
+      {open && (
         <div className="connections-grid">
           {PLATFORMS.map((p) => (
             <div

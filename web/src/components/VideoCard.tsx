@@ -1,23 +1,40 @@
 "use client";
 
-import { useState } from "react";
-import type { VideoRecordJSON, PlatformLocationJSON } from "../lib/wasm";
+import { useState, useMemo } from "react";
+import type { VideoRecordJSON, PlatformLocationJSON, UpstreamLinkJSON } from "../lib/wasm";
+import type { LoomMetadata } from "../app/api/loom/metadata/route";
 import { videoStore, bootStore } from "../lib/store";
 import { addExclusion } from "../lib/rules";
 import {
   loadProcessingRules,
+  loadPostProcessingRules,
   applyProcessingRules,
+  firePostProcessingRules,
   requestLlmSummary,
   type PublishAttributes,
 } from "../lib/processingRules";
+import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
 
+/** Resolve internal pseudo-URLs to real web URLs, or return null for non-navigable schemes. */
+function resolveExternalUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("fireflies://")) {
+    const id = url.slice("fireflies://".length);
+    return `https://app.fireflies.ai/view/${id}`;
+  }
+  // zoom://recording/... and other internal schemes have no navigable web URL
+  return null;
+}
+
 function formatDuration(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
-  return `${h}:${String(m).padStart(2, "0")}`;
+  const s = Math.floor(secs % 60);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 function formatDate(iso: string): string {
@@ -58,6 +75,52 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [showAttrsPreview, setShowAttrsPreview] = useState(false);
   const [attrsPreview, setAttrsPreview] = useState<PublishAttributes | null>(null);
+  const [showProvenance, setShowProvenance] = useState(false);
+  const [showTranscriptPreview, setShowTranscriptPreview] = useState(false);
+  const [loomInfo, setLoomInfo] = useState<LoomMetadata | null>(null);
+  const [loomFetching, setLoomFetching] = useState(false);
+  const [loomError, setLoomError] = useState<string | null>(null);
+  const [linkPlatform, setLinkPlatform] = useState("Zoom");
+  const [linkExternalId, setLinkExternalId] = useState("");
+  const [linkRelation, setLinkRelation] = useState("SameEvent");
+  const [showLinkForm, setShowLinkForm] = useState(false);
+
+  const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
+
+  async function fetchLoomMetadata() {
+    setLoomFetching(true);
+    setLoomError(null);
+    try {
+      const res = await fetch(
+        `/api/loom/metadata?url=${encodeURIComponent(video.download_url)}`,
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setLoomInfo(data as LoomMetadata);
+      onEvent(`LoomMetadataFetched: "${data.title}" by ${data.authorName}`);
+    } catch (err) {
+      setLoomError(String(err));
+    } finally {
+      setLoomFetching(false);
+    }
+  }
+
+  function applyLoomMetadata() {
+    if (!loomInfo) return;
+    const edits: Record<string, unknown> = {};
+    if (loomInfo.title) edits.title = loomInfo.title;
+    if (loomInfo.description) edits.description = loomInfo.description;
+    videoStore.mutate(video.id, (r) =>
+      r.update_metadata(
+        JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          edits,
+        }),
+      ),
+    );
+    onEvent(`MetadataApplied: "${video.title}" ← Loom${loomInfo.description ? " (with description)" : ""}`);
+    onMutated();
+  }
 
   function approve() {
     videoStore.mutate(video.id, (r) =>
@@ -161,27 +224,49 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     setUploading(true);
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
-    setUploadPhase(isZoomSource ? "Downloading from Zoom..." : isLoomSource ? "Downloading from Loom..." : "Uploading to YouTube...");
+    const isFirefliesSource = video.download_url.startsWith("fireflies://");
+    setUploadPhase(isZoomSource ? "Downloading from Zoom..." : isLoomSource ? "Downloading from Loom..." : isFirefliesSource ? "Downloading from Fireflies..." : "Uploading to YouTube...");
 
     try {
-      // Include Zoom credentials if the source is a Zoom recording
       const zoomCreds = connections["Zoom"]?.credentials;
+      const ffCreds = connections["Fireflies"]?.credentials;
+      // Build provenance footer (ADR-022) — appended to description so the
+      // YouTube video itself records its catalog origin, independent of local store.
+      const footerParts = [
+        `catalog:${video.id}`,
+        `source:${video.source_platform}:${video.source_id}`,
+      ];
+      for (const link of video.upstream_links ?? []) {
+        footerParts.push(`upstream:${link.platform}:${link.external_id}`);
+      }
+      const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
+      const descriptionWithFooter = `${attrs.description ?? ""}${provenanceFooter}`.slice(0, 5000);
+
       const uploadBody: Record<string, unknown> = {
         refreshToken: ytCreds.refreshToken,
         clientId: ytCreds.clientId,
         clientSecret: ytCreds.clientSecret,
         title: attrs.title,
-        description: attrs.description,
+        description: descriptionWithFooter,
         tags: attrs.tags,
         downloadUrl: video.download_url,
         privacyStatus: attrs.privacy_status,
         recordedAt: video.recorded_at || undefined,
       };
 
+      if (attrs.trim_start_seconds > 0) {
+        uploadBody.trimStartSeconds = attrs.trim_start_seconds;
+        onEvent(`TrimApplied: "${video.title}" — ${attrs.trim_start_seconds}s from start`);
+      }
+
       if (isZoomSource && zoomCreds) {
         uploadBody.zoomAccountId = zoomCreds.accountId;
         uploadBody.zoomClientId = zoomCreds.clientId;
         uploadBody.zoomClientSecret = zoomCreds.clientSecret;
+      }
+
+      if (isFirefliesSource && ffCreds?.apiKey) {
+        uploadBody.firefliesApiKey = ffCreds.apiKey;
       }
 
       if (isZoomSource) {
@@ -206,6 +291,12 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       try {
         data = await res.json();
       } catch {
+        if (res.status === 504 || res.status === 502) {
+          throw new Error(
+            `Upload timed out (${res.status}) — the video download + upload to YouTube takes longer than the dev server connection allows. ` +
+            `The upload may still be running server-side. Check YouTube Studio before retrying.`
+          );
+        }
         throw new Error(`Server returned ${res.status} with non-JSON response`);
       }
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
@@ -220,6 +311,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       );
       onEvent(`VideoPublished: "${video.title}" -> ${data.videoUrl}`);
       onMutated();
+      firePostProcessingRules(loadPostProcessingRules(), true, video, data.videoUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       videoStore.mutate(video.id, (r) =>
@@ -227,6 +319,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       );
       onEvent(`VideoPublishFailed: "${video.title}" — ${msg}`);
       onMutated();
+      firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
       setUploading(false);
       setUploadPhase("");
@@ -455,6 +548,40 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     onMutated();
   }
 
+  function addUpstreamLink() {
+    if (!linkExternalId.trim()) return;
+    videoStore.mutate(video.id, (r) =>
+      r.link_upstream(
+        JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          platform: linkPlatform,
+          external_id: linkExternalId.trim(),
+          relation: linkRelation,
+          linked_by: "Manual",
+        })
+      )
+    );
+    onEvent(`UpstreamLinked: "${video.title}" <- ${linkPlatform}/${linkExternalId.trim()}`);
+    setLinkExternalId("");
+    setShowLinkForm(false);
+    onMutated();
+  }
+
+  function removeUpstreamLink(link: UpstreamLinkJSON, reject = false) {
+    videoStore.mutate(video.id, (r) =>
+      r.unlink_upstream(
+        JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          platform: link.platform,
+          external_id: link.external_id,
+          reject,
+        })
+      )
+    );
+    onEvent(`UpstreamUnlinked: "${video.title}" <- ${link.platform}/${link.external_id}${reject ? " (rejected)" : ""}`);
+    onMutated();
+  }
+
   function toggleAttrsPreview() {
     if (showAttrsPreview) {
       setShowAttrsPreview(false);
@@ -464,6 +591,14 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     setAttrsPreview(attrs);
     setShowAttrsPreview(true);
   }
+
+  // Compute processed title from rules (sync — LLM mode falls back to original)
+  const previewTitle = useMemo(() => {
+    const rules = loadProcessingRules();
+    if (rules.length === 0) return null;
+    const processed = applyProcessingRules(rules, video).title;
+    return processed !== video.title ? processed : null;
+  }, [video]);
 
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
@@ -478,9 +613,16 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   );
 
   return (
-    <div className="video-card">
+    <div className="video-card" id={`video-card-${video.id}`}>
       <div className="video-card-header">
-        <h3>{video.title}</h3>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3 style={{ margin: 0 }}>{previewTitle ?? video.title}</h3>
+          {previewTitle && (
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>
+              {video.title}
+            </div>
+          )}
+        </div>
         <span className={`status-badge status-${status}`}>{status}</span>
       </div>
 
@@ -509,28 +651,126 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
-      {/* Transcript */}
-      {(video.source_platform === "Zoom" || video.source_platform === "Fireflies") && (
-        <div style={{ fontSize: "0.75rem", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
-          {video.transcript_text ? (
-            <span style={{ color: "var(--green)" }}>
-              Transcript loaded ({Math.round(video.transcript_text.length / 5)} words est.)
-            </span>
-          ) : video.source_platform === "Zoom" ? (
-            <>
-              <span style={{ color: "var(--text-muted)" }}>No transcript</span>
+      {/* Loom metadata fetch */}
+      {isLoomSource && (
+        <div style={{ fontSize: "0.75rem", marginBottom: 8 }}>
+          {!loomInfo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button
                 className="btn btn-sm"
                 style={{ padding: "1px 8px", fontSize: "0.7rem" }}
-                onClick={loadZoomTranscript}
-                disabled={loadingTranscript}
+                onClick={fetchLoomMetadata}
+                disabled={loomFetching}
               >
-                {loadingTranscript ? "Loading…" : "Load Transcript"}
+                {loomFetching ? "Fetching…" : "Fetch Loom info"}
               </button>
-            </>
-          ) : null}
-          {transcriptError && (
-            <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
+              {loomError && (
+                <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{loomError}</span>
+              )}
+            </div>
+          )}
+          {loomInfo && (
+            <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                {loomInfo.thumbnailUrl && (
+                  <img
+                    src={loomInfo.thumbnailUrl}
+                    alt="Loom thumbnail"
+                    style={{ width: 120, height: 68, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
+                  />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.8rem", marginBottom: 2 }}>{loomInfo.title}</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: 2 }}>
+                    by {loomInfo.authorName}
+                    {loomInfo.durationSeconds != null && (
+                      <span style={{ marginLeft: 8 }}>{formatDuration(loomInfo.durationSeconds)}</span>
+                    )}
+                    {loomInfo.width && loomInfo.height && (
+                      <span style={{ marginLeft: 8 }}>{loomInfo.width}×{loomInfo.height}</span>
+                    )}
+                  </div>
+                  {loomInfo.description && (
+                    <div style={{
+                      fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 4,
+                      maxHeight: 80, overflowY: "auto", whiteSpace: "pre-wrap", lineHeight: 1.5,
+                    }}>
+                      {loomInfo.description}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    <button
+                      className="btn btn-sm btn-primary"
+                      style={{ padding: "1px 8px", fontSize: "0.7rem" }}
+                      onClick={applyLoomMetadata}
+                    >
+                      Apply to record
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: "1px 6px", fontSize: "0.7rem" }}
+                      onClick={() => setLoomInfo(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transcript */}
+      {(video.source_platform === "Zoom" || video.source_platform === "Fireflies") && (
+        <div style={{ fontSize: "0.75rem", marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {video.transcript_text ? (
+              <>
+                <span style={{ color: "var(--green)" }}>
+                  Transcript ({Math.round(video.transcript_text.length / 5)} words est.)
+                </span>
+                <button
+                  className="btn btn-sm"
+                  style={{ padding: "1px 6px", fontSize: "0.65rem" }}
+                  onClick={() => setShowTranscriptPreview((v) => !v)}
+                >
+                  {showTranscriptPreview ? "Hide" : "Preview"}
+                </button>
+              </>
+            ) : video.source_platform === "Zoom" ? (
+              <>
+                <span style={{ color: "var(--text-muted)" }}>No transcript</span>
+                <button
+                  className="btn btn-sm"
+                  style={{ padding: "1px 8px", fontSize: "0.7rem" }}
+                  onClick={loadZoomTranscript}
+                  disabled={loadingTranscript}
+                >
+                  {loadingTranscript ? "Loading…" : "Load Transcript"}
+                </button>
+              </>
+            ) : null}
+            {transcriptError && (
+              <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
+            )}
+          </div>
+          {showTranscriptPreview && video.transcript_text && (
+            <div style={{
+              marginTop: 6,
+              padding: "6px 8px",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text-muted)",
+              lineHeight: 1.55,
+              whiteSpace: "pre-wrap",
+              maxHeight: 160,
+              overflowY: "auto",
+              fontSize: "0.72rem",
+            }}>
+              {video.transcript_text.slice(0, 800)}{video.transcript_text.length > 800 ? "…" : ""}
+            </div>
           )}
         </div>
       )}
@@ -574,18 +814,21 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           {video.locations.map((loc) => (
             <div key={`${loc.platform}-${loc.external_id}`} className="location-row">
               <span className="location-platform">{loc.platform}</span>
-              {loc.external_url ? (
-                <a
-                  className="location-link"
-                  href={loc.external_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {loc.external_id}
-                </a>
-              ) : (
-                <span style={{ fontSize: "0.8rem" }}>{loc.external_id}</span>
-              )}
+              {(() => {
+                const href = resolveExternalUrl(loc.external_url);
+                return href ? (
+                  <a
+                    className="location-link"
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {loc.external_id}
+                  </a>
+                ) : (
+                  <span style={{ fontSize: "0.8rem" }}>{loc.external_id}</span>
+                );
+              })()}
               <span className={`location-role role-${loc.role}`}>{loc.role}</span>
               {loc.status && (
                 <span className="location-status">{loc.status}</span>
@@ -647,6 +890,71 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
+      {/* Provenance */}
+      {showProvenance && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, padding: "10px 12px", marginBottom: 8, fontSize: "0.78rem" }}>
+          <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 6, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Upstream provenance
+          </div>
+          {(!video.upstream_links || video.upstream_links.length === 0) ? (
+            <div style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: 8 }}>No upstream links.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+              {video.upstream_links.map((link) => (
+                <div key={`${link.platform}-${link.external_id}`} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>{derivationLabel(link.relation)}</span>
+                  <span style={{ fontWeight: 600 }}>{link.platform}</span>
+                  <span style={{ fontFamily: "monospace", fontSize: "0.72rem" }}>{link.external_id}</span>
+                  {link.account_hint && <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({link.account_hint})</span>}
+                  <span style={{ color: "var(--text-muted)", fontSize: "0.65rem" }}>{linkOriginLabel(link.linked_by)}</span>
+                  <button
+                    className="btn btn-sm"
+                    style={{ padding: "1px 6px", fontSize: "0.65rem", marginLeft: "auto" }}
+                    onClick={() => removeUpstreamLink(link, false)}
+                    title="Remove link"
+                  >
+                    Remove
+                  </button>
+                  <button
+                    className="btn btn-sm btn-red"
+                    style={{ padding: "1px 6px", fontSize: "0.65rem" }}
+                    onClick={() => removeUpstreamLink(link, true)}
+                    title="Reject — suppress future auto-suggestions"
+                  >
+                    Reject
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {!showLinkForm ? (
+            <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(true)}>
+              + Link upstream
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+              <select value={linkPlatform} onChange={(e) => setLinkPlatform(e.target.value)} style={{ fontSize: "0.75rem" }}>
+                {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input
+                placeholder="External ID"
+                value={linkExternalId}
+                onChange={(e) => setLinkExternalId(e.target.value)}
+                style={{ fontSize: "0.75rem", flex: 1, minWidth: 120 }}
+              />
+              <select value={linkRelation} onChange={(e) => setLinkRelation(e.target.value)} style={{ fontSize: "0.75rem" }}>
+                <option value="SameEvent">Same session</option>
+                <option value="TranscribedFrom">Transcribed from</option>
+                <option value="ScreenRecordingOf">Screen recording of</option>
+                <option value="ClipOf">Clip of</option>
+              </select>
+              <button className="btn btn-sm btn-primary" style={{ fontSize: "0.7rem" }} onClick={addUpstreamLink}>Add</button>
+              <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(false)}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Notes */}
       {(video.notes.length > 0 || showNotes) && (
         <div className="notes-section">
@@ -670,11 +978,18 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
-      {/* Fireflies publish warning */}
+      {/* Fireflies publish warnings */}
       {showPreview && video.source_platform === "Fireflies" && (
-        <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 8 }}>
-          Fireflies CDN URLs expire. Download the video file from Fireflies and upload manually, or use the original Zoom recording instead.
-        </div>
+        <>
+          <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 6 }}>
+            Fireflies CDN URLs expire. Download the video file from Fireflies and upload manually, or use the original Zoom recording instead.
+          </div>
+          {(!video.upstream_links || video.upstream_links.length === 0) && (
+            <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 8 }}>
+              No linked Zoom recording — Fireflies recordings start when the bot joins, which may be before the session goes live (e.g. pre-meeting coordination). Consider setting a trim offset or linking the Zoom source via Provenance.
+            </div>
+          )}
+        </>
       )}
 
       {/* Publish preview — shown after preparePublish() */}
@@ -723,6 +1038,33 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
               <option value="public">Public</option>
             </select>
           </div>
+          {/* Trim offset */}
+          <div className="form-field">
+            <label>Trim start (seconds)</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="number"
+                min={0}
+                value={publishAttrs.trim_start_seconds}
+                onChange={(e) => setPublishAttrs({ ...publishAttrs, trim_start_seconds: Math.max(0, parseInt(e.target.value) || 0) })}
+                style={{ width: 90 }}
+              />
+              {publishAttrs.trim_start_seconds > 0 && (
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  {Math.floor(publishAttrs.trim_start_seconds / 60)}m {publishAttrs.trim_start_seconds % 60}s skipped from start
+                </span>
+              )}
+              {publishAttrs.trim_start_seconds === 0 && (
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>no trim</span>
+              )}
+            </div>
+            {publishAttrs.trim_start_seconds > 600 && (
+              <div style={{ fontSize: "0.72rem", color: "#f5a623", marginTop: 4 }}>
+                ⚠ Trimming {Math.round(publishAttrs.trim_start_seconds / 60)} minutes — confirm this is correct, or set to 0 to upload without trim.
+              </div>
+            )}
+          </div>
+
           <div className="form-actions">
             <button className="btn btn-sm btn-green" onClick={publishToYouTube}>
               Confirm &amp; Upload
@@ -798,6 +1140,13 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
             </button>
           </>
         )}
+        <button
+          className="btn btn-sm"
+          style={{ fontSize: "0.72rem" }}
+          onClick={() => setShowProvenance((v) => !v)}
+        >
+          {showProvenance ? "Hide provenance" : "Provenance"}
+        </button>
         {!showNotes && video.notes.length === 0 && (
           <button className="btn btn-sm" onClick={() => setShowNotes(true)}>
             + Note

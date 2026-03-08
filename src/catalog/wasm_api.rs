@@ -238,6 +238,40 @@ impl WasmVideoRecord {
             .map_err(|e| JsError::new(&e.to_string()))?;
         Self::events_to_json(&events)
     }
+
+    /// Link an upstream source. Returns JSON array of emitted events.
+    pub fn link_upstream(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: LinkUpstream =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .link_upstream(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Unlink an upstream source. Returns JSON array of emitted events.
+    pub fn unlink_upstream(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: UnlinkUpstream =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .unlink_upstream(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// Get upstream links as JSON array.
+    pub fn upstream_links(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.inner.upstream_links)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Get rejected links as JSON array.
+    pub fn rejected_links(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.inner.rejected_links)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
 }
 
 impl WasmVideoRecord {

@@ -5,3 +5,5 @@ web/node_modules/
 web/.next/
 
 .claude-flow/.trend-cache.json
+
+.env.local

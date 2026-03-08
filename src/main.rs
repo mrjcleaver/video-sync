@@ -111,6 +111,8 @@ fn format_events(events: &[video_sync::catalog::events::CatalogEvent]) -> String
             video_sync::catalog::events::CatalogEvent::VideoMarkedToRetry(_) => {
                 "VideoMarkedToRetry"
             }
+            video_sync::catalog::events::CatalogEvent::UpstreamLinked(_) => "UpstreamLinked",
+            video_sync::catalog::events::CatalogEvent::UpstreamUnlinked(_) => "UpstreamUnlinked",
         })
         .collect::<Vec<_>>()
         .join(", ")

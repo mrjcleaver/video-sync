@@ -16,8 +16,8 @@
       "version": "3.12"
     }
   },
-  "postCreateCommand": "set -euo pipefail; npm install -g @anthropic-ai/claude-code && cargo install wasm-pack && cd web && npm install; cd - >/dev/null; curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH=\"$HOME/.local/bin:$PATH\"; uv tool install claude-swap; cswap --help >/dev/null",
-  "forwardPorts": [3000],
+ "postCreateCommand": "bash -lc '.devcontainer/postCreate.sh'",
+ "forwardPorts": [3000],
   "postStartCommand": "bash -lc 'export PATH=\"$HOME/.local/bin:$PATH\"; if command -v cswap >/dev/null; then echo \"claude-swap present\"; else echo \"⚠ claude-swap missing\"; fi; if [ -n \"$ANTHROPIC_API_KEY\" ]; then echo \"Claude key present\"; else echo \"⚠ Set ANTHROPIC_API_KEY or run claude login\"; fi'",
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/vscode/.local/bin"

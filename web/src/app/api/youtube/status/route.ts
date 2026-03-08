@@ -7,9 +7,9 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "videoId query param required" }, { status: 400 });
   }
 
-  const refreshToken = req.headers.get("x-youtube-refresh-token");
-  const clientId = req.headers.get("x-youtube-client-id");
-  const clientSecret = req.headers.get("x-youtube-client-secret");
+  const refreshToken = req.headers.get("x-youtube-refresh-token") || process.env.YOUTUBE_REFRESH_TOKEN;
+  const clientId = req.headers.get("x-youtube-client-id") || process.env.YOUTUBE_CLIENT_ID;
+  const clientSecret = req.headers.get("x-youtube-client-secret") || process.env.YOUTUBE_CLIENT_SECRET;
 
   if (!refreshToken || !clientId || !clientSecret) {
     return NextResponse.json(

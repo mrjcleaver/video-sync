@@ -7,35 +7,30 @@ import { loadExclusions } from "../lib/rules";
 import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
 import IndexForm from "../components/IndexForm";
-import ZoomImport from "../components/ZoomImport";
-import FirefliesImport from "../components/FirefliesImport";
+import UnifiedImport from "../components/UnifiedImport";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
+import PostProcessingRulesPanel from "../components/PostProcessingRulesPanel";
 import BackfillPanel from "../components/BackfillPanel";
 import VideoCard from "../components/VideoCard";
+import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
 
-const ALL_STATUSES = [
-  "All",
-  "Discovered",
-  "InScope",
-  "Approved",
-  "Publishing",
-  "Published",
-  "Skipped",
-  "Failed",
-  "ToRetry",
-  "Abandoned",
-] as const;
+const ACTIVE_STATUSES = ["Discovered", "InScope", "Approved", "Publishing", "Failed", "ToRetry"] as const;
+const DONE_STATUSES = ["Published", "Skipped", "Abandoned"] as const;
+const ALL_STATUSES = ["Active", "All", ...ACTIVE_STATUSES, "Done", ...DONE_STATUSES] as const;
 
 export default function Dashboard() {
   const [ready, setReady] = useState(false);
   const [videos, setVideos] = useState<VideoRecordJSON[]>([]);
   const [events, setEvents] = useState<string[]>([]);
-  const [filter, setFilter] = useState<string>("All");
+  const [filter, setFilter] = useState<string>("Active");
   const [showLogs, setShowLogs] = useState(false);
+  const [showConnections, setShowConnections] = useState(false);
+  const [view, setView] = useState<"videos" | "provenance">("videos");
+  const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
 
   useEffect(() => {
     bootStore().then(() => {
@@ -77,8 +72,24 @@ export default function Dashboard() {
     return <div className="loading">Loading WASM module...</div>;
   }
 
-  const filtered =
-    filter === "All" ? videos : videos.filter((v) => v.status === filter);
+  function lastChange(v: VideoRecordJSON): number {
+    return Math.max(
+      new Date(v.published_at || 0).getTime(),
+      new Date(v.curated_at || 0).getTime(),
+      new Date(v.indexed_at).getTime(),
+    );
+  }
+
+  const filtered = (
+    filter === "All" ? videos
+    : filter === "Active" ? videos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
+    : filter === "Done" ? videos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
+    : videos.filter((v) => v.status === filter)
+  ).slice().sort((a, b) =>
+    sortBy === "recorded"
+      ? new Date(b.recorded_at || b.indexed_at).getTime() - new Date(a.recorded_at || a.indexed_at).getTime()
+      : lastChange(b) - lastChange(a)
+  );
 
   const counts: Record<string, number> = {};
   for (const v of videos) {
@@ -100,9 +111,14 @@ export default function Dashboard() {
             <span className="stat-badge">{counts["Published"]} published</span>
           )}
           <button
+            className={`btn btn-sm ${showConnections ? "btn-primary" : ""}`}
+            onClick={() => setShowConnections((v) => !v)}
+          >
+            {showConnections ? "Hide Connections" : "Connections"}
+          </button>
+          <button
             className={`btn btn-sm ${showLogs ? "btn-primary" : ""}`}
             onClick={() => setShowLogs((v) => !v)}
-            style={{ marginLeft: 8 }}
           >
             {showLogs ? "Hide Logs" : "View Logs"}
           </button>
@@ -111,11 +127,9 @@ export default function Dashboard() {
 
       <IndexForm onIndexed={refresh} onEvent={addEvent} />
 
-      <ZoomImport onImported={refresh} onEvent={addEvent} />
+      <UnifiedImport onImported={refresh} onEvent={addEvent} />
 
-      <FirefliesImport onImported={refresh} onEvent={addEvent} />
-
-      <ConnectionsPanel />
+      <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
       <RulesPanel
         isRunnerRunning={isRunnerRunning}
@@ -125,6 +139,8 @@ export default function Dashboard() {
       />
 
       <ProcessingRulesPanel />
+
+      <PostProcessingRulesPanel />
 
       <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
@@ -141,45 +157,128 @@ export default function Dashboard() {
           ))}
       </div>
 
-      <div className="filter-tabs">
-        {ALL_STATUSES.map((s) => (
-          <button
-            key={s}
-            className={`filter-tab ${filter === s ? "active" : ""}`}
-            onClick={() => setFilter(s)}
-          >
-            {s}
-            {s !== "All" && counts[s] ? ` (${counts[s]})` : ""}
-            {s === "All" ? ` (${videos.length})` : ""}
-          </button>
-        ))}
+      {/* View switcher */}
+      <div className="filter-tabs" style={{ marginBottom: 0 }}>
+        <button
+          className={`filter-tab ${view === "videos" ? "active" : ""}`}
+          onClick={() => setView("videos")}
+        >
+          Videos ({videos.length})
+        </button>
+        <button
+          className={`filter-tab ${view === "provenance" ? "active" : ""}`}
+          onClick={() => setView("provenance")}
+        >
+          Provenance
+        </button>
       </div>
 
-      {filter === "InScope" && (counts["InScope"] ?? 0) > 0 && (
-        <div className="bulk-approve-bar">
-          <button className="btn btn-green" onClick={bulkApprove}>
-            Bulk Approve All InScope ({counts["InScope"]})
-          </button>
-        </div>
+      {view === "videos" && (
+        <>
+          <div className="filter-tabs">
+            {/* Group: summary tabs */}
+            {(["Active", "All", "Done"] as const).map((s) => {
+              const count = s === "All" ? videos.length
+                : s === "Active" ? ACTIVE_STATUSES.reduce((n, st) => n + (counts[st] ?? 0), 0)
+                : DONE_STATUSES.reduce((n, st) => n + (counts[st] ?? 0), 0);
+              return (
+                <button
+                  key={s}
+                  className={`filter-tab ${filter === s ? "active" : ""}`}
+                  style={{ fontWeight: 600 }}
+                  onClick={() => setFilter(s)}
+                >
+                  {s} ({count})
+                </button>
+              );
+            })}
+            {/* Separator */}
+            <span style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
+            {/* Active sub-statuses */}
+            {ACTIVE_STATUSES.map((s) => counts[s] ? (
+              <button
+                key={s}
+                className={`filter-tab ${filter === s ? "active" : ""}`}
+                onClick={() => setFilter(s)}
+              >
+                {s} ({counts[s]})
+              </button>
+            ) : null)}
+            {/* Separator */}
+            <span style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
+            {/* Done sub-statuses */}
+            {DONE_STATUSES.map((s) => counts[s] ? (
+              <button
+                key={s}
+                className={`filter-tab ${filter === s ? "active" : ""}`}
+                onClick={() => setFilter(s)}
+              >
+                {s} ({counts[s]})
+              </button>
+            ) : null)}
+          </div>
+
+          {filter === "InScope" && (counts["InScope"] ?? 0) > 0 && (
+            <div className="bulk-approve-bar">
+              <button className="btn btn-green" onClick={bulkApprove}>
+                Bulk Approve All InScope ({counts["InScope"]})
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, marginTop: 4 }}>
+            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
+              {filtered.length} video{filtered.length !== 1 ? "s" : ""}
+            </span>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>· Sort:</span>
+            {(["recorded", "updated"] as const).map((s) => (
+              <button
+                key={s}
+                className={`btn btn-sm ${sortBy === s ? "btn-primary" : ""}`}
+                style={{ padding: "1px 8px", fontSize: "0.72rem" }}
+                onClick={() => setSortBy(s)}
+              >
+                {s === "recorded" ? "Date recorded" : "Last change"}
+              </button>
+            ))}
+          </div>
+
+          <div className="video-list">
+            {filtered.length === 0 && (
+              <div className="empty-state">
+                {videos.length === 0
+                  ? "No videos indexed yet. Use Zoom Import, Fireflies Import, or Manual Entry above."
+                  : `No videos with status "${filter}".`}
+              </div>
+            )}
+            {filtered.map((v) => (
+              <VideoCard
+                key={v.id}
+                video={v}
+                onMutated={refresh}
+                onEvent={addEvent}
+              />
+            ))}
+          </div>
+        </>
       )}
 
-      <div className="video-list">
-        {filtered.length === 0 && (
-          <div className="empty-state">
-            {videos.length === 0
-              ? "No videos indexed yet. Use Zoom Import, Fireflies Import, or Manual Entry above."
-              : `No videos with status "${filter}".`}
-          </div>
-        )}
-        {filtered.map((v) => (
-          <VideoCard
-            key={v.id}
-            video={v}
-            onMutated={refresh}
-            onEvent={addEvent}
+      {view === "provenance" && (
+        <div style={{ marginTop: 12 }}>
+          <ProvenanceGraph
+            videos={videos}
+            onJumpTo={(id) => {
+              setView("videos");
+              setFilter("All");
+              // Scroll to card after render
+              setTimeout(() => {
+                const el = document.getElementById(`video-card-${id}`);
+                el?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }, 100);
+            }}
           />
-        ))}
-      </div>
+        </div>
+      )}
 
       {showLogs && <EventLog events={events} forceShow />}
     </div>

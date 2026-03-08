@@ -41,6 +41,14 @@ function loadZoomCreds(): { accountId?: string; clientId?: string; clientSecret?
   } catch { return {}; }
 }
 
+function loadFirefliesCreds(): { apiKey?: string } {
+  try {
+    const raw = localStorage.getItem(CONNECTIONS_KEY);
+    const conn = raw ? JSON.parse(raw) : {};
+    return { apiKey: conn["Fireflies"]?.credentials?.apiKey };
+  } catch { return {}; }
+}
+
 function newProfile(): BackfillProfile {
   const today = new Date().toISOString().slice(0, 10);
   const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
@@ -187,6 +195,11 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       uploadBody.zoomAccountId = z.accountId;
       uploadBody.zoomClientId = z.clientId;
       uploadBody.zoomClientSecret = z.clientSecret;
+    }
+
+    if (video.download_url?.startsWith("fireflies://")) {
+      const ff = loadFirefliesCreds();
+      uploadBody.firefliesApiKey = ff.apiKey;
     }
 
     try {
@@ -535,7 +548,8 @@ const PRIVACY_COLOR: Record<string, string> = {
 function fmtDuration(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  return `${h}:${String(m).padStart(2, "0")}`;
+  const sec = Math.floor(s % 60);
+  return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 function fmtMins(s: number): string {
   return `${Math.floor(s / 60)} min`;

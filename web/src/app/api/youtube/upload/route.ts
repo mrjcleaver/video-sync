@@ -18,10 +18,13 @@ interface UploadRequest {
   downloadUrl: string;
   privacyStatus?: "private" | "unlisted" | "public";
   recordedAt?: string;
+  trimStartSeconds?: number;
   // Zoom credentials (needed when downloadUrl is zoom://recording/...)
   zoomAccountId?: string;
   zoomClientId?: string;
   zoomClientSecret?: string;
+  // Fireflies credentials (needed when downloadUrl is fireflies://...)
+  firefliesApiKey?: string;
 }
 
 async function getZoomAccessToken(accountId: string, clientId: string, clientSecret: string): Promise<string> {
@@ -198,6 +201,51 @@ async function downloadLoomToFile(videoId: string, outPath: string): Promise<voi
   throw new Error("Could not find a downloadable video URL on the Loom page. The video may be private or password-protected.");
 }
 
+async function downloadFirefliesToFile(
+  transcriptId: string,
+  apiKey: string,
+  outPath: string,
+): Promise<void> {
+  // Re-query Fireflies GraphQL to get a fresh, non-expired video URL.
+  const query = `
+    query GetTranscript($id: String!) {
+      transcript(id: $id) {
+        video_url
+        audio_url
+      }
+    }
+  `;
+  const res = await fetch("https://api.fireflies.ai/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query, variables: { id: transcriptId } }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Fireflies API error (${res.status})`);
+  }
+
+  const json = await res.json();
+  if (json.errors?.length) {
+    throw new Error(`Fireflies GraphQL error: ${json.errors[0]?.message}`);
+  }
+
+  const t = json.data?.transcript;
+  const videoUrl: string | null = t?.video_url || t?.audio_url || null;
+  if (!videoUrl) {
+    throw new Error("Fireflies returned no video or audio URL for this transcript. The recording may not be available.");
+  }
+
+  const dlRes = await fetch(videoUrl);
+  if (!dlRes.ok) {
+    throw new Error(`Fireflies video download failed (${dlRes.status})`);
+  }
+  await streamToFile(dlRes, outPath);
+}
+
 async function handler(req: NextRequest) {
   let body: UploadRequest;
   try {
@@ -206,20 +254,21 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const refreshToken = body.refreshToken || process.env.YOUTUBE_REFRESH_TOKEN;
+  const clientId = body.clientId || process.env.YOUTUBE_CLIENT_ID;
+  const clientSecret = body.clientSecret || process.env.YOUTUBE_CLIENT_SECRET;
   const {
-    refreshToken,
-    clientId,
-    clientSecret,
     title,
     description = "",
     tags = [],
     downloadUrl,
     privacyStatus = "unlisted",
-    zoomAccountId,
-    zoomClientId,
-    zoomClientSecret,
     recordedAt,
   } = body;
+  const zoomAccountId = body.zoomAccountId || process.env.ZOOM_ACCOUNT_ID;
+  const zoomClientId = body.zoomClientId || process.env.ZOOM_CLIENT_ID;
+  const zoomClientSecret = body.zoomClientSecret || process.env.ZOOM_CLIENT_SECRET;
+  const firefliesApiKey = body.firefliesApiKey || process.env.FIREFLIES_API_KEY;
 
   if (!refreshToken || !clientId || !clientSecret || !title || !downloadUrl) {
     return NextResponse.json(
@@ -260,7 +309,7 @@ async function handler(req: NextRequest) {
   }
 
   // Step 2: Download video from source to temp file (streams to disk, not memory)
-  const tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
+  let tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
   try {
     if (downloadUrl.startsWith("zoom://recording/")) {
       const meetingUuid = downloadUrl.replace("zoom://recording/", "");
@@ -271,6 +320,15 @@ async function handler(req: NextRequest) {
         );
       }
       await downloadZoomToFile(meetingUuid, zoomAccountId, zoomClientId, zoomClientSecret, tmpPath);
+    } else if (downloadUrl.startsWith("fireflies://")) {
+      const transcriptId = downloadUrl.replace("fireflies://", "");
+      if (!firefliesApiKey) {
+        return NextResponse.json(
+          { error: "Fireflies API key required to download this recording. Configure Fireflies in Connections." },
+          { status: 400 },
+        );
+      }
+      await downloadFirefliesToFile(transcriptId, firefliesApiKey, tmpPath);
     } else {
       const loomVideoId = extractLoomVideoId(downloadUrl);
       if (loomVideoId) {
@@ -292,6 +350,45 @@ async function handler(req: NextRequest) {
       { error: `Source download error: ${String(err)}` },
       { status: 502 },
     );
+  }
+
+  // Step 2b: Trim to boundary if requested (ADR-021)
+  if (body.trimStartSeconds && body.trimStartSeconds > 0) {
+    const trimmedPath = join(tmpdir(), `video-trimmed-${Date.now()}.mp4`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "ffmpeg",
+          [
+            "-ss", String(body.trimStartSeconds),
+            "-i", tmpPath,
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            "-y", trimmedPath,
+          ],
+          { timeout: 300000 },
+          (err, _stdout, stderr) => {
+            if (err) {
+              const detail = (stderr || "").trim() || err.message;
+              reject(new Error(`ffmpeg trim failed: ${detail.slice(0, 300)}`));
+            } else {
+              resolve();
+            }
+          },
+        );
+      });
+      fs.unlink(tmpPath).catch(() => {});
+      tmpPath = trimmedPath;
+      serverLog("info", "ext:youtube-upload", "trimmed", { trimStartSeconds: body.trimStartSeconds, rid: req.headers.get("x-request-id") ?? "n/a" });
+    } catch (err) {
+      fs.unlink(tmpPath).catch(() => {});
+      fs.unlink(trimmedPath).catch(() => {});
+      return NextResponse.json(
+        { error: `Trim failed: ${String(err)}` },
+        { status: 500 },
+      );
+    }
   }
 
   // Step 3: Get file size and initiate resumable upload
@@ -396,5 +493,9 @@ async function handler(req: NextRequest) {
     fs.unlink(tmpPath).catch(() => {});
   }
 }
+
+// Cloud Run: --timeout=3600 in cloudbuild.yaml.
+// Vercel: Enterprise plan needed for >60s; set here as a hint.
+export const maxDuration = 3600;
 
 export const POST = withRequestLogging("api:youtube/upload", handler);

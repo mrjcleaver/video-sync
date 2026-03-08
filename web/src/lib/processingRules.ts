@@ -26,11 +26,18 @@ export interface TagTransform {
   tags: string[];
 }
 
+export type TrimSnapMode = "hour" | "half" | "quarter"; // :00 | :00/:30 | :00/:15/:30/:45
+
+export interface TrimTransform {
+  snap: TrimSnapMode;
+}
+
 export interface ProcessingTransforms {
   title?: AttributeTransform;
   description?: AttributeTransform;
   tags?: TagTransform;
   privacy_status?: "private" | "unlisted" | "public";
+  trim?: TrimTransform;
 }
 
 export interface ProcessingRule {
@@ -47,6 +54,22 @@ export interface PublishAttributes {
   description: string;
   tags: string[];
   privacy_status: "private" | "unlisted" | "public";
+  trim_start_seconds: number; // 0 = no trim
+}
+
+// ── Pre-processing: trim to boundary ─────────────────────────
+
+/** Seconds to trim from the start of a recording to reach the next snap boundary. */
+export function computeTrimSeconds(video: VideoRecordJSON, trim: TrimTransform): number {
+  const date = new Date(video.recorded_at || video.indexed_at);
+  const currentOffset = date.getMinutes() * 60 + date.getSeconds();
+  if (currentOffset === 0) return 0; // already on a boundary
+
+  const snapMinutes = trim.snap === "quarter" ? 15 : trim.snap === "half" ? 30 : 60;
+  for (let b = snapMinutes * 60; b <= 3600; b += snapMinutes * 60) {
+    if (b > currentOffset) return b - currentOffset;
+  }
+  return 3600 - currentOffset;
 }
 
 // ── Storage ───────────────────────────────────────────────────
@@ -81,18 +104,22 @@ function formatDate(date: Date, fmt: string): string {
   const y = date.getFullYear();
   const h = date.getHours();
   const min = date.getMinutes();
-  return fmt
-    .replace("YYYY", String(y))
-    .replace("YY", String(y).slice(-2))
-    .replace("MMMM", MONTH_NAMES[m])
-    .replace("MMM", MONTH_SHORT[m])
-    .replace("MM", String(m + 1).padStart(2, "0"))
-    .replace("M", String(m + 1))
-    .replace("DD", String(d).padStart(2, "0"))
-    .replace("D", String(d))
-    .replace("ddd", DAY_NAMES[date.getDay()].slice(0, 3))
-    .replace("HH", String(h).padStart(2, "0"))
-    .replace("mm", String(min).padStart(2, "0"));
+  // Single-pass replace with longest tokens first — prevents "MMM"→"Mar" being
+  // clobbered by the later "M"→"3" pass, which would produce "3ar" instead of "Mar".
+  const tokens: Record<string, string> = {
+    YYYY: String(y),
+    YY:   String(y).slice(-2),
+    MMMM: MONTH_NAMES[m],
+    MMM:  MONTH_SHORT[m],
+    MM:   String(m + 1).padStart(2, "0"),
+    M:    String(m + 1),
+    DD:   String(d).padStart(2, "0"),
+    D:    String(d),
+    ddd:  DAY_NAMES[date.getDay()].slice(0, 3),
+    HH:   String(h).padStart(2, "0"),
+    mm:   String(min).padStart(2, "0"),
+  };
+  return fmt.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D|ddd|HH|mm/g, (token) => tokens[token] ?? token);
 }
 
 function buildContext(video: VideoRecordJSON): Record<string, string> {
@@ -189,6 +216,7 @@ export function applyProcessingRules(
     description: video.description ?? "",
     tags: [...video.tags],
     privacy_status: "unlisted",
+    trim_start_seconds: 0,
   };
 
   let titleSet = false;
@@ -217,9 +245,90 @@ export function applyProcessingRules(
     if (t.privacy_status) {
       attrs.privacy_status = t.privacy_status;
     }
+    if (t.trim && attrs.trim_start_seconds === 0) {
+      attrs.trim_start_seconds = computeTrimSeconds(video, t.trim);
+    }
   }
 
   return attrs;
+}
+
+// ── Post-processing rules ──────────────────────────────────────
+
+export type PostProcessingTrigger = "success" | "failure" | "always";
+
+export interface WebhookAction {
+  type: "webhook";
+  url: string;
+}
+
+export interface EmailAction {
+  type: "email";
+  to: string;
+  subject_template?: string; // supports {{title}} and {{status}}
+}
+
+export type PostProcessingAction = WebhookAction | EmailAction;
+
+export interface PostProcessingRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: PostProcessingTrigger;
+  action: PostProcessingAction;
+}
+
+const POST_STORAGE_KEY = "video-sync:post-processing-rules";
+
+export function loadPostProcessingRules(): PostProcessingRule[] {
+  try {
+    const raw = localStorage.getItem(POST_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePostProcessingRules(rules: PostProcessingRule[]): void {
+  localStorage.setItem(POST_STORAGE_KEY, JSON.stringify(rules));
+}
+
+/** Fire matching post-processing rules non-blocking after a YouTube upload. */
+export function firePostProcessingRules(
+  rules: PostProcessingRule[],
+  success: boolean,
+  video: VideoRecordJSON,
+  youtubeUrl?: string,
+  error?: string,
+): void {
+  const matching = rules.filter(
+    (r) =>
+      r.enabled &&
+      (r.trigger === "always" ||
+        (r.trigger === "success" && success) ||
+        (r.trigger === "failure" && !success)),
+  );
+  for (const rule of matching) {
+    fetch("/api/process/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: rule.action,
+        video: {
+          id: video.id,
+          title: video.title,
+          source_platform: video.source_platform,
+          source_id: video.source_id,
+          recorded_at: video.recorded_at,
+          description: video.description ?? null,
+          transcript_text: video.transcript_text ?? null,
+        },
+        success,
+        youtubeUrl,
+        error,
+      }),
+    }).catch(() => { /* best-effort — ignore network errors */ });
+  }
 }
 
 // ── OpenRouter LLM summary (async, server-side) ───────────────

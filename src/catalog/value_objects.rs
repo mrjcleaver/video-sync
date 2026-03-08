@@ -119,6 +119,49 @@ pub enum UserRole {
     Viewer,
 }
 
+/// How a downstream VideoRecord relates to its upstream source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DerivationType {
+    /// Different platform capture of the same meeting/session.
+    SameEvent,
+    /// Transcript produced by processing the upstream video.
+    TranscribedFrom,
+    /// Screen-recording or re-stream of the upstream.
+    ScreenRecordingOf,
+    /// Time-bounded clip extracted from the upstream.
+    ClipOf,
+}
+
+/// Whether a provenance link was established automatically or by a curator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinkOrigin {
+    Auto,
+    Manual,
+}
+
+/// A directional link from this VideoRecord to an upstream source.
+/// `video_id` is None when the upstream is a phantom (not indexed in this catalog).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpstreamLink {
+    /// Catalog ID of the upstream VideoRecord, if present.
+    pub video_id: Option<Uuid>,
+    pub platform: Platform,
+    pub external_id: String,
+    /// Display hint for the platform account (e.g. "ruv@ruv.net"). Not a foreign key.
+    pub account_hint: Option<String>,
+    pub relation: DerivationType,
+    pub linked_by: LinkOrigin,
+    pub linked_at: DateTime<Utc>,
+}
+
+/// A provenance link the curator has explicitly rejected — prevents re-suggestion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RejectedLink {
+    pub platform: Platform,
+    pub external_id: String,
+    pub rejected_at: DateTime<Utc>,
+}
+
 /// Internal annotation attached to a video by a curator, owner, or moderator.
 /// Not published to destination platforms.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

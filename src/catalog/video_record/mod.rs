@@ -38,6 +38,10 @@ pub struct VideoRecord {
     pub recorded_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub locations: Vec<PlatformLocation>,
+    #[serde(default)]
+    pub upstream_links: Vec<UpstreamLink>,
+    #[serde(default)]
+    pub rejected_links: Vec<RejectedLink>,
     pending_events: Vec<CatalogEvent>,
 }
 
@@ -103,6 +107,8 @@ impl VideoRecord {
             destination_id: None,
             destination_url: None,
             locations: vec![origin_location],
+            upstream_links: Vec::new(),
+            rejected_links: Vec::new(),
             pending_events: Vec::new(),
         };
 
@@ -541,6 +547,79 @@ impl VideoRecord {
             video_record_id: self.id,
             assigned_by: cmd.actor.user_id,
             moderators: cmd.moderators,
+        })])
+    }
+
+    /// Link an upstream source to this video (child → parent provenance).
+    pub fn link_upstream(&mut self, cmd: LinkUpstream) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        // Deduplicate: replace existing link for the same platform+external_id
+        self.upstream_links
+            .retain(|l| !(l.platform == cmd.platform && l.external_id == cmd.external_id));
+
+        let now = Utc::now();
+        self.upstream_links.push(UpstreamLink {
+            video_id: cmd.video_id,
+            platform: cmd.platform,
+            external_id: cmd.external_id.clone(),
+            account_hint: cmd.account_hint,
+            relation: cmd.relation,
+            linked_by: cmd.linked_by,
+            linked_at: now,
+        });
+
+        Ok(vec![CatalogEvent::UpstreamLinked(UpstreamLinked {
+            event_id: Uuid::new_v4(),
+            timestamp: now,
+            video_record_id: self.id,
+            upstream_video_id: cmd.video_id,
+            platform: cmd.platform,
+            external_id: cmd.external_id,
+            relation: cmd.relation,
+            linked_by: cmd.linked_by,
+        })])
+    }
+
+    /// Remove an upstream link from this video, optionally rejecting it to suppress re-suggestion.
+    pub fn unlink_upstream(
+        &mut self,
+        cmd: UnlinkUpstream,
+    ) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        let pos = self
+            .upstream_links
+            .iter()
+            .position(|l| l.platform == cmd.platform && l.external_id == cmd.external_id);
+
+        if pos.is_none() {
+            return Err(CatalogError::LinkNotFound {
+                platform: cmd.platform,
+                external_id: cmd.external_id,
+            });
+        }
+        self.upstream_links.remove(pos.unwrap());
+
+        if cmd.reject {
+            self.rejected_links.push(RejectedLink {
+                platform: cmd.platform,
+                external_id: cmd.external_id.clone(),
+                rejected_at: Utc::now(),
+            });
+        }
+
+        Ok(vec![CatalogEvent::UpstreamUnlinked(UpstreamUnlinked {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            platform: cmd.platform,
+            external_id: cmd.external_id,
+            rejected: cmd.reject,
         })])
     }
 

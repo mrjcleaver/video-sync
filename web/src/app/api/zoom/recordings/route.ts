@@ -9,7 +9,9 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { accountId, clientId, clientSecret } = body;
+  const accountId = body.accountId || process.env.ZOOM_ACCOUNT_ID;
+  const clientId = body.clientId || process.env.ZOOM_CLIENT_ID;
+  const clientSecret = body.clientSecret || process.env.ZOOM_CLIENT_SECRET;
   if (!accountId || !clientId || !clientSecret) {
     return NextResponse.json(
       { error: "accountId, clientId, and clientSecret are required" },

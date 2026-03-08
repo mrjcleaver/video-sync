@@ -105,10 +105,17 @@ function normalise(t: FirefliesTranscript) {
     : null;
 
   const description = t.summary?.overview?.trim() || t.summary?.gist?.trim() || null;
-  const downloadUrl = t.video_url || t.audio_url || null;
+  // Use a stable fireflies:// scheme URL — the actual video_url/audio_url CDN URLs
+  // expire and are re-fetched at upload time by the youtube/upload route.
+  const downloadUrl = `fireflies://${t.id}`;
 
   const metadataExtra: Record<string, string> = {};
-  if (t.meeting_link) metadataExtra.meeting_link = t.meeting_link;
+  if (t.meeting_link) {
+    metadataExtra.meeting_link = t.meeting_link;
+    // Extract Zoom meeting ID from URLs like https://zoom.us/j/8207417926
+    const zoomMatch = t.meeting_link.match(/zoom\.us\/j\/(\d+)/);
+    if (zoomMatch) metadataExtra.zoom_meeting_id = zoomMatch[1];
+  }
   if (t.summary?.action_items) metadataExtra.action_items = t.summary.action_items;
   if (t.summary?.outline) metadataExtra.outline = t.summary.outline;
 
@@ -155,7 +162,8 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { apiKey, from, to } = body;
+  const apiKey = body.apiKey?.trim() || process.env.FIREFLIES_API_KEY;
+  const { from, to } = body;
   if (!apiKey?.trim()) {
     return NextResponse.json(
       { error: "Fireflies API key is required. Add it in the Connections panel." },

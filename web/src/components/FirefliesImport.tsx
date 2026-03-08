@@ -4,6 +4,7 @@ import { useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
+import { applyAutoLinks } from "../lib/provenanceLinker";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -102,6 +103,8 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
   function importSelected() {
     let count = 0;
     let skipped = 0;
+    const newIds: string[] = [];
+
     for (const t of transcripts) {
       if (!selected.has(t.source_id)) continue;
       if (isExcluded("Fireflies", t.source_id)) { skipped++; continue; }
@@ -113,7 +116,7 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
         description: t.description ?? undefined,
         duration_seconds: t.duration_seconds,
         participants: t.participants,
-        download_url: t.download_url ?? `fireflies://${t.source_id}`,
+        download_url: t.download_url ?? `fireflies://unknown`,
         // transcript_text intentionally omitted — stored in JS cache, not WASM heap
         tags: t.tags,
         recorded_at: t.recorded_at,
@@ -122,6 +125,7 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
+      newIds.push(record.id());
       // Store transcript in JS-side cache (avoids large WASM heap allocations)
       if (t.transcript_text) {
         videoStore.setTranscript(record.id(), t.transcript_text);
@@ -132,6 +136,8 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
 
     if (skipped > 0) onEvent(`Fireflies import: ${skipped} excluded transcript(s) skipped`);
     if (count > 0) {
+      const linked = applyAutoLinks(newIds);
+      if (linked > 0) onEvent(`ProvenanceLinker: auto-linked ${linked} record(s) to Zoom upstream`);
       onImported();
       setTranscripts([]);
       setSelected(new Set());
@@ -140,10 +146,11 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
   }
 
   const durationMinutes = (t: NormalisedTranscript) => Math.round(t.duration_seconds / 60);
-  function fmtHHMM(totalMinutes: number): string {
-    const h = Math.floor(totalMinutes / 60);
-    const m = totalMinutes % 60;
-    return `${h}:${String(m).padStart(2, "0")}`;
+  function fmtDuration(secs: number): string {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
   const visible = transcripts.filter((t) => {
@@ -250,7 +257,7 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
                       minute: "2-digit",
                     })}
                     {" · "}
-                    <span title={`${durationMinutes(t)} min`}>{fmtHHMM(durationMinutes(t))}</span>
+                    <span title={`${durationMinutes(t)} min`}>{fmtDuration(t.duration_seconds)}</span>
                     {t.transcript_text && (
                       <span style={{ color: "var(--green)", marginLeft: 4 }}>✓ transcript</span>
                     )}

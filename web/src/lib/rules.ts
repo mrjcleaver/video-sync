@@ -16,6 +16,7 @@ export interface RuleCriteria {
   max_duration_secs?: number;
   date_from?: string; // ISO date
   date_to?: string;   // ISO date
+  source_platforms?: string[]; // e.g. ["Zoom","Fireflies"] — empty/absent = any
 }
 
 export type RuleAction = "mark_in_scope" | "auto_approve" | "auto_skip";
@@ -125,6 +126,10 @@ export function matchesCriteria(c: RuleCriteria, video: VideoRecordJSON): boolea
     const hhmm = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
     if (c.time_range.after && hhmm < c.time_range.after) return false;
     if (c.time_range.before && hhmm > c.time_range.before) return false;
+  }
+
+  if (c.source_platforms && c.source_platforms.length > 0) {
+    if (!c.source_platforms.includes(video.source_platform)) return false;
   }
 
   if (c.min_duration_secs != null && video.duration_seconds < c.min_duration_secs) return false;

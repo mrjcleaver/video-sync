@@ -33,4 +33,10 @@ pub enum CatalogError {
         platform: Platform,
         external_id: String,
     },
+
+    #[error("Upstream link not found: platform={platform:?} external_id={external_id}")]
+    LinkNotFound {
+        platform: Platform,
+        external_id: String,
+    },
 }

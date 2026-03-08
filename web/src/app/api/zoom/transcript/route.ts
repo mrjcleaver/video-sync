@@ -42,7 +42,10 @@ async function handler(req: NextRequest) {
   }
 
   const rid = req.headers.get("x-request-id") ?? "n/a";
-  const { accountId, clientId, clientSecret, meetingUuid } = body;
+  const accountId = body.accountId || process.env.ZOOM_ACCOUNT_ID;
+  const clientId = body.clientId || process.env.ZOOM_CLIENT_ID;
+  const clientSecret = body.clientSecret || process.env.ZOOM_CLIENT_SECRET;
+  const { meetingUuid } = body;
   if (!accountId || !clientId || !clientSecret || !meetingUuid) {
     return NextResponse.json(
       { error: "accountId, clientId, clientSecret, and meetingUuid are required" },

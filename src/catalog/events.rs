@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::catalog::value_objects::{LocationRole, Platform, SourcePlatform, VideoStatus};
+use crate::catalog::value_objects::{DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform, VideoStatus};
 
 /// Domain events emitted by the Catalog bounded context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +22,8 @@ pub enum CatalogEvent {
     LocationStatusUpdated(LocationStatusUpdated),
     VideoAbandoned(VideoAbandoned),
     VideoMarkedToRetry(VideoMarkedToRetry),
+    UpstreamLinked(UpstreamLinked),
+    UpstreamUnlinked(UpstreamUnlinked),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -158,6 +160,28 @@ pub struct VideoMarkedToRetry {
     pub video_record_id: Uuid,
     pub marked_by: Uuid,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpstreamLinked {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub upstream_video_id: Option<Uuid>,
+    pub platform: Platform,
+    pub external_id: String,
+    pub relation: DerivationType,
+    pub linked_by: LinkOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpstreamUnlinked {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub platform: Platform,
+    pub external_id: String,
+    pub rejected: bool,
 }
 
 /// Mutable metadata fields that can be edited during approval or update.
