@@ -36,6 +36,9 @@ export default function Dashboard() {
     bootStore().then(() => {
       setReady(true);
       setVideos(videoStore.getAll());
+    }).catch((err) => {
+      console.error("WASM boot failed:", err);
+      setReady(true); // show the UI even if WASM failed
     });
   }, []);
 
