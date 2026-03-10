@@ -5,6 +5,15 @@
 # Build:  docker build -t video-sync .
 # Run:    docker run -p 3080:3080 video-sync
 
+# ── Stage 0: build WASM pkg from Rust source ────────────────────────────────
+FROM rust:1.85-alpine AS wasm
+RUN apk add --no-cache musl-dev curl && \
+    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+WORKDIR /build
+COPY Cargo.toml Cargo.lock* ./
+COPY src/ ./src/
+RUN wasm-pack build --target web --release --out-dir /build/pkg
+
 # ── Stage 1: install dependencies ─────────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
@@ -16,9 +25,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ .
-# Pre-built WASM pkg is checked in under web/../pkg — copy it so the build can
-# resolve the relative import (../../pkg)
-COPY pkg/ ../pkg/
+# WASM pkg built in stage 0 — import resolves ../../pkg from src/lib/ → /app/pkg/
+COPY --from=wasm /build/pkg/ ./pkg/
+RUN mkdir -p /app/public
 RUN npm run build
 
 # ── Stage 3: minimal runtime image ───────────────────────────────────────────
@@ -37,7 +46,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 # Static assets (CSS, JS chunks, images)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Public directory (if it exists — COPY is a no-op when source is empty)
+# Public directory
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # data/ directory is mounted from GCS FUSE at runtime (ADR-018).
