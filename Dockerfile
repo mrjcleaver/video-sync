@@ -25,8 +25,10 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ .
-# WASM pkg built in stage 0 — import resolves ../../pkg from src/lib/ → /app/pkg/
-COPY --from=wasm /build/pkg/ ./pkg/
+# Pre-built WASM pkg is checked in under web/../pkg — copy it so the build can
+# resolve the relative import (../../pkg)
+COPY pkg/ ../pkg/
+# Ensure public/ exists so the COPY in the runner stage doesn't fail
 RUN mkdir -p /app/public
 RUN npm run build
 
