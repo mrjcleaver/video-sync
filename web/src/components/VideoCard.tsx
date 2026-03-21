@@ -13,6 +13,7 @@ import {
   requestLlmSummary,
   type PublishAttributes,
 } from "../lib/processingRules";
+import type { ShortsStatusResponse } from "../app/api/shorts/status/route";
 import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
@@ -84,8 +85,99 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [linkExternalId, setLinkExternalId] = useState("");
   const [linkRelation, setLinkRelation] = useState("SameEvent");
   const [showLinkForm, setShowLinkForm] = useState(false);
+  const [showShortsModal, setShowShortsModal] = useState(false);
+  const [shortsCaption, setShortsCaption] = useState(true);
+  const [shortsPrompt, setShortsPrompt] = useState("");
+  const [shortsLoading, setShortsLoading] = useState(false);
+  const [shortsError, setShortsError] = useState<string | null>(null);
+  const [shortsPhase, setShortsPhase] = useState("");
 
   const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
+
+  async function generateShorts() {
+    setShortsError(null);
+    setShortsLoading(true);
+
+    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      if (raw) connections = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    const opusApiKey = connections["OpusClip"]?.credentials?.apiKey;
+    if (!opusApiKey) {
+      setShortsError("OpusClip API key not configured. Add it in Connections.");
+      setShortsLoading(false);
+      return;
+    }
+
+    // Prefer the public YouTube destination URL over the download_url
+    const ytLoc = (video.locations ?? []).find(
+      (l) => l.platform === "YouTube" && l.role === "Destination" && l.external_url,
+    );
+    const parentYouTubeUrl = ytLoc?.external_url ?? null;
+    const parentYouTubeId = ytLoc?.external_id ?? null;
+
+    if (!parentYouTubeUrl) {
+      setShortsError("No public YouTube URL found. Publish to YouTube first, or ensure the video is public.");
+      setShortsLoading(false);
+      return;
+    }
+
+    try {
+      setShortsPhase("Submitting to Opus Clip…");
+      const genRes = await fetch("/api/shorts/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parentYouTubeUrl,
+          videoTitle: video.title,
+          captions: shortsCaption,
+          prompt: shortsPrompt || undefined,
+          apiKey: opusApiKey,
+        }),
+      });
+
+      const genData = await genRes.json() as { jobId?: string; error?: string };
+      if (!genRes.ok) throw new Error(genData.error ?? `Submission failed (${genRes.status})`);
+      const jobId = genData.jobId!;
+
+      onEvent(`ShortsJobSubmitted: "${video.title}" → Opus Clip job ${jobId}`);
+      setShowShortsModal(false);
+
+      // Poll for completion (max 10 min, every 15 s)
+      const maxPolls = 40;
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise((r) => setTimeout(r, 15_000));
+        setShortsPhase(`Processing… (poll ${i + 1}/${maxPolls})`);
+        const statusRes = await fetch(
+          `/api/shorts/status?jobId=${encodeURIComponent(jobId)}&apiKey=${encodeURIComponent(opusApiKey)}`,
+        );
+        const statusData = await statusRes.json() as ShortsStatusResponse;
+
+        if (statusData.status === "failed") throw new Error(statusData.error ?? "Opus Clip job failed");
+        if (statusData.status === "completed") {
+          const { indexShortClips: indexFn } = await import("./ShortsPanel");
+          const count = indexFn({
+            parentVideoId: video.id,
+            parentSourceId: video.source_id,
+            parentYouTubeId,
+            jobId,
+            clips: statusData.clips,
+          });
+          onEvent(`ShortsIndexed: ${count} clip(s) from "${video.title}" — review in Shorts panel`);
+          onMutated();
+          break;
+        }
+      }
+    } catch (err) {
+      setShortsError(String(err));
+      onEvent(`ShortsError: "${video.title}" — ${String(err)}`);
+    } finally {
+      setShortsLoading(false);
+      setShortsPhase("");
+    }
+  }
 
   async function fetchLoomMetadata() {
     setLoomFetching(true);
@@ -225,6 +317,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
     const isFirefliesSource = video.download_url.startsWith("fireflies://");
+    const isYouTubeSource = video.download_url.startsWith("youtube://");
     setUploadPhase(isZoomSource ? "Downloading from Zoom..." : isLoomSource ? "Downloading from Loom..." : isFirefliesSource ? "Downloading from Fireflies..." : "Uploading to YouTube...");
 
     try {
@@ -269,43 +362,51 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         uploadBody.firefliesApiKey = ffCreds.apiKey;
       }
 
-      if (isZoomSource) {
-        // Update phase after download starts
-        setTimeout(() => {
-          if (uploading) setUploadPhase("Uploading to YouTube...");
-        }, 5000);
+      if (isYouTubeSource && connections["YouTube"]?.credentials?.ytCookies) {
+        uploadBody.ytCookies = connections["YouTube"].credentials.ytCookies;
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000); // 10 min timeout
-
+      // POST returns 202 + { jobId } immediately — no timeout risk
       const res = await fetch("/api/youtube/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(uploadBody),
-        signal: controller.signal,
       });
-      clearTimeout(timeoutId);
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        if (res.status === 504 || res.status === 502) {
-          throw new Error(
-            `Upload timed out (${res.status}) — the video download + upload to YouTube takes longer than the dev server connection allows. ` +
-            `The upload may still be running server-side. Check YouTube Studio before retrying.`
-          );
-        }
-        throw new Error(`Server returned ${res.status} with non-JSON response`);
+      if (!res.ok) {
+        let errMsg = `Upload failed (${res.status})`;
+        try { const d = await res.json(); errMsg = d.error ?? errMsg; } catch { /* ignore */ }
+        throw new Error(errMsg);
       }
-      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+
+      const { jobId } = await res.json() as { jobId: string };
+
+      // Poll GET /api/youtube/upload?jobId=XXX every 5s until done
+      const pollStart = Date.now();
+      const POLL_INTERVAL = 5000;
+      const POLL_TIMEOUT = 15 * 60 * 1000; // 15 min max
+
+      type JobPoll = { status: string; videoId?: string; videoUrl?: string; error?: string; phase?: string };
+      let data: JobPoll | null = null;
+      while (Date.now() - pollStart < POLL_TIMEOUT) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const pollRes = await fetch(`/api/youtube/upload?jobId=${encodeURIComponent(jobId)}`);
+        const pollData = await pollRes.json() as JobPoll;
+        if (pollData?.phase) setUploadPhase(pollData.phase);
+        if (pollData?.status === "completed" || pollData?.status === "failed") {
+          data = pollData;
+          break;
+        }
+      }
+
+      if (!data) throw new Error("Upload timed out — check YouTube Studio for the video.");
+      if (data.status === "failed") throw new Error(data.error ?? "Upload failed");
 
       videoStore.mutate(video.id, (r) =>
         r.mark_published(
           JSON.stringify({
-            destination_id: data.videoId,
-            destination_url: data.videoUrl,
+            destination_id: data!.videoId,
+            destination_url: data!.videoUrl,
           })
         )
       );
@@ -608,6 +709,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const canScope = status === "Discovered";
   const canPublish = status === "Approved";
   const isPublishing = status === "Publishing";
+  const canGenerateShorts = (status === "Published" || status === "Approved") && video.source_platform !== "OpusClip";
   const alreadyPublished = (video.locations ?? []).some(
     (l) => l.role === "Destination" && l.platform === "YouTube"
   );
@@ -1076,6 +1178,45 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
+      {/* Generate Shorts modal */}
+      {showShortsModal && (
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "12px 14px", marginBottom: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: "0.9rem" }}>Generate Shorts via Opus Clip</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem" }}>
+              <input type="checkbox" checked={shortsCaption} onChange={(e) => setShortsCaption(e.target.checked)} />
+              Burn captions into clips
+            </label>
+            <div>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>
+                Clip prompt (optional — e.g. "moments with audience questions")
+              </div>
+              <input
+                type="text"
+                value={shortsPrompt}
+                onChange={(e) => setShortsPrompt(e.target.value)}
+                placeholder="Leave blank for AI to decide"
+                style={{ width: "100%", padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+            </div>
+            {shortsError && (
+              <div style={{ fontSize: "0.8rem", color: "var(--red)" }}>{shortsError}</div>
+            )}
+            {shortsLoading && (
+              <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{shortsPhase || "Working…"}</div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-sm btn-primary" onClick={generateShorts} disabled={shortsLoading}>
+                {shortsLoading ? "Running…" : "Generate"}
+              </button>
+              <button className="btn btn-sm" onClick={() => { setShowShortsModal(false); setShortsError(null); }} disabled={shortsLoading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="video-card-actions">
         {canApprove && (
           <button className="btn btn-sm btn-green" onClick={approve}>
@@ -1139,6 +1280,15 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
               Mark Failed
             </button>
           </>
+        )}
+        {canGenerateShorts && (
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.72rem" }}
+            onClick={() => { setShowShortsModal((v) => !v); setShortsError(null); }}
+          >
+            ✂ Shorts
+          </button>
         )}
         <button
           className="btn btn-sm"

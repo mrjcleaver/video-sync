@@ -41,6 +41,9 @@ ENV PORT=3080
 ENV HOSTNAME=0.0.0.0
 
 # Non-root user for defence-in-depth
+# yt-dlp + ffmpeg required for YouTube source ingestion (ADR-027)
+RUN apk add --no-cache ffmpeg yt-dlp
+
 RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 nextjs
 
