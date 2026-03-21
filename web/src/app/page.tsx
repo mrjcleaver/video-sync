@@ -6,8 +6,7 @@ import type { VideoRecordJSON } from "../lib/wasm";
 import { loadExclusions } from "../lib/rules";
 import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
-import IndexForm from "../components/IndexForm";
-import UnifiedImport from "../components/UnifiedImport";
+import ImportPanel from "../components/ImportPanel";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
@@ -17,6 +16,28 @@ import VideoCard from "../components/VideoCard";
 import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
+import ShortsPanel from "../components/ShortsPanel";
+
+function timeAgo(iso: string): string {
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function BuildBadge() {
+  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+  const sha = process.env.NEXT_PUBLIC_BUILD_SHA ?? "local";
+  const date = process.env.NEXT_PUBLIC_BUILD_DATE ?? "";
+  const ago = date ? timeAgo(date) : "";
+  const fullDate = date ? new Date(date).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "";
+  return (
+    <span title={fullDate} style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace", cursor: "default" }}>
+      v{version} · {sha}{ago ? ` · ${ago}` : ""}
+    </span>
+  );
+}
 
 const ACTIVE_STATUSES = ["Discovered", "InScope", "Approved", "Publishing", "Failed", "ToRetry"] as const;
 const DONE_STATUSES = ["Published", "Skipped", "Abandoned"] as const;
@@ -33,6 +54,11 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
 
   useEffect(() => {
+    const version = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+    const sha = process.env.NEXT_PUBLIC_BUILD_SHA ?? "local";
+    const date = process.env.NEXT_PUBLIC_BUILD_DATE ?? new Date().toISOString();
+    clientLog("info", "app:boot", `Video Sync v${version} (${sha}) built ${date}`);
+
     bootStore().then(() => {
       setReady(true);
       setVideos(videoStore.getAll());
@@ -105,6 +131,7 @@ export default function Dashboard() {
     <div className="container">
       <div className="header">
         <h1>Video Sync</h1>
+        <BuildBadge />
         <div className="stats">
           <span className="stat-badge">{videos.length} total</span>
           {counts["Discovered"] && (
@@ -128,9 +155,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <IndexForm onIndexed={refresh} onEvent={addEvent} />
-
-      <UnifiedImport onImported={refresh} onEvent={addEvent} />
+      <ImportPanel onImported={refresh} onEvent={addEvent} />
 
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
@@ -146,6 +171,8 @@ export default function Dashboard() {
       <PostProcessingRulesPanel />
 
       <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
+
+      <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
       {/* Burndown stats */}
       <div className="burndown-stats">

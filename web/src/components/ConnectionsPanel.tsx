@@ -54,6 +54,8 @@ const PLATFORMS: PlatformInfo[] = [
     description: "Video publishing",
     credentialType: "OAUTH2",
     fields: [
+      { key: "googleApiKey", label: "Google API Key (for YouTube Data API metadata lookups)", type: "password", placeholder: "AIza...", required: false },
+      { key: "ytCookies", label: "YouTube Cookies (Netscape format — required to download videos via yt-dlp)", type: "password", placeholder: "Export with browser extension e.g. 'Get cookies.txt LOCALLY', paste here", required: false },
       { key: "clientId", label: "Client ID", type: "text", placeholder: "Google OAuth Client ID", required: true },
       { key: "clientSecret", label: "Client Secret", type: "password", placeholder: "Google OAuth Client Secret", required: true },
       { key: "channelId", label: "Channel ID", type: "text", placeholder: "UC... channel ID", required: true },
@@ -76,6 +78,14 @@ const PLATFORMS: PlatformInfo[] = [
     fields: [
       { key: "apiKey", label: "API Key", type: "password", placeholder: "sk-or-...", required: true },
       { key: "model", label: "Model (optional)", type: "text", placeholder: "google/gemini-2.0-flash-001", required: false },
+    ],
+  },
+  {
+    name: "OpusClip",
+    description: "Auto short-form clip generation (ADR-029)",
+    credentialType: "API_KEY",
+    fields: [
+      { key: "apiKey", label: "API Key", type: "password", placeholder: "Opus Clip API key from dashboard", required: true },
     ],
   },
 ];

@@ -10,6 +10,7 @@ pub enum SourcePlatform {
     Zoom,
     Loom,
     Fireflies,
+    YouTube,
 }
 
 /// Any platform a video can exist on (source or destination).
@@ -30,6 +31,7 @@ impl From<SourcePlatform> for Platform {
             SourcePlatform::Zoom => Platform::Zoom,
             SourcePlatform::Loom => Platform::Loom,
             SourcePlatform::Fireflies => Platform::Fireflies,
+            SourcePlatform::YouTube => Platform::YouTube,
         }
     }
 }
