@@ -22,6 +22,8 @@ RUN npm ci --omit=dev=false   # include devDeps for the build step
 
 # ── Stage 2: build Next.js standalone bundle ──────────────────────────────────
 FROM node:20-alpine AS builder
+ARG BUILD_SHA=unknown
+ARG BUILD_DATE
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ .
@@ -30,7 +32,7 @@ COPY web/ .
 COPY pkg/ ../pkg/
 # Ensure public/ exists so the COPY in the runner stage doesn't fail
 RUN mkdir -p /app/public
-RUN npm run build
+RUN NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA} NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE} npm run build
 
 # ── Stage 3: minimal runtime image ───────────────────────────────────────────
 FROM node:20-alpine AS runner
