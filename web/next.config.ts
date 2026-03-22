@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { execSync } from "child_process";
 
 const gitSha = (() => {
+  if (process.env.NEXT_PUBLIC_BUILD_SHA) return process.env.NEXT_PUBLIC_BUILD_SHA;
   try { return execSync("git rev-parse --short HEAD").toString().trim(); } catch { return "unknown"; }
 })();
 
@@ -11,7 +12,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: "0.2.0",
     NEXT_PUBLIC_BUILD_SHA: gitSha,
-    NEXT_PUBLIC_BUILD_DATE: new Date().toISOString(),
+    NEXT_PUBLIC_BUILD_DATE: process.env.NEXT_PUBLIC_BUILD_DATE || new Date().toISOString(),
   },
   webpack(config) {
     config.experiments = {
