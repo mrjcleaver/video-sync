@@ -393,11 +393,12 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       const POLL_INTERVAL = 5000;
       const POLL_TIMEOUT = 15 * 60 * 1000; // 15 min max
 
-      type JobPoll = { status: string; videoId?: string; videoUrl?: string; error?: string; phase?: string };
+      type JobPoll = { status?: string; videoId?: string; videoUrl?: string; error?: string; phase?: string };
       let data: JobPoll | null = null;
       while (Date.now() - pollStart < POLL_TIMEOUT) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
         const pollRes = await fetch(`/api/youtube/upload?jobId=${encodeURIComponent(jobId)}`);
+        if (pollRes.status === 404) throw new Error("Upload job lost (server restarted mid-upload). Please try again.");
         const pollData = await pollRes.json() as JobPoll;
         if (pollData?.phase) setUploadPhase(pollData.phase);
         if (pollData?.status === "completed" || pollData?.status === "failed") {
@@ -406,7 +407,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         }
       }
 
-      if (!data) throw new Error("Upload timed out — check YouTube Studio for the video.");
+      if (!data) throw new Error("Upload timed out after 15 minutes. The video may still be processing — check YouTube Studio.");
       if (data.status === "failed") throw new Error(data.error ?? "Upload failed");
 
       videoStore.mutate(video.id, (r) =>
