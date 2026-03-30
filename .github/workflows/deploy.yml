@@ -2,14 +2,14 @@ name: Build & Deploy to Cloud Run
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/video-bridge-adr-ddd-dlFIk]
   workflow_dispatch:
 
 env:
-  REGION: europe-west1
-  REPO: video-sync
+  PROJECT_ID: agentics-487016
+  REGION: us-central1
   SERVICE: video-sync
-  IMAGE: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/video-sync/app
+  IMAGE: us-central1-docker.pkg.dev/agentics-487016/video-sync/app
 
 jobs:
   build-deploy:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # required for Workload Identity Federation
+      id-token: write
 
     steps:
       - name: Checkout
@@ -26,8 +26,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
@@ -39,6 +38,8 @@ jobs:
             --tag ${{ env.IMAGE }}:latest \
             --cache-from ${{ env.IMAGE }}:latest \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --build-arg BUILD_SHA=${{ github.sha }} \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             .
         env:
           DOCKER_BUILDKIT: 1
@@ -49,19 +50,21 @@ jobs:
           docker push ${{ env.IMAGE }}:latest
 
       - name: Deploy to Cloud Run
+        id: deploy
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
           image: ${{ env.IMAGE }}:${{ github.sha }}
           flags: >-
-            --concurrency=1
+            --concurrency=80
             --timeout=3600
             --memory=512Mi
             --cpu=1
             --min-instances=0
             --max-instances=3
-            --no-allow-unauthenticated
+            --allow-unauthenticated
+            --no-cpu-throttling
           env_vars: NODE_ENV=production
           secrets: OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
 
