@@ -55,6 +55,27 @@ export function loadRules(): IngestionRule[] {
 
 export function saveRules(rules: IngestionRule[]): void {
   localStorage.setItem(RULES_KEY, JSON.stringify(rules));
+  fetch("/api/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ingestionRules: rules }),
+  }).catch(() => {}); // best-effort; localStorage is the primary store
+}
+
+/** Hydrate localStorage from server (call on app boot). Server wins if non-empty. */
+export async function syncRulesFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/rules");
+    if (!res.ok) return;
+    const data = await res.json() as { ingestionRules?: IngestionRule[] };
+    if (data.ingestionRules && data.ingestionRules.length > 0) {
+      localStorage.setItem(RULES_KEY, JSON.stringify(data.ingestionRules));
+    } else {
+      // push local rules to server so they're persisted going forward
+      const local = loadRules();
+      if (local.length > 0) saveRules(local);
+    }
+  } catch { /* offline or server error — ignore */ }
 }
 
 // ── Exclusions ───────────────────────────────────────────
