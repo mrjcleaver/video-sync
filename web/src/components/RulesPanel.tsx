@@ -20,7 +20,7 @@ function emptyRule(): IngestionRule {
     name: "",
     enabled: true,
     priority: 10,
-    criteria: {},
+    criteria: { min_duration_secs: 25 * 60 },
     action: "mark_in_scope",
   };
 }
@@ -292,28 +292,28 @@ export default function RulesPanel({
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div className="form-field">
-                  <label>Min duration (sec)</label>
+                  <label>Min duration (min)</label>
                   <input
                     type="number"
-                    value={editing.criteria.min_duration_secs ?? ""}
+                    value={editing.criteria.min_duration_secs != null ? Math.round(editing.criteria.min_duration_secs / 60) : ""}
                     onChange={(e) =>
                       updateCriteria({
                         min_duration_secs: e.target.value
-                          ? parseInt(e.target.value)
+                          ? parseInt(e.target.value) * 60
                           : undefined,
                       })
                     }
                   />
                 </div>
                 <div className="form-field">
-                  <label>Max duration (sec)</label>
+                  <label>Max duration (min)</label>
                   <input
                     type="number"
-                    value={editing.criteria.max_duration_secs ?? ""}
+                    value={editing.criteria.max_duration_secs != null ? Math.round(editing.criteria.max_duration_secs / 60) : ""}
                     onChange={(e) =>
                       updateCriteria({
                         max_duration_secs: e.target.value
-                          ? parseInt(e.target.value)
+                          ? parseInt(e.target.value) * 60
                           : undefined,
                       })
                     }

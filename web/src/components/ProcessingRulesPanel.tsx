@@ -323,7 +323,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               <div className="form-field">
                 <label>Source platforms</label>
                 <div style={{ display: "flex", gap: 6 }}>
-                  {["Zoom", "Fireflies", "Loom"].map((p) => (
+                  {["Zoom", "Fireflies", "Loom", "YouTube"].map((p) => (
                     <button
                       key={p}
                       className={`btn btn-sm ${(editing.criteria.source_platforms ?? []).includes(p) ? "btn-primary" : ""}`}
