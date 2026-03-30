@@ -27,7 +27,14 @@ function resolveExternalUrl(url: string | null | undefined): string | null {
     const id = url.slice("fireflies://".length);
     return `https://app.fireflies.ai/view/${id}`;
   }
-  // zoom://recording/... and other internal schemes have no navigable web URL
+  if (url.startsWith("zoom://recording/")) {
+    const uuid = url.slice("zoom://recording/".length);
+    // Zoom UUIDs with / must be double-encoded for the web URL
+    const encoded = uuid.includes("/")
+      ? encodeURIComponent(encodeURIComponent(uuid))
+      : encodeURIComponent(uuid);
+    return `https://zoom.us/recording/play/${encoded}`;
+  }
   return null;
 }
 
