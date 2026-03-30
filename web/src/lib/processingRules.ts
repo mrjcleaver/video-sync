@@ -87,6 +87,25 @@ export function loadProcessingRules(): ProcessingRule[] {
 
 export function saveProcessingRules(rules: ProcessingRule[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rules));
+  fetch("/api/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ processingRules: rules }),
+  }).catch(() => {});
+}
+
+export async function syncProcessingRulesFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/rules");
+    if (!res.ok) return;
+    const data = await res.json() as { processingRules?: ProcessingRule[] };
+    if (data.processingRules && data.processingRules.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data.processingRules));
+    } else {
+      const local = loadProcessingRules();
+      if (local.length > 0) saveProcessingRules(local);
+    }
+  } catch { /* ignore */ }
 }
 
 // ── Template engine ───────────────────────────────────────────
@@ -291,6 +310,25 @@ export function loadPostProcessingRules(): PostProcessingRule[] {
 
 export function savePostProcessingRules(rules: PostProcessingRule[]): void {
   localStorage.setItem(POST_STORAGE_KEY, JSON.stringify(rules));
+  fetch("/api/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postProcessingRules: rules }),
+  }).catch(() => {});
+}
+
+export async function syncPostProcessingRulesFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/rules");
+    if (!res.ok) return;
+    const data = await res.json() as { postProcessingRules?: PostProcessingRule[] };
+    if (data.postProcessingRules && data.postProcessingRules.length > 0) {
+      localStorage.setItem(POST_STORAGE_KEY, JSON.stringify(data.postProcessingRules));
+    } else {
+      const local = loadPostProcessingRules();
+      if (local.length > 0) savePostProcessingRules(local);
+    }
+  } catch { /* ignore */ }
 }
 
 /** Fire matching post-processing rules non-blocking after a YouTube upload. */

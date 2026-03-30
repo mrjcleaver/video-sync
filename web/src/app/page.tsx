@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
-import { loadExclusions } from "../lib/rules";
+import { loadExclusions, syncRulesFromServer } from "../lib/rules";
+import { syncProcessingRulesFromServer, syncPostProcessingRulesFromServer } from "../lib/processingRules";
 import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
 import ImportPanel from "../components/ImportPanel";
@@ -59,12 +60,19 @@ export default function Dashboard() {
     const date = process.env.NEXT_PUBLIC_BUILD_DATE ?? new Date().toISOString();
     clientLog("info", "app:boot", `Video Sync v${version} (${sha}) built ${date}`);
 
-    bootStore().then(() => {
-      setReady(true);
-      setVideos(videoStore.getAll());
-    }).catch((err) => {
-      console.error("WASM boot failed:", err);
-      setReady(true); // show the UI even if WASM failed
+    // Sync rules from server before booting UI (ADR-031)
+    Promise.all([
+      syncRulesFromServer(),
+      syncProcessingRulesFromServer(),
+      syncPostProcessingRulesFromServer(),
+    ]).finally(() => {
+      bootStore().then(() => {
+        setReady(true);
+        setVideos(videoStore.getAll());
+      }).catch((err) => {
+        console.error("WASM boot failed:", err);
+        setReady(true);
+      });
     });
   }, []);
 
