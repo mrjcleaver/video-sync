@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { serverLog } from "../../../../lib/serverLogger";
 import { execFile } from "child_process";
 import { createWriteStream, createReadStream } from "fs";
 import { promises as fs } from "fs";
@@ -288,170 +288,16 @@ async function downloadFirefliesToFile(
   await streamToFile(dlRes, outPath);
 }
 
-// ── Async job store ──────────────────────────────────────────────────────────
-// Keeps upload jobs in memory so the POST can return immediately and the
-// client can poll GET /api/youtube/upload?jobId=XXX for status.
-// Lost on process restart, which is acceptable for a dev server.
+// ── SSE helpers ───────────────────────────────────────────────────────────────
 
-interface UploadJob {
-  status: "processing" | "completed" | "failed";
-  videoId?: string;
-  videoUrl?: string;
-  error?: string;
-  phase?: string;
-  startedAt: number;
+function sseEvent(type: string, data: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-const jobStore = new Map<string, UploadJob>();
-
-function newJobId(): string {
-  return `yt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// Clean up jobs older than 2 hours
-function pruneJobs() {
-  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [id, job] of jobStore) {
-    if (job.startedAt < cutoff) jobStore.delete(id);
-  }
-}
-
-// Status polling endpoint
-async function getHandler(req: NextRequest) {
-  const jobId = req.nextUrl.searchParams.get("jobId");
-  if (!jobId) return NextResponse.json({ error: "jobId required" }, { status: 400 });
-  const job = jobStore.get(jobId);
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  return NextResponse.json(job);
-}
-
-export const GET = withRequestLogging("api:youtube/upload:status", getHandler);
-
-// ── Main upload handler ───────────────────────────────────────────────────────
-
-async function runUpload(jobId: string, body: UploadRequest & {
-  refreshToken: string; clientId: string; clientSecret: string;
-  zoomAccountId?: string; zoomClientId?: string; zoomClientSecret?: string;
-  firefliesApiKey?: string;
-}): Promise<void> {
-  const job = jobStore.get(jobId)!;
-  const {
-    refreshToken, clientId, clientSecret,
-    title, description = "", tags = [], downloadUrl,
-    privacyStatus = "unlisted", recordedAt,
-    zoomAccountId, zoomClientId, zoomClientSecret, firefliesApiKey,
-  } = body;
-
-  try {
-    // Step 1: Refresh YouTube token
-    job.phase = "Refreshing YouTube token…";
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
-    });
-    if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      throw new Error(`YouTube token refresh failed (${tokenRes.status}): ${text}`);
-    }
-    const { access_token: ytAccessToken } = await tokenRes.json();
-
-    // Step 2: Download source to temp file
-    job.phase = "Downloading source video…";
-    let tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
-
-    if (downloadUrl.startsWith("youtube://")) {
-      await downloadYouTubeToFile(downloadUrl.replace("youtube://", ""), tmpPath, body.ytCookies);
-    } else if (downloadUrl.startsWith("zoom://recording/")) {
-      if (!zoomAccountId || !zoomClientId || !zoomClientSecret) throw new Error("Zoom credentials required");
-      await downloadZoomToFile(downloadUrl.replace("zoom://recording/", ""), zoomAccountId, zoomClientId, zoomClientSecret, tmpPath);
-    } else if (downloadUrl.startsWith("fireflies://")) {
-      if (!firefliesApiKey) throw new Error("Fireflies API key required");
-      await downloadFirefliesToFile(downloadUrl.replace("fireflies://", ""), firefliesApiKey, tmpPath);
-    } else {
-      const loomId = extractLoomVideoId(downloadUrl);
-      if (loomId) {
-        await downloadLoomToFile(loomId, tmpPath);
-      } else {
-        const dlRes = await fetch(downloadUrl);
-        if (!dlRes.ok) throw new Error(`Source download failed (${dlRes.status})`);
-        await streamToFile(dlRes, tmpPath);
-      }
-    }
-
-    // Step 2b: Trim if requested
-    if (body.trimStartSeconds && body.trimStartSeconds > 0) {
-      job.phase = "Trimming…";
-      const trimmedPath = join(tmpdir(), `video-trimmed-${Date.now()}.mp4`);
-      await new Promise<void>((resolve, reject) => {
-        execFile("ffmpeg", ["-ss", String(body.trimStartSeconds), "-i", tmpPath, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", "-y", trimmedPath],
-          { timeout: 300000 }, (err, _stdout, stderr) => {
-            if (err) reject(new Error(`ffmpeg trim failed: ${(stderr || err.message).slice(0, 300)}`));
-            else resolve();
-          });
-      });
-      fs.unlink(tmpPath).catch(() => {});
-      tmpPath = trimmedPath;
-    }
-
-    // Step 3: Initiate resumable upload
-    job.phase = "Initiating YouTube upload…";
-    const videoSize = (await fs.stat(tmpPath)).size;
-    const metadata: Record<string, unknown> = {
-      snippet: { title, description, tags },
-      status: { privacyStatus, selfDeclaredMadeForKids: false },
-    };
-    const parts = ["snippet", "status"];
-    if (recordedAt) { metadata.recordingDetails = { recordingDate: recordedAt }; parts.push("recordingDetails"); }
-
-    const initRes = await fetch(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=${parts.join(",")}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ytAccessToken}`,
-        "Content-Type": "application/json",
-        "X-Upload-Content-Length": videoSize.toString(),
-        "X-Upload-Content-Type": "video/mp4",
-      },
-      body: JSON.stringify(metadata),
-    });
-    if (!initRes.ok) {
-      const text = await initRes.text();
-      throw new Error(`YouTube upload init failed (${initRes.status}): ${text}`);
-    }
-    const uploadUrl = initRes.headers.get("Location");
-    if (!uploadUrl) throw new Error("YouTube did not return an upload URL");
-
-    // Step 4: Stream to YouTube
-    job.phase = "Uploading to YouTube…";
-    const fileStream = createReadStream(tmpPath);
-    const nodeReadable = Readable.toWeb(fileStream) as ReadableStream;
-    const uploadRes = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": "video/mp4", "Content-Length": videoSize.toString() },
-      body: nodeReadable,
-      // @ts-expect-error duplex required for streaming body in Node fetch
-      duplex: "half",
-    });
-    if (!uploadRes.ok) {
-      const text = await uploadRes.text();
-      throw new Error(`YouTube upload failed (${uploadRes.status}): ${text}`);
-    }
-
-    const result = await uploadRes.json();
-    const videoId = result.id;
-    job.status = "completed";
-    job.videoId = videoId;
-    job.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    job.phase = undefined;
-    serverLog("info", "ext:youtube-upload", "published", { jobId, videoId });
-    fs.unlink(tmpPath).catch(() => {});
-  } catch (err) {
-    job.status = "failed";
-    job.error = String(err);
-    job.phase = undefined;
-    serverLog("error", "ext:youtube-upload", "failed", { jobId, error: String(err) });
-  }
-}
+// ── Main upload handler (SSE streaming) ──────────────────────────────────────
+// Returns a text/event-stream response so the full upload lifecycle runs in a
+// single HTTP connection — no cross-instance job-store lookup, no polling.
+// Events: progress { phase }, complete { videoId, videoUrl }, error { message }
 
 async function handler(req: NextRequest) {
   let body: UploadRequest;
@@ -476,17 +322,167 @@ async function handler(req: NextRequest) {
     );
   }
 
-  pruneJobs();
-  const jobId = newJobId();
-  jobStore.set(jobId, { status: "processing", phase: "Starting…", startedAt: Date.now() });
+  const { title, description = "", tags = [], downloadUrl, privacyStatus = "unlisted", recordedAt } = body;
 
-  // Fire-and-forget — response returns immediately, client polls for status
-  runUpload(jobId, { ...body, refreshToken, clientId, clientSecret, zoomAccountId, zoomClientId, zoomClientSecret, firefliesApiKey }).catch(() => {});
+  const stream = new ReadableStream({
+    async start(controller) {
+      let tmpPath: string | null = null;
 
-  return NextResponse.json({ jobId }, { status: 202 });
+      const send = (type: string, data: Record<string, unknown>) => {
+        try { controller.enqueue(sseEvent(type, data)); } catch { /* client disconnected */ }
+      };
+
+      try {
+        // Step 1: Refresh YouTube token
+        send("progress", { phase: "Refreshing YouTube token…" });
+        serverLog("info", "ext:youtube-upload", "token-refresh-start", { title });
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: clientId!,
+            client_secret: clientSecret!,
+            refresh_token: refreshToken!,
+            grant_type: "refresh_token",
+          }),
+        });
+        if (!tokenRes.ok) {
+          const text = await tokenRes.text();
+          throw new Error(`YouTube token refresh failed (${tokenRes.status}): ${text}`);
+        }
+        const { access_token: ytAccessToken } = await tokenRes.json();
+        serverLog("info", "ext:youtube-upload", "token-refresh-ok", { title });
+
+        // Step 2: Download source to temp file
+        tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
+        send("progress", { phase: "Downloading source video…" });
+        serverLog("info", "ext:youtube-upload", "download-start", { title, downloadUrl });
+
+        if (downloadUrl.startsWith("youtube://")) {
+          await downloadYouTubeToFile(downloadUrl.replace("youtube://", ""), tmpPath, body.ytCookies);
+        } else if (downloadUrl.startsWith("zoom://recording/")) {
+          if (!zoomAccountId || !zoomClientId || !zoomClientSecret) throw new Error("Zoom credentials required");
+          await downloadZoomToFile(downloadUrl.replace("zoom://recording/", ""), zoomAccountId, zoomClientId, zoomClientSecret, tmpPath);
+        } else if (downloadUrl.startsWith("fireflies://")) {
+          if (!firefliesApiKey) throw new Error("Fireflies API key required");
+          await downloadFirefliesToFile(downloadUrl.replace("fireflies://", ""), firefliesApiKey, tmpPath);
+        } else {
+          const loomId = extractLoomVideoId(downloadUrl);
+          if (loomId) {
+            await downloadLoomToFile(loomId, tmpPath);
+          } else {
+            const dlRes = await fetch(downloadUrl);
+            if (!dlRes.ok) throw new Error(`Source download failed (${dlRes.status})`);
+            await streamToFile(dlRes, tmpPath);
+          }
+        }
+        serverLog("info", "ext:youtube-upload", "download-ok", { title });
+
+        // Step 2b: Trim if requested
+        if (body.trimStartSeconds && body.trimStartSeconds > 0) {
+          send("progress", { phase: `Trimming first ${body.trimStartSeconds}s…` });
+          serverLog("info", "ext:youtube-upload", "trim-start", { title, trimStartSeconds: body.trimStartSeconds });
+          const trimmedPath = join(tmpdir(), `video-trimmed-${Date.now()}.mp4`);
+          await new Promise<void>((resolve, reject) => {
+            execFile(
+              "ffmpeg",
+              ["-ss", String(body.trimStartSeconds), "-i", tmpPath!, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", "-y", trimmedPath],
+              { timeout: 300000 },
+              (err, _stdout, stderr) => {
+                if (err) reject(new Error(`ffmpeg trim failed: ${(stderr || err.message).slice(0, 300)}`));
+                else resolve();
+              },
+            );
+          });
+          fs.unlink(tmpPath).catch(() => {});
+          tmpPath = trimmedPath;
+          serverLog("info", "ext:youtube-upload", "trim-ok", { title });
+        }
+
+        // Step 3: Initiate resumable upload
+        send("progress", { phase: "Initiating YouTube upload…" });
+        serverLog("info", "ext:youtube-upload", "upload-init-start", { title });
+        const videoSize = (await fs.stat(tmpPath)).size;
+        const metadata: Record<string, unknown> = {
+          snippet: { title, description, tags },
+          status: { privacyStatus, selfDeclaredMadeForKids: false },
+        };
+        const parts = ["snippet", "status"];
+        if (recordedAt) { metadata.recordingDetails = { recordingDate: recordedAt }; parts.push("recordingDetails"); }
+
+        const initRes = await fetch(
+          `https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=${parts.join(",")}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ytAccessToken}`,
+              "Content-Type": "application/json",
+              "X-Upload-Content-Length": videoSize.toString(),
+              "X-Upload-Content-Type": "video/mp4",
+            },
+            body: JSON.stringify(metadata),
+          },
+        );
+        if (!initRes.ok) {
+          const text = await initRes.text();
+          throw new Error(`YouTube upload init failed (${initRes.status}): ${text}`);
+        }
+        const uploadUrl = initRes.headers.get("Location");
+        if (!uploadUrl) throw new Error("YouTube did not return an upload URL");
+        serverLog("info", "ext:youtube-upload", "upload-init-ok", { title, videoSize });
+
+        // Step 4: Stream video to YouTube
+        send("progress", { phase: "Uploading to YouTube…" });
+        serverLog("info", "ext:youtube-upload", "upload-stream-start", { title, videoSize });
+        const fileStream = createReadStream(tmpPath);
+        const nodeReadable = Readable.toWeb(fileStream) as ReadableStream;
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "video/mp4", "Content-Length": videoSize.toString() },
+          body: nodeReadable,
+          // @ts-expect-error duplex required for streaming body in Node fetch
+          duplex: "half",
+        });
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text();
+          throw new Error(`YouTube upload failed (${uploadRes.status}): ${text}`);
+        }
+
+        const result = await uploadRes.json();
+        const videoId = result.id as string;
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        serverLog("info", "ext:youtube-upload", "published", { title, videoId, videoUrl });
+        send("complete", { videoId, videoUrl });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        serverLog("error", "ext:youtube-upload", "failed", { title, error: message });
+        send("error", { message });
+      } finally {
+        if (tmpPath) fs.unlink(tmpPath).catch(() => {});
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 // Cloud Run: --timeout=3600 in cloudbuild.yaml.
 export const maxDuration = 3600;
 
-export const POST = withRequestLogging("api:youtube/upload", handler);
+// withRequestLogging wraps in NextResponse which isn't compatible with the plain
+// Response(stream) needed for SSE — log manually inside the handler instead.
+export async function POST(req: NextRequest) {
+  const rid = req.headers.get("x-request-id") ?? crypto.randomUUID().slice(0, 8);
+  serverLog("info", "api:youtube/upload", "req", { method: "POST", path: new URL(req.url).pathname, rid });
+  const res = await handler(req);
+  const headers = new Headers(res.headers);
+  headers.set("x-request-id", rid);
+  return new Response(res.body, { status: res.status, headers });
+}

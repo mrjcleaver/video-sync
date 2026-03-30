@@ -373,7 +373,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         uploadBody.ytCookies = connections["YouTube"].credentials.ytCookies;
       }
 
-      // POST returns 202 + { jobId } immediately — no timeout risk
+      // SSE streaming — single persistent connection, no cross-instance job lookup
       const res = await fetch("/api/youtube/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -386,41 +386,53 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         throw new Error(errMsg);
       }
 
-      const { jobId } = await res.json() as { jobId: string };
+      if (!res.body) throw new Error("No response stream from upload endpoint");
 
-      // Poll GET /api/youtube/upload?jobId=XXX every 5s until done
-      const pollStart = Date.now();
-      const POLL_INTERVAL = 5000;
-      const POLL_TIMEOUT = 15 * 60 * 1000; // 15 min max
+      type UploadResult = { videoId: string; videoUrl: string };
+      let result: UploadResult | null = null;
 
-      type JobPoll = { status?: string; videoId?: string; videoUrl?: string; error?: string; phase?: string };
-      let data: JobPoll | null = null;
-      while (Date.now() - pollStart < POLL_TIMEOUT) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-        const pollRes = await fetch(`/api/youtube/upload?jobId=${encodeURIComponent(jobId)}`);
-        if (pollRes.status === 404) throw new Error("Upload job lost (server restarted mid-upload). Please try again.");
-        const pollData = await pollRes.json() as JobPoll;
-        if (pollData?.phase) setUploadPhase(pollData.phase);
-        if (pollData?.status === "completed" || pollData?.status === "failed") {
-          data = pollData;
-          break;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let eventType = "";
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const payload = JSON.parse(line.slice(6)) as Record<string, string>;
+            if (eventType === "progress" && payload.phase) {
+              setUploadPhase(payload.phase);
+            } else if (eventType === "complete") {
+              result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
+              break outer;
+            } else if (eventType === "error") {
+              throw new Error(payload.message ?? "Upload failed");
+            }
+            eventType = "";
+          }
         }
       }
 
-      if (!data) throw new Error("Upload timed out after 15 minutes. The video may still be processing — check YouTube Studio.");
-      if (data.status === "failed") throw new Error(data.error ?? "Upload failed");
+      if (!result) throw new Error("Upload stream ended without a result. Check YouTube Studio.");
 
       videoStore.mutate(video.id, (r) =>
         r.mark_published(
           JSON.stringify({
-            destination_id: data!.videoId,
-            destination_url: data!.videoUrl,
+            destination_id: result!.videoId,
+            destination_url: result!.videoUrl,
           })
         )
       );
-      onEvent(`VideoPublished: "${video.title}" -> ${data.videoUrl}`);
+      onEvent(`VideoPublished: "${video.title}" -> ${result.videoUrl}`);
       onMutated();
-      firePostProcessingRules(loadPostProcessingRules(), true, video, data.videoUrl);
+      firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       videoStore.mutate(video.id, (r) =>
