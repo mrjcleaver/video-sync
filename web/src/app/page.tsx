@@ -7,6 +7,7 @@ import { loadExclusions, syncRulesFromServer } from "../lib/rules";
 import { syncProcessingRulesFromServer, syncPostProcessingRulesFromServer } from "../lib/processingRules";
 import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
+import { useMemoryHealth } from "../lib/useMemoryHealth";
 import ImportPanel from "../components/ImportPanel";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import RulesPanel from "../components/RulesPanel";
@@ -89,6 +90,8 @@ export default function Dashboard() {
     onEvent: addEvent,
     onMutated: refresh,
   });
+
+  useMemoryHealth();
 
   function bulkApprove() {
     const inScope = videos.filter((v) => v.status === "InScope");
