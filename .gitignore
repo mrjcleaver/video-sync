@@ -7,3 +7,8 @@ web/.next/
 .claude-flow/.trend-cache.json
 
 .env.local
+
+# GCP service account keys — never commit
+key.json
+*-key.json
+gcp-*.json

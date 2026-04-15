@@ -1,4 +1,41 @@
 #!/usr/bin/bash
+#
+# Manual deploy to Cloud Run (video-sync service, agentics-487016 project).
+#
+# ─── Why this script exists ──────────────────────────────────────────────
+# The org enforces constraints/iam.disableServiceAccountKeyCreation, so the
+# GitHub Actions workflow (.github/workflows/deploy.yml) that used
+# credentials_json cannot authenticate. Until that workflow is migrated to
+# Workload Identity Federation, this script is the deploy path.
+#
+# ─── First-time setup (per machine / per devcontainer) ───────────────────
+#   1. gcloud auth login                     # interactive browser login
+#   2. gcloud auth configure-docker us-central1-docker.pkg.dev
+#   3. gcloud config set project agentics-487016
+#
+# Your user account must have these roles on the project:
+#   - roles/run.admin
+#   - roles/artifactregistry.writer
+#   - roles/iam.serviceAccountUser
+#
+# ─── Deploy ──────────────────────────────────────────────────────────────
+#   ./deploy.sh
+#
+# The Cloud Run service URL is printed at the end.
+#
+# ─── When auth expires ───────────────────────────────────────────────────
+# gcloud tokens expire after roughly 7 days of inactivity. If the script
+# errors on `docker push` or `gcloud run deploy`, just re-run:
+#   gcloud auth login
+# and try again.
+#
+# ─── Rollback ────────────────────────────────────────────────────────────
+# Cloud Run keeps every revision. To roll back:
+#   gcloud run services update-traffic video-sync \
+#     --region=us-central1 --to-revisions=<PREV_REVISION>=100
+# Or use the Cloud Run console > Revisions tab.
+#
+
 set -euo pipefail
 
 cd /workspaces/video-sync
