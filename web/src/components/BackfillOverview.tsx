@@ -12,7 +12,7 @@ import {
 } from "../lib/backfill";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { getDisplayTitle } from "../lib/processingRules";
-import { getPrivacy, type PrivacyStatus } from "../lib/youtubePrivacyCache";
+import { getPrivacy, setPrivacy, normalisePrivacy, type PrivacyStatus } from "../lib/youtubePrivacyCache";
 
 /** Extract YouTube video ID from a watch URL or short URL. */
 function extractYouTubeId(url: string | null | undefined): string | null {
@@ -63,9 +63,90 @@ const LINK_STYLE: React.CSSProperties = {
 };
 
 export default function BackfillOverview({ videos, profile }: Props) {
+  const [privacyTick, setPrivacyTick] = useState(0);
+  const [fillingPrivacy, setFillingPrivacy] = useState(false);
+  const [fillStatus, setFillStatus] = useState<string>("");
+  // privacyTick forces re-render when cache is updated
+  void privacyTick;
   const summaries = buildCalendarOverview(videos, profile);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [targetOnly, setTargetOnly] = useState(true);
+
+  // Collect all YouTube IDs from visible summaries that don't yet have cached privacy
+  function collectUnknownYouTubeIds(): string[] {
+    const ids = new Set<string>();
+    for (const s of summaries) {
+      for (const slot of s.slots) {
+        const url = slot.video?.youtube_url;
+        const id = extractYouTubeId(url);
+        if (id && !getPrivacy(id)) ids.add(id);
+      }
+    }
+    return [...ids];
+  }
+
+  async function fillPrivacy() {
+    const ids = collectUnknownYouTubeIds();
+    if (ids.length === 0) {
+      setFillStatus("All known videos already have privacy cached.");
+      setTimeout(() => setFillStatus(""), 3000);
+      return;
+    }
+
+    let ytCreds: { refreshToken?: string; clientId?: string; clientSecret?: string } = {};
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      const conn = raw ? JSON.parse(raw) : {};
+      ytCreds = conn["YouTube"]?.credentials ?? {};
+    } catch { /* ignore */ }
+
+    if (!ytCreds.refreshToken || !ytCreds.clientId || !ytCreds.clientSecret) {
+      setFillStatus("YouTube not authorised. Configure in Connections.");
+      setTimeout(() => setFillStatus(""), 4000);
+      return;
+    }
+
+    setFillingPrivacy(true);
+    setFillStatus(`Checking ${ids.length} video${ids.length === 1 ? "" : "s"}…`);
+
+    try {
+      const res = await fetch("/api/youtube/privacy-batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-youtube-refresh-token": ytCreds.refreshToken,
+          "x-youtube-client-id": ytCreds.clientId,
+          "x-youtube-client-secret": ytCreds.clientSecret,
+        },
+        body: JSON.stringify({ videoIds: ids }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `Fill failed (${res.status})`);
+      }
+      const data = await res.json() as { privacy: Record<string, string>; missing: string[] };
+      let count = 0;
+      for (const [id, p] of Object.entries(data.privacy)) {
+        setPrivacy(id, normalisePrivacy(p));
+        count++;
+      }
+      // Mark any videos YouTube didn't return as "unknown" so we don't keep retrying them
+      for (const id of data.missing ?? []) {
+        setPrivacy(id, "unknown");
+      }
+      setPrivacyTick(t => t + 1);
+      const msg = data.missing?.length
+        ? `Filled ${count} · ${data.missing.length} not found on YouTube`
+        : `Filled ${count} privacy entries`;
+      setFillStatus(msg);
+      setTimeout(() => setFillStatus(""), 5000);
+    } catch (err) {
+      setFillStatus(`Error: ${String(err).slice(0, 120)}`);
+      setTimeout(() => setFillStatus(""), 6000);
+    } finally {
+      setFillingPrivacy(false);
+    }
+  }
 
   const totals = summaries.reduce(
     (acc, s) => ({
@@ -107,8 +188,22 @@ export default function BackfillOverview({ videos, profile }: Props) {
         <div style={{ height: "100%", borderRadius: 3, background: "var(--green)", width: `${pct}%`, transition: "width 0.3s" }} />
       </div>
 
-      {/* Target-only toggle */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+      {/* Toolbar: fill privacy + target-only toggle */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        {fillStatus && (
+          <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontStyle: "italic" }}>
+            {fillStatus}
+          </span>
+        )}
+        <button
+          className="btn btn-sm"
+          style={{ fontSize: "0.7rem" }}
+          onClick={fillPrivacy}
+          disabled={fillingPrivacy}
+          title="Check YouTube for privacy status of all published videos in this view (batched, 1 quota unit per 50 videos)"
+        >
+          {fillingPrivacy ? "Checking…" : "Fill privacy"}
+        </button>
         <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
           Target days only

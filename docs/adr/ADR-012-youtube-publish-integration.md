@@ -128,7 +128,10 @@ localStorage["video-sync:yt-privacy"] = {
 }
 ```
 
-The `/api/youtube/status` endpoint already returns `privacyStatus`. When the operator clicks **Check Status** on a VideoCard (or the status check runs as part of another workflow), the response is written to the cache.
+Two endpoints populate the cache:
+
+1. **Per-video**: `/api/youtube/status?videoId=...` — called from **Check Status** on a single VideoCard location. Returns `privacyStatus` alongside upload status. Cost: 1 quota unit per check.
+2. **Bulk**: `POST /api/youtube/privacy-batch` with `{ videoIds: string[] }` — called from the **Fill privacy** button on the Overview header. Batches IDs into chunks of 50 (YouTube Data API max for `videos.list`) and returns `{ privacy: {id: status}, missing: string[] }`. Cost: 1 quota unit per 50 videos. Missing IDs (videos YouTube doesn't return) are cached as `unknown` so repeated Fill clicks don't keep re-querying them.
 
 The `BackfillOverview` YouTube link badge reads from the cache and colours by privacy:
 
