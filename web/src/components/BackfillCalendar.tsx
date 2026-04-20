@@ -29,7 +29,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
-  const [targetOnly, setTargetOnly] = useState(false);
+  const [targetOnly, setTargetOnly] = useState(true);
 
   const slots = buildCalendarMonth(videos, profile, year, month);
   const videoMap = new Map(videos.map(v => [v.id, v]));

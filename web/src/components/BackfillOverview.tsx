@@ -36,6 +36,15 @@ interface Props {
   profile: BackfillProfile;
 }
 
+function LegendBar({ color, label }: { color: string; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ width: 14, height: 4, background: color, borderRadius: 2, display: "inline-block" }} />
+      {label}
+    </span>
+  );
+}
+
 function scrollToVideo(id: string) {
   const el = document.getElementById(`video-card-${id}`);
   if (el) {
@@ -56,7 +65,7 @@ const LINK_STYLE: React.CSSProperties = {
 export default function BackfillOverview({ videos, profile }: Props) {
   const summaries = buildCalendarOverview(videos, profile);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [targetOnly, setTargetOnly] = useState(false);
+  const [targetOnly, setTargetOnly] = useState(true);
 
   const totals = summaries.reduce(
     (acc, s) => ({
@@ -160,18 +169,35 @@ export default function BackfillOverview({ videos, profile }: Props) {
         })}
       </div>
 
-      {/* Legend */}
-      <div style={{ marginTop: 10, fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <span><span style={{ color: "var(--green)" }}>■</span> Published</span>
-        <span><span style={{ color: "#a78bfa" }}>■</span> Approved</span>
-        <span><span style={{ color: "#fbbf24" }}>■</span> Backlog</span>
-        <span><span style={{ color: "var(--red)" }}>■</span> Failed</span>
-        <span><span style={{ color: "var(--border)" }}>○</span> Gap</span>
-        <span style={{ marginLeft: 8 }}>Privacy:</span>
-        <span><span style={{ color: "#22c55e" }}>■</span> Public</span>
-        <span><span style={{ color: "#facc15" }}>■</span> Unlisted</span>
-        <span><span style={{ color: "#f87171" }}>■</span> Private</span>
-        <span><span style={{ color: "#94a3b8" }}>■</span> Unknown</span>
+      {/* Legend — status uses bar swatches (matching the stacked bars),
+          privacy uses mini-badges (matching the actual badge pills). */}
+      <div style={{ marginTop: 10, fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontWeight: 600 }}>Status:</span>
+        <LegendBar color="var(--green)" label="Published" />
+        <LegendBar color="#a78bfa" label="Approved" />
+        <LegendBar color="#fbbf24" label="Backlog" />
+        <LegendBar color="var(--red)" label="Failed" />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", border: "1.5px solid var(--border)", display: "inline-block" }} />
+          Gap
+        </span>
+        <span style={{ marginLeft: 10, fontWeight: 600 }}>YouTube privacy:</span>
+        {(["public","unlisted","private","unknown"] as const).map(p => {
+          const c = PRIVACY_COLOR[p];
+          return (
+            <span
+              key={p}
+              style={{
+                ...LINK_STYLE,
+                background: c.bg,
+                color: c.fg,
+                border: `1px solid ${c.border}`,
+              }}
+            >
+              {c.label}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
