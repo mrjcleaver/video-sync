@@ -5,16 +5,25 @@ import type { VideoRecordJSON } from "../lib/wasm";
 import {
   type BackfillProfile,
   type MonthSummary,
+  type CalendarSlot,
   buildCalendarOverview,
   statusColor,
   DAY_NAMES,
-  MONTH_NAMES,
 } from "../lib/backfill";
+import { resolveExternalUrl } from "../lib/urlResolver";
 
 interface Props {
   videos: VideoRecordJSON[];
   profile: BackfillProfile;
 }
+
+const LINK_STYLE: React.CSSProperties = {
+  fontSize: "0.68rem",
+  padding: "1px 6px",
+  borderRadius: 10,
+  textDecoration: "none",
+  whiteSpace: "nowrap",
+};
 
 export default function BackfillOverview({ videos, profile }: Props) {
   const summaries = buildCalendarOverview(videos, profile);
@@ -114,11 +123,9 @@ export default function BackfillOverview({ videos, profile }: Props) {
                 <span style={{ color: "var(--text-muted)", textAlign: "center" }}>{isExpanded ? "▲" : "▼"}</span>
               </div>
 
-              {/* Expanded: mini-month grid inline */}
+              {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <div style={{ padding: "8px 8px 8px 80px" }}>
-                  <MiniMonth slots={s.slots} year={s.year} month={s.month} targetOnly={targetOnly} />
-                </div>
+                <DateList slots={s.slots} targetOnly={targetOnly} />
               )}
             </div>
           );
@@ -137,46 +144,148 @@ export default function BackfillOverview({ videos, profile }: Props) {
   );
 }
 
-/** Compact inline month grid — used when a month row is expanded. */
-function MiniMonth({ slots, year, month, targetOnly }: { slots: { date: string; is_target: boolean; video?: { title: string; status: string } }[]; year: number; month: number; targetOnly: boolean }) {
-  const firstDow = new Date(year, month, 1).getDay();
-  const grid: (typeof slots[0] | null)[] = [
-    ...Array<null>(firstDow).fill(null),
-    ...slots,
-  ];
-  while (grid.length % 7 !== 0) grid.push(null);
+/** Format a date string as "Thu 15" */
+function shortDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `${DAY_NAMES[dt.getDay()]} ${d}`;
+}
+
+/** Vertical date list with status, title, and clickable origin/destination links. */
+function DateList({ slots, targetOnly }: { slots: CalendarSlot[]; targetOnly: boolean }) {
+  const visible = targetOnly ? slots.filter(s => s.is_target) : slots;
+
+  // When not in target-only mode, insert week separators
+  // Show week-start (Mon) dates as section headers
+  const rows: { type: "week"; label: string }[] | { type: "slot"; slot: CalendarSlot }[] = [];
+  let lastWeekLabel = "";
+
+  for (const slot of visible) {
+    if (!targetOnly) {
+      // Show week header on Mondays or first visible day of a new week
+      const [y, m, d] = slot.date.split("-").map(Number);
+      const dt = new Date(y, m - 1, d);
+      const weekDay = dt.getDay();
+      // Calculate Monday of this week
+      const mon = new Date(dt);
+      mon.setDate(mon.getDate() - ((weekDay + 6) % 7));
+      const weekLabel = `Week of ${DAY_NAMES[1]} ${mon.getDate()} ${mon.toLocaleString("en-US", { month: "short" })}`;
+      if (weekLabel !== lastWeekLabel) {
+        (rows as { type: string; label?: string; slot?: CalendarSlot }[]).push({ type: "week", label: weekLabel });
+        lastWeekLabel = weekLabel;
+      }
+    }
+    (rows as { type: string; slot?: CalendarSlot }[]).push({ type: "slot", slot });
+  }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 24px)", gap: 1 }}>
-      {DAY_NAMES.map(d => (
-        <div key={d} style={{ textAlign: "center", fontSize: "0.55rem", color: "var(--text-muted)", fontWeight: 600 }}>{d.charAt(0)}</div>
-      ))}
-      {grid.map((slot, i) => {
-        if (!slot) return <div key={`e-${i}`} style={{ width: 24, height: 20 }} />;
-        const hidden = targetOnly && !slot.is_target;
-        const color = slot.video ? statusColor(slot.video.status) : slot.is_target ? "var(--border)" : "transparent";
+    <div style={{ padding: "6px 0 6px 8px", borderLeft: "2px solid var(--border)", marginLeft: 36, marginTop: 4, marginBottom: 4 }}>
+      {rows.map((row, i) => {
+        if (row.type === "week") {
+          return (
+            <div key={`w-${i}`} style={{ fontSize: "0.65rem", color: "var(--text-muted)", padding: "6px 0 2px", fontWeight: 600, letterSpacing: "0.03em" }}>
+              {(row as { label: string }).label}
+            </div>
+          );
+        }
+
+        const slot = (row as { slot: CalendarSlot }).slot;
+        const v = slot.video;
+        const color = v ? statusColor(v.status) : slot.is_target ? "var(--border)" : "transparent";
+        const originHref = v ? resolveExternalUrl(v.origin_url) : null;
+        const ytHref = v?.youtube_url ?? null;
+
         return (
           <div
             key={slot.date}
-            title={slot.video ? `${slot.video.title} (${slot.video.status})` : slot.is_target ? "Gap" : ""}
             style={{
-              width: 24, height: 20,
-              borderRadius: 3,
-              border: slot.is_target ? `1px solid ${color}` : "1px solid transparent",
-              background: slot.video && slot.is_target ? `${color}22` : "transparent",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              visibility: hidden ? "hidden" : "visible",
+              display: "grid",
+              gridTemplateColumns: "52px 10px 1fr auto auto",
+              alignItems: "center",
+              gap: 6,
+              padding: "3px 4px",
+              fontSize: "0.75rem",
+              borderRadius: 4,
+              background: slot.is_target && !v ? "rgba(128,128,128,0.04)" : "transparent",
             }}
           >
-            {slot.video && (
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
+            {/* Date */}
+            <span style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+              {shortDate(slot.date)}
+            </span>
+
+            {/* Status dot */}
+            <span style={{ display: "flex", justifyContent: "center" }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: v ? color : "transparent",
+                border: slot.is_target && !v ? "1.5px solid var(--border)" : "none",
+                display: "inline-block",
+              }} />
+            </span>
+
+            {/* Title or gap */}
+            {v ? (
+              <span style={{
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: v.status === "Published" ? "var(--text)" : "var(--text-muted)",
+              }}>
+                {v.title}
+              </span>
+            ) : (
+              <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: "0.7rem" }}>
+                {slot.is_target ? "— no source —" : ""}
+              </span>
             )}
-            {slot.is_target && !slot.video && (
-              <div style={{ width: 3, height: 3, borderRadius: "50%", background: "var(--border)" }} />
+
+            {/* Origin link */}
+            {originHref ? (
+              <a
+                href={originHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{
+                  ...LINK_STYLE,
+                  background: "rgba(56,189,248,0.1)",
+                  color: "#38bdf8",
+                  border: "1px solid rgba(56,189,248,0.25)",
+                }}
+              >
+                {v!.source_platform}
+              </a>
+            ) : (
+              <span style={{ width: 48 }} />
+            )}
+
+            {/* YouTube link */}
+            {ytHref ? (
+              <a
+                href={ytHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{
+                  ...LINK_STYLE,
+                  background: "rgba(248,113,113,0.1)",
+                  color: "#f87171",
+                  border: "1px solid rgba(248,113,113,0.25)",
+                }}
+              >
+                YouTube
+              </a>
+            ) : (
+              <span style={{ width: 56 }} />
             )}
           </div>
         );
       })}
+
+      {visible.length === 0 && (
+        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontStyle: "italic", padding: 4 }}>
+          No dates in this month.
+        </div>
+      )}
     </div>
   );
 }

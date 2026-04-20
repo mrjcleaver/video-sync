@@ -15,28 +15,10 @@ import {
 } from "../lib/processingRules";
 import type { ShortsStatusResponse } from "../app/api/shorts/status/route";
 import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
+import { resolveExternalUrl } from "../lib/urlResolver";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
-
-/** Resolve internal pseudo-URLs to real web URLs, or return null for non-navigable schemes. */
-function resolveExternalUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  if (url.startsWith("fireflies://")) {
-    const id = url.slice("fireflies://".length);
-    return `https://app.fireflies.ai/view/${id}`;
-  }
-  if (url.startsWith("zoom://recording/")) {
-    const uuid = url.slice("zoom://recording/".length);
-    // Zoom UUIDs with / must be double-encoded for the web URL
-    const encoded = uuid.includes("/")
-      ? encodeURIComponent(encodeURIComponent(uuid))
-      : encodeURIComponent(uuid);
-    return `https://zoom.us/recording/play/${encoded}`;
-  }
-  return null;
-}
 
 function formatDuration(secs: number): string {
   const h = Math.floor(secs / 3600);

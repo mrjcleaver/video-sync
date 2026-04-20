@@ -262,10 +262,31 @@ The original `BackfillCalendar` showed one month at a time. For an 18-month back
 - **Summary bar**: Total progress percentage, counts by status (published, approved, backlog, failed, gaps), and estimated days to clear at current upload rate.
 - **Progress bar**: Visual percentage of target days published.
 - **Month rows**: One row per month with a stacked bar showing published (green), approved (purple), failed (red), and backlog (yellow) proportions. Each row shows `published/target · N gaps`.
-- **Expandable detail**: Click a month to see its inline mini-grid calendar with day-level status dots.
-- **Target-days toggle**: Same as the single-month calendar — hides non-target days when active.
+- **Expandable detail**: Click a month row to expand a vertical date list. Each row shows:
+  - **Date label**: `Thu 15`, `Fri 16`, etc. (local-time day-of-week).
+  - **Status dot**: Colour-coded by video status (published, approved, failed, etc.) or hollow circle for gaps.
+  - **Title**: Video title (or "— no source —" for gaps).
+  - **Origin link**: Clickable badge linking to the source platform (Zoom, Fireflies, Loom). Pseudo-URLs (`zoom://`, `fireflies://`) are resolved to real web URLs.
+  - **YouTube link**: Clickable badge linking to the published YouTube video (when available).
+- **Target-days toggle**: When active, the expanded list shows **only** target-day rows (non-target dates are removed, not just hidden). When off, rows are grouped under week headers (`Week of Mon 13 Jan`) for orientation.
+- **URL resolution**: `resolveExternalUrl()` is extracted to a shared `urlResolver.ts` module (reused by `VideoCard` and `BackfillOverview`).
 
 ```ts
+interface CalendarSlot {
+  date: string;
+  day_of_week: number;
+  is_target: boolean;
+  video?: {
+    id: string;
+    title: string;
+    duration_seconds: number;
+    source_platform: string;
+    status: string;
+    origin_url?: string;   // source download URL (pseudo or real)
+    youtube_url?: string;  // destination URL on YouTube
+  };
+}
+
 interface MonthSummary {
   year: number;
   month: number;

@@ -52,7 +52,8 @@ export interface CalendarSlot {
     duration_seconds: number;
     source_platform: string;
     status: string;
-    youtube_url?: string;
+    origin_url?: string;   // source download URL (may be pseudo-URL)
+    youtube_url?: string;  // destination URL on YouTube
   };
 }
 
@@ -225,6 +226,7 @@ export function buildCalendarMonth(
       video: v ? {
         id: v.id, title: v.title, duration_seconds: v.duration_seconds,
         source_platform: v.source_platform, status: v.status,
+        origin_url: v.download_url || undefined,
         youtube_url: v.destination_url ?? undefined,
       } : undefined,
     });
