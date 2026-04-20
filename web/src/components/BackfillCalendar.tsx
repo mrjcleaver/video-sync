@@ -19,6 +19,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
+  const [targetOnly, setTargetOnly] = useState(false);
 
   const slots = buildCalendarMonth(videos, profile, year, month);
 
@@ -52,7 +53,13 @@ export default function BackfillCalendar({ videos, profile }: Props) {
     <div className="backfill-calendar">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <button className="btn btn-sm" onClick={prevMonth}>‹</button>
-        <span style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
+          <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+            <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
+            Target days only
+          </label>
+        </div>
         <button className="btn btn-sm" onClick={nextMonth} disabled={isCurrentMonth}>›</button>
       </div>
 
@@ -72,6 +79,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
           if (!slot) {
             return <div key={`empty-${i}`} />;
           }
+          const hidden = targetOnly && !slot.is_target;
           const color = slot.video ? statusColor(slot.video.status) : slot.is_target ? "var(--border)" : "transparent";
           const bg = slot.is_target
             ? slot.video ? "var(--bg-card)" : "var(--bg)"
@@ -87,6 +95,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
                 border: slot.is_target ? `1px solid ${color}` : "1px solid transparent",
                 cursor: slot.video ? "pointer" : "default",
                 minHeight: 36,
+                visibility: hidden ? "hidden" : "visible",
               }}
             >
               <div style={{ fontSize: "0.6rem", color: "var(--text-muted)", textAlign: "center" }}>

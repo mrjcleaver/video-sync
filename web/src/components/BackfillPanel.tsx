@@ -18,6 +18,13 @@ import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
+/** Short date tag for event log disambiguation — e.g. "(15 Mar)" */
+function dateTag(recorded_at: string | null | undefined): string {
+  if (!recorded_at) return "";
+  const d = new Date(recorded_at);
+  return ` (${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })})`;
+}
+
 interface Props {
   videos: VideoRecordJSON[];
   onEvent: (event: string) => void;
@@ -244,7 +251,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       saveClientState(newCs);
       setClientStateValue(newCs);
 
-      onEvent(`Backfill: published "${video.title}" → ${videoUrl}`);
+      onEvent(`Backfill: published "${video.title}"${dateTag(video.recorded_at)} → ${videoUrl}`);
       setStatus(`Published "${video.title}"`);
     } catch (err) {
       videoStore.mutate(videoId, r =>
@@ -256,7 +263,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       onMutated();
       markQueueEntryFailed(videoId, 1);
       setQueueState(loadQueue());
-      onEvent(`Backfill: upload failed for "${video.title}" — ${String(err)}`);
+      onEvent(`Backfill: upload failed for "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`);
       setStatus(`Failed: ${String(err).slice(0, 80)}`);
     }
   }, [videos, onEvent, onMutated]);
