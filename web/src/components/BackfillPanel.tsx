@@ -82,7 +82,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
   const [editing, setEditing] = useState<BackfillProfile | null>(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"profiles" | "queue" | "overview" | "calendar">("profiles");
+  const [activeTab, setActiveTab] = useState<"profiles" | "queue" | "overview" | "calendar">("overview");
   const [calendarProfile, setCalendarProfile] = useState<string>("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 

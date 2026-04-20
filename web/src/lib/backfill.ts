@@ -229,7 +229,11 @@ export function buildCalendarMonth(
         id: v.id, title: v.title, duration_seconds: v.duration_seconds,
         source_platform: v.source_platform, status: v.status,
         origin_url: v.download_url || undefined,
-        youtube_url: v.destination_url ?? undefined,
+        youtube_url: v.destination_url
+          ?? v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination")?.external_url
+          ?? (v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination")?.external_id
+            ? `https://www.youtube.com/watch?v=${v.locations.find(l => l.platform === "YouTube" && l.role === "Destination")!.external_id}`
+            : undefined),
       } : undefined,
     });
   }
