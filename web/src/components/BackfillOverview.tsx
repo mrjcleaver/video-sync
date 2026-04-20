@@ -18,6 +18,15 @@ interface Props {
   profile: BackfillProfile;
 }
 
+function scrollToVideo(id: string) {
+  const el = document.getElementById(`video-card-${id}`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.style.outline = "2px solid var(--primary, #6366f1)";
+    setTimeout(() => { el.style.outline = ""; }, 2000);
+  }
+}
+
 const LINK_STYLE: React.CSSProperties = {
   fontSize: "0.68rem",
   padding: "1px 6px",
@@ -200,6 +209,7 @@ function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; target
         return (
           <div
             key={slot.date}
+            onClick={v ? () => scrollToVideo(v.id) : undefined}
             style={{
               display: "grid",
               gridTemplateColumns: "52px 10px 1fr auto auto",
@@ -209,6 +219,7 @@ function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; target
               fontSize: "0.75rem",
               borderRadius: 4,
               background: slot.is_target && !v ? "rgba(128,128,128,0.04)" : "transparent",
+              cursor: v ? "pointer" : "default",
             }}
           >
             {/* Date */}

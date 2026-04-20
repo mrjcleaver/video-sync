@@ -11,6 +11,15 @@ import {
 } from "../lib/backfill";
 import { getDisplayTitle } from "../lib/processingRules";
 
+function scrollToVideo(id: string) {
+  const el = document.getElementById(`video-card-${id}`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.style.outline = "2px solid var(--primary, #6366f1)";
+    setTimeout(() => { el.style.outline = ""; }, 2000);
+  }
+}
+
 interface Props {
   videos: VideoRecordJSON[];
   profile: BackfillProfile;
@@ -90,6 +99,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
             <div
               key={slot.date}
               title={slot.video ? `${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
+              onClick={slot.video ? () => scrollToVideo(slot.video!.id) : undefined}
               style={{
                 padding: "4px 2px",
                 borderRadius: 4,
