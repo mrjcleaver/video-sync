@@ -301,6 +301,9 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
           <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
             {readyEntries.length} queued
           </span>
+          <button className="btn btn-sm" onClick={onMutated} title="Refresh video data">
+            ↻
+          </button>
           <button
             className={`btn btn-sm ${running ? "btn-primary" : "btn-green"}`}
             onClick={running ? stopOrchestrator : startOrchestrator}
