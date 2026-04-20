@@ -34,6 +34,7 @@ const PRIVACY_COLOR: Record<PrivacyStatus, { bg: string; fg: string; border: str
 interface Props {
   videos: VideoRecordJSON[];
   profile: BackfillProfile;
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
 function LegendBar({ color, label }: { color: string; label: string }) {
@@ -62,7 +63,7 @@ const LINK_STYLE: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-export default function BackfillOverview({ videos, profile }: Props) {
+export default function BackfillOverview({ videos, profile, onNavigateToVideo }: Props) {
   const [privacyTick, setPrivacyTick] = useState(0);
   const [fillingPrivacy, setFillingPrivacy] = useState(false);
   const [fillStatus, setFillStatus] = useState<string>("");
@@ -257,7 +258,7 @@ export default function BackfillOverview({ videos, profile }: Props) {
 
               {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} />
+                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} />
               )}
             </div>
           );
@@ -306,7 +307,7 @@ function shortDate(dateStr: string): string {
 }
 
 /** Vertical date list with status, title, and clickable origin/destination links. */
-function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[] }) {
+function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[]; onNavigateToVideo?: (id: string, intent?: "publish") => void }) {
   const videoMap = new Map(videos.map(v => [v.id, v]));
   const visible = targetOnly ? slots.filter(s => s.is_target) : slots;
 
@@ -353,7 +354,7 @@ function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; target
         return (
           <div
             key={slot.date}
-            onClick={v ? () => scrollToVideo(v.id) : undefined}
+            onClick={v ? () => (onNavigateToVideo ?? scrollToVideo)(v.id) : undefined}
             style={{
               display: "grid",
               gridTemplateColumns: "52px 10px 1fr auto auto",

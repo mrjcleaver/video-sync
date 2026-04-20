@@ -55,9 +55,11 @@ interface Props {
   video: VideoRecordJSON;
   onMutated: () => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
+  /** Switch filter (if needed) and scroll the card into view. Used on publish transitions. */
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
-export default function VideoCard({ video, onMutated, onEvent }: Props) {
+export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo }: Props) {
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
@@ -271,6 +273,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     );
     onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Publishing`, { video_id: video.id });
     onMutated();
+    onNavigateToVideo?.(video.id, "publish");
   }
 
   async function preparePublish() {
@@ -429,6 +432,9 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           })
         )
       );
+      // Cache privacy now — we know what we asked for, no need for a round-trip.
+      // A later Check Status will refresh it if YouTube's privacy differs.
+      setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
       onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);

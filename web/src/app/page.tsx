@@ -86,6 +86,36 @@ export default function Dashboard() {
     clientLog("info", "event", ev, fields);
   }, []);
 
+  /**
+   * Ensure a video card is visible, switching filter if necessary, then scroll.
+   * Called from Overview/Calendar clicks and from Publish transitions.
+   */
+  const ensureVideoVisible = useCallback((videoId: string, intent?: "publish") => {
+    // Look up status from the freshest WASM store rather than stale state closure
+    const all = videoStore.getAll();
+    const status = all.find(v => v.id === videoId)?.status;
+    setFilter(prev => {
+      if (intent === "publish") return "Active";
+      if (!status) return prev;
+      const active = (ACTIVE_STATUSES as readonly string[]).includes(status);
+      const done = (DONE_STATUSES as readonly string[]).includes(status);
+      if (prev === "All") return prev;
+      if (prev === "Active" && active) return prev;
+      if (prev === "Done" && done) return prev;
+      if (prev === status) return prev;
+      return "All";
+    });
+    // Defer scroll until after filter change has rendered
+    setTimeout(() => {
+      const el = document.getElementById(`video-card-${videoId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.style.outline = "2px solid var(--primary, #6366f1)";
+        setTimeout(() => { el.style.outline = ""; }, 2000);
+      }
+    }, 50);
+  }, []);
+
   const { isRunning: isRunnerRunning, lastRun, matchCount, runNow } = useRuleRunner({
     onEvent: addEvent,
     onMutated: refresh,
@@ -170,6 +200,8 @@ export default function Dashboard() {
 
       <ImportPanel onImported={refresh} onEvent={addEvent} />
 
+      <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
+
       <RulesPanel
         isRunnerRunning={isRunnerRunning}
         lastRun={lastRun}
@@ -180,8 +212,6 @@ export default function Dashboard() {
       <ProcessingRulesPanel />
 
       <PostProcessingRulesPanel />
-
-      <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
       <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
@@ -298,6 +328,7 @@ export default function Dashboard() {
                 video={v}
                 onMutated={refresh}
                 onEvent={addEvent}
+                onNavigateToVideo={ensureVideoVisible}
               />
             ))}
           </div>

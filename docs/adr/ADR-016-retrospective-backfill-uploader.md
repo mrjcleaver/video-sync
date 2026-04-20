@@ -328,3 +328,34 @@ The existing single-month "Calendar" tab remains for detailed day-by-day inspect
 - ADR-015: Fireflies Import Integration (source adapter)
 - [YouTube Data API — Quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost)
 - [YouTube Data API — Videos.update](https://developers.google.com/youtube/v3/docs/videos/update)
+
+---
+
+## Addendum: UX Rework (2026-04-20)
+
+### Page Section Order
+
+The Backfill Uploader is the most-used panel once a profile is configured — it's where operators spend most of their time during a long backfill. It now sits directly under the Import panel (and above Rules / Processing Rules / Post-Processing Rules / Shorts), so the two frequently-used sections (Import and Backfill) are adjacent at the top of the page.
+
+Source tab order in Import: **Fireflies** → **Zoom** → **URL** → **Manual**. Fireflies is the dominant source for this operator, and making it the default tab removes one click per import session.
+
+### Filter Coordination with Publish
+
+When a user clicks **Publish** on a VideoCard (or when the Backfill orchestrator triggers `request_publish`), the main video list filter automatically switches to `Active`. Rationale: the card is about to leave the filtered view if the filter was narrow (e.g. `Approved`), but the operator almost certainly wants to watch the upload progress. `Active` includes `Publishing`, `Failed`, and `ToRetry`, so they can also see any immediate failure without switching filters.
+
+### Jump-To-Video with Filter Fallback
+
+Clicking a video row in Overview or a dot in Calendar calls `ensureVideoVisible(videoId, intent?)` (defined in `page.tsx`). The helper:
+
+1. Looks up the video's current status from `videoStore.getAll()`.
+2. Checks if the current filter includes that status (directly, or via `Active` / `Done` / `All`).
+3. If not, switches the filter to `All`.
+4. After a 50ms delay (to let React render), scrolls `#video-card-${id}` into view and highlights it.
+
+With `intent === "publish"`, step 2 is skipped and the filter is forced to `Active` regardless.
+
+This keeps the operator's current filter when possible (e.g. clicking a Published video while filtered to `Published` is a no-op on filter) but prevents the "clicked but nothing happened" failure mode where the target video was filtered out of the DOM.
+
+### Connections Panel Collapse
+
+When `showConnections` is false, `ConnectionsPanel` returns `null` instead of rendering an empty header + HelpTip pair. The toggle button in the main header is the only affordance when collapsed. The HelpTip now lives inside the open branch so it's visible only when relevant.

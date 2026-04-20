@@ -191,6 +191,9 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
     window.location.href = `/api/youtube/auth?clientId=${encodeURIComponent(yt.credentials.clientId)}`;
   }
 
+  // When collapsed, render nothing — the header button is the only toggle visible.
+  if (!open) return null;
+
   return (
     <div className="connections-panel">
       <h2>Connections</h2>
@@ -203,8 +206,7 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
         transcript summarisation in Processing Rules.
       </HelpTip>
 
-      {open && (
-        <div className="connections-grid">
+      <div className="connections-grid">
           {PLATFORMS.map((p) => (
             <div
               key={p.name}
@@ -283,8 +285,7 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
               )}
             </div>
           ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

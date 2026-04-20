@@ -16,6 +16,7 @@ import {
 import BackfillCalendar from "./BackfillCalendar";
 import BackfillOverview from "./BackfillOverview";
 import HelpTip from "./HelpTip";
+import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
@@ -30,6 +31,7 @@ interface Props {
   videos: VideoRecordJSON[];
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   onMutated: () => void;
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
 function loadYouTubeCreds(): { refreshToken?: string; clientId?: string; clientSecret?: string } {
@@ -74,7 +76,7 @@ function newProfile(): BackfillProfile {
   };
 }
 
-export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
+export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateToVideo }: Props) {
   const [profiles, setProfilesState] = useState<BackfillProfile[]>([]);
   const [queue, setQueueState] = useState(loadQueue());
   const [clientState, setClientStateValue] = useState(loadClientState());
@@ -184,6 +186,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
         }))
       );
       onMutated();
+      onNavigateToVideo?.(videoId, "publish");
     } catch { /* may already be in Publishing */ }
 
     const uploadBody: Record<string, unknown> = {
@@ -232,6 +235,8 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
           platform: "YouTube",
         }))
       );
+      // Cache privacy — we know what we uploaded with
+      setPrivacy(ytId, normalisePrivacy(attrs.privacy_status ?? profile.default_privacy));
       onMutated();
 
       removeFromQueue(videoId);
@@ -379,7 +384,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
               {profiles.map(p => <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>)}
             </select>
           )}
-          <BackfillOverview videos={videos} profile={calendarProfileObj} />
+          <BackfillOverview videos={videos} profile={calendarProfileObj} onNavigateToVideo={onNavigateToVideo} />
         </div>
       )}
 
@@ -400,7 +405,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
               {profiles.map(p => <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>)}
             </select>
           )}
-          <BackfillCalendar videos={videos} profile={calendarProfileObj} />
+          <BackfillCalendar videos={videos} profile={calendarProfileObj} onNavigateToVideo={onNavigateToVideo} />
         </div>
       )}
 

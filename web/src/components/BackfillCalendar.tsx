@@ -23,9 +23,10 @@ function scrollToVideo(id: string) {
 interface Props {
   videos: VideoRecordJSON[];
   profile: BackfillProfile;
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
-export default function BackfillCalendar({ videos, profile }: Props) {
+export default function BackfillCalendar({ videos, profile, onNavigateToVideo }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
@@ -99,7 +100,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
             <div
               key={slot.date}
               title={slot.video ? `${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
-              onClick={slot.video ? () => scrollToVideo(slot.video!.id) : undefined}
+              onClick={slot.video ? () => (onNavigateToVideo ?? scrollToVideo)(slot.video!.id) : undefined}
               style={{
                 padding: "4px 2px",
                 borderRadius: 4,

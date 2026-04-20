@@ -9,8 +9,8 @@ import IndexForm from "./IndexForm";
 type Tab = "zoom" | "fireflies" | "url" | "manual";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "zoom",       label: "Zoom" },
   { id: "fireflies",  label: "Fireflies" },
+  { id: "zoom",       label: "Zoom" },
   { id: "url",        label: "URL" },
   { id: "manual",     label: "Manual" },
 ];
@@ -24,7 +24,7 @@ interface Props {
 
 export default function ImportPanel({ onImported, onEvent }: Props) {
   const [active, setActive] = useState<Tab>(() => {
-    try { return (localStorage.getItem(TAB_KEY) as Tab) ?? "zoom"; } catch { return "zoom"; }
+    try { return (localStorage.getItem(TAB_KEY) as Tab) ?? "fireflies"; } catch { return "fireflies"; }
   });
 
   function selectTab(tab: Tab) {

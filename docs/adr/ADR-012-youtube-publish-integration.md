@@ -128,10 +128,11 @@ localStorage["video-sync:yt-privacy"] = {
 }
 ```
 
-Two endpoints populate the cache:
+Three pathways populate the cache:
 
-1. **Per-video**: `/api/youtube/status?videoId=...` — called from **Check Status** on a single VideoCard location. Returns `privacyStatus` alongside upload status. Cost: 1 quota unit per check.
-2. **Bulk**: `POST /api/youtube/privacy-batch` with `{ videoIds: string[] }` — called from the **Fill privacy** button on the Overview header. Batches IDs into chunks of 50 (YouTube Data API max for `videos.list`) and returns `{ privacy: {id: status}, missing: string[] }`. Cost: 1 quota unit per 50 videos. Missing IDs (videos YouTube doesn't return) are cached as `unknown` so repeated Fill clicks don't keep re-querying them.
+1. **On successful publish** (zero quota): when `mark_published` completes in either VideoCard or BackfillPanel, we write the `privacyStatus` that was sent to YouTube to the cache. We already know the intended privacy (it was a request parameter), so there's no reason to round-trip the API to learn it. A later **Check Status** will overwrite this with YouTube's authoritative value if it differs (e.g. if a human changed privacy in YouTube Studio after upload).
+2. **Per-video**: `/api/youtube/status?videoId=...` — called from **Check Status** on a single VideoCard location. Returns `privacyStatus` alongside upload status. Cost: 1 quota unit per check.
+3. **Bulk**: `POST /api/youtube/privacy-batch` with `{ videoIds: string[] }` — called from the **Fill privacy** button on the Overview header. Batches IDs into chunks of 50 (YouTube Data API max for `videos.list`) and returns `{ privacy: {id: status}, missing: string[] }`. Cost: 1 quota unit per 50 videos. Missing IDs (videos YouTube doesn't return) are cached as `unknown` so repeated Fill clicks don't keep re-querying them.
 
 The `BackfillOverview` YouTube link badge reads from the cache and colours by privacy:
 
