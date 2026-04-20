@@ -9,6 +9,7 @@ import {
   DAY_NAMES,
   MONTH_NAMES,
 } from "../lib/backfill";
+import { getDisplayTitle } from "../lib/processingRules";
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -22,6 +23,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
   const [targetOnly, setTargetOnly] = useState(false);
 
   const slots = buildCalendarMonth(videos, profile, year, month);
+  const videoMap = new Map(videos.map(v => [v.id, v]));
 
   function prevMonth() {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }
@@ -87,7 +89,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
           return (
             <div
               key={slot.date}
-              title={slot.video ? `${slot.video.title}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
+              title={slot.video ? `${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
               style={{
                 padding: "4px 2px",
                 borderRadius: 4,

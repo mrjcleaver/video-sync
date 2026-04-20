@@ -11,6 +11,7 @@ import {
   DAY_NAMES,
 } from "../lib/backfill";
 import { resolveExternalUrl } from "../lib/urlResolver";
+import { getDisplayTitle } from "../lib/processingRules";
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -125,7 +126,7 @@ export default function BackfillOverview({ videos, profile }: Props) {
 
               {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <DateList slots={s.slots} targetOnly={targetOnly} />
+                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} />
               )}
             </div>
           );
@@ -152,7 +153,8 @@ function shortDate(dateStr: string): string {
 }
 
 /** Vertical date list with status, title, and clickable origin/destination links. */
-function DateList({ slots, targetOnly }: { slots: CalendarSlot[]; targetOnly: boolean }) {
+function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[] }) {
+  const videoMap = new Map(videos.map(v => [v.id, v]));
   const visible = targetOnly ? slots.filter(s => s.is_target) : slots;
 
   // When not in target-only mode, insert week separators
@@ -224,15 +226,23 @@ function DateList({ slots, targetOnly }: { slots: CalendarSlot[]; targetOnly: bo
               }} />
             </span>
 
-            {/* Title or gap */}
-            {v ? (
-              <span style={{
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                color: v.status === "Published" ? "var(--text)" : "var(--text-muted)",
-              }}>
-                {v.title}
-              </span>
-            ) : (
+            {/* Title or gap — apply processing rules for display */}
+            {v ? (() => {
+              const fullVideo = videoMap.get(v.id);
+              const displayTitle = fullVideo ? getDisplayTitle(fullVideo) : v.title;
+              const isTransformed = displayTitle !== v.title;
+              return (
+                <span
+                  title={isTransformed ? `Original: ${v.title}` : undefined}
+                  style={{
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    color: v.status === "Published" ? "var(--text)" : "var(--text-muted)",
+                  }}
+                >
+                  {displayTitle}
+                </span>
+              );
+            })() : (
               <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: "0.7rem" }}>
                 {slot.is_target ? "— no source —" : ""}
               </span>

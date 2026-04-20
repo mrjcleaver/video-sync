@@ -166,9 +166,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <ImportPanel onImported={refresh} onEvent={addEvent} />
-
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
+
+      <ImportPanel onImported={refresh} onEvent={addEvent} />
 
       <RulesPanel
         isRunnerRunning={isRunnerRunning}

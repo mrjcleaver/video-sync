@@ -400,3 +400,16 @@ export async function requestLlmSummary(transcript: string): Promise<LlmSummary>
   }
   return res.json() as Promise<LlmSummary>;
 }
+
+// ── Universal display title ──────────────────────────────────
+
+/**
+ * Apply processing rules to produce a display title for any video.
+ * Returns the transformed title if rules change it, otherwise the original.
+ * Safe to call from any component — lightweight, synchronous, no side effects.
+ */
+export function getDisplayTitle(video: VideoRecordJSON): string {
+  const rules = loadProcessingRules();
+  if (rules.length === 0) return video.title;
+  return applyProcessingRules(rules, video).title;
+}
