@@ -14,6 +14,7 @@ import {
   MONTH_NAMES,
 } from "../lib/backfill";
 import BackfillCalendar from "./BackfillCalendar";
+import BackfillOverview from "./BackfillOverview";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -81,7 +82,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
   const [editing, setEditing] = useState<BackfillProfile | null>(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"profiles" | "queue" | "calendar">("profiles");
+  const [activeTab, setActiveTab] = useState<"profiles" | "queue" | "overview" | "calendar">("profiles");
   const [calendarProfile, setCalendarProfile] = useState<string>("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -322,7 +323,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       </HelpTip>
 
       <div className="filter-tabs" style={{ marginBottom: 12 }}>
-        {(["profiles", "queue", "calendar"] as const).map(t => (
+        {(["profiles", "queue", "overview", "calendar"] as const).map(t => (
           <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "queue" && readyEntries.length > 0 ? ` (${readyEntries.length})` : ""}
@@ -362,6 +363,27 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
             onEvent("Backfill: queue cleared");
           }}
         />
+      )}
+
+      {activeTab === "overview" && calendarProfileObj && (
+        <div>
+          {profiles.length > 1 && (
+            <select
+              value={calendarProfile}
+              onChange={e => setCalendarProfile(e.target.value)}
+              style={{ marginBottom: 12, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+            >
+              {profiles.map(p => <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>)}
+            </select>
+          )}
+          <BackfillOverview videos={videos} profile={calendarProfileObj} />
+        </div>
+      )}
+
+      {activeTab === "overview" && profiles.length === 0 && (
+        <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: 16 }}>
+          Create a profile first to see the overview.
+        </div>
       )}
 
       {activeTab === "calendar" && calendarProfileObj && (

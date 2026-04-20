@@ -99,16 +99,21 @@ export function matchesProfile(video: VideoRecordJSON, profile: BackfillProfile)
   if (!profile.enabled) return false;
 
   const dateStr = video.recorded_at || video.indexed_at;
-  const date = new Date(dateStr);
+  const dateOnly = dateStr.slice(0, 10);
 
-  if (profile.date_from && dateStr.slice(0, 10) < profile.date_from) return false;
-  if (profile.date_to   && dateStr.slice(0, 10) > profile.date_to)   return false;
+  if (profile.date_from && dateOnly < profile.date_from) return false;
+  if (profile.date_to   && dateOnly > profile.date_to)   return false;
 
   if (profile.source_platforms.length > 0 &&
       !profile.source_platforms.includes(video.source_platform)) return false;
 
   const { criteria: c } = profile;
-  if (c.days_of_week?.length && !c.days_of_week.includes(date.getDay())) return false;
+  // Parse as local time to avoid UTC→local day-of-week shift
+  if (c.days_of_week?.length) {
+    const [y, m, d] = dateOnly.split("-").map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    if (!c.days_of_week.includes(dow)) return false;
+  }
 
   const mins = video.duration_seconds / 60;
   if (c.min_duration_minutes != null && mins < c.min_duration_minutes) return false;
@@ -210,7 +215,7 @@ export function buildCalendarMonth(
   for (let d = 1; d <= last; d++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     if (dateStr > today) break; // don't show future
-    const dow = new Date(dateStr).getDay();
+    const dow = new Date(year, month, d).getDay();
     const inRange = dateStr >= profile.date_from && (!profile.date_to || dateStr <= profile.date_to);
     const v = byDate.get(dateStr);
     slots.push({
@@ -244,6 +249,58 @@ export function statusColor(status: string | undefined): string {
     Skipped: "var(--text-muted)",
   }[status] ?? "var(--text-muted)";
 }
+
+// ── Multi-month overview ──────────────────────────────────────────────────
+
+export interface MonthSummary {
+  year: number;
+  month: number;         // 0-indexed
+  label: string;         // "Jan 2025"
+  target_days: number;   // total target slots in this month
+  published: number;
+  approved: number;
+  in_backlog: number;    // InScope + Discovered
+  failed: number;
+  gaps: number;          // target days with no video
+  slots: CalendarSlot[];
+}
+
+/** Build summaries for every month in the profile's date range. */
+export function buildCalendarOverview(
+  videos: VideoRecordJSON[],
+  profile: BackfillProfile,
+): MonthSummary[] {
+  const from = profile.date_from;
+  const to = profile.date_to || new Date().toISOString().slice(0, 10);
+
+  const [startY, startM] = from.split("-").map(Number);
+  const [endY, endM] = to.split("-").map(Number);
+
+  const summaries: MonthSummary[] = [];
+  let y = startY, m = startM - 1; // 0-indexed month
+
+  while (y < endY || (y === endY && m <= endM - 1)) {
+    const slots = buildCalendarMonth(videos, profile, y, m);
+    const targetSlots = slots.filter(s => s.is_target);
+    summaries.push({
+      year: y,
+      month: m,
+      label: `${MONTH_NAMES_SHORT[m]} ${y}`,
+      target_days: targetSlots.length,
+      published: targetSlots.filter(s => s.video?.status === "Published").length,
+      approved: targetSlots.filter(s => s.video?.status === "Approved" || s.video?.status === "Publishing").length,
+      in_backlog: targetSlots.filter(s => s.video && (s.video.status === "InScope" || s.video.status === "Discovered")).length,
+      failed: targetSlots.filter(s => s.video?.status === "Failed" || s.video?.status === "ToRetry").length,
+      gaps: targetSlots.filter(s => !s.video).length,
+      slots,
+    });
+    m++;
+    if (m > 11) { m = 0; y++; }
+  }
+  return summaries;
+}
+
+const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const MONTH_NAMES = [

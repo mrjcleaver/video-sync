@@ -243,6 +243,47 @@ The `BackfillCalendar` component generates one `CalendarSlot` per day in the con
 
 ---
 
+## Addendum: Multi-Month Overview and Timezone Fix (2026-04-20)
+
+### Problem: Single-Month Calendar Inadequate for 18-Month Backlogs
+
+The original `BackfillCalendar` showed one month at a time. For an 18-month backlog (~78 weeks of content), operators had to click through months individually with no way to see the full picture — total progress, gaps across the entire period, or estimated completion.
+
+### Problem: Day-of-Week Timezone Bug
+
+`new Date("YYYY-MM-DD").getDay()` parses the string as UTC midnight but returns the day in local time. In timezones east of UTC, this shifts the day-of-week forward by one (e.g. Thu → Fri), causing target-day filtering and calendar rendering to highlight the wrong days. The same bug affected `matchesProfile()` when filtering videos by day-of-week criteria.
+
+### Solution
+
+**1. Timezone fix** — Both `buildCalendarMonth()` and `matchesProfile()` now use `new Date(year, month, day).getDay()` (local-time constructor) instead of parsing ISO date strings. This ensures the day-of-week matches the operator's local timezone regardless of UTC offset.
+
+**2. Multi-month overview** (`BackfillOverview` component, "Overview" tab) — Shows the entire profile date range at once:
+
+- **Summary bar**: Total progress percentage, counts by status (published, approved, backlog, failed, gaps), and estimated days to clear at current upload rate.
+- **Progress bar**: Visual percentage of target days published.
+- **Month rows**: One row per month with a stacked bar showing published (green), approved (purple), failed (red), and backlog (yellow) proportions. Each row shows `published/target · N gaps`.
+- **Expandable detail**: Click a month to see its inline mini-grid calendar with day-level status dots.
+- **Target-days toggle**: Same as the single-month calendar — hides non-target days when active.
+
+```ts
+interface MonthSummary {
+  year: number;
+  month: number;
+  label: string;         // "Jan 2025"
+  target_days: number;   // total target slots
+  published: number;
+  approved: number;
+  in_backlog: number;
+  failed: number;
+  gaps: number;          // target days with no video
+  slots: CalendarSlot[];
+}
+```
+
+The existing single-month "Calendar" tab remains for detailed day-by-day inspection of a specific month.
+
+---
+
 ## Implementation Phases
 
 | Phase | Scope | Quota impact |
