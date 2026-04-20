@@ -28,7 +28,7 @@ function dateTag(recorded_at: string | null | undefined): string {
 
 interface Props {
   videos: VideoRecordJSON[];
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
   onMutated: () => void;
 }
 
@@ -252,7 +252,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       saveClientState(newCs);
       setClientStateValue(newCs);
 
-      onEvent(`Backfill: published "${video.title}"${dateTag(video.recorded_at)} → ${videoUrl}`);
+      onEvent(`Backfill: published "${video.title}"${dateTag(video.recorded_at)} → ${videoUrl}`, { video_id: videoId });
       setStatus(`Published "${video.title}"`);
     } catch (err) {
       videoStore.mutate(videoId, r =>
@@ -264,7 +264,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       onMutated();
       markQueueEntryFailed(videoId, 1);
       setQueueState(loadQueue());
-      onEvent(`Backfill: upload failed for "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`);
+      onEvent(`Backfill: upload failed for "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: videoId });
       setStatus(`Failed: ${String(err).slice(0, 80)}`);
     }
   }, [videos, onEvent, onMutated]);

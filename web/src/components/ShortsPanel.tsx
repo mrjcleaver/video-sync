@@ -13,7 +13,7 @@ const ADMIN_ACTOR = JSON.stringify({
 interface Props {
   videos: VideoRecordJSON[];
   onMutated: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 function formatScore(score: number): string {

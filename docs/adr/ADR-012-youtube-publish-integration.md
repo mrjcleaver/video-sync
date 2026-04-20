@@ -108,6 +108,50 @@ For the first iteration:
 - Zoom download URLs expire; the download must start promptly after entering `Publishing`. Mitigation: fetch a fresh download URL at upload time.
 - Large files on slow connections may time out. Mitigation: resumable uploads allow retry from last successful chunk.
 
+---
+
+## Addendum: Privacy Status Tracking (2026-04-20)
+
+### Problem
+
+`privacyStatus` (public / unlisted / private) is sent to YouTube at upload time but never persisted on the `VideoRecord` or `PlatformLocation`. The Overview calendar shows every published video with the same red "YouTube" badge, so operators can't tell at a glance which videos are public vs. unlisted vs. private.
+
+### Decision (MVP)
+
+Add a **browser-side privacy cache** keyed by YouTube video ID:
+
+```ts
+// web/src/lib/youtubePrivacyCache.ts
+localStorage["video-sync:yt-privacy"] = {
+  [youtubeVideoId]: { privacy: "public" | "unlisted" | "private" | "unknown",
+                      checked_at: ISO8601 }
+}
+```
+
+The `/api/youtube/status` endpoint already returns `privacyStatus`. When the operator clicks **Check Status** on a VideoCard (or the status check runs as part of another workflow), the response is written to the cache.
+
+The `BackfillOverview` YouTube link badge reads from the cache and colours by privacy:
+
+| Privacy  | Label     | Colour |
+|----------|-----------|--------|
+| public   | Public    | green  |
+| unlisted | Unlisted  | yellow |
+| private  | Private   | red    |
+| unknown  | YouTube   | slate  |
+
+### Why not store on PlatformLocation?
+
+Persisting `privacy_status` on the Rust `PlatformLocation` aggregate would be the "proper" solution but requires:
+- New Rust field + command + event (`UpdateLocationPrivacy`)
+- WASM rebuild and binding regen
+- Schema migration on the `VideoRecord` JSON
+
+For MVP visibility the browser-side cache is sufficient. The data is idempotent and can be refreshed at any time by clicking Check Status. If the cache is lost (e.g. browser storage cleared), badges revert to "unknown" until the next status check.
+
+### Future
+
+Promote the cache to a `PlatformLocation.privacy_status` field when the WASM domain model gets its next schema bump. The `api/youtube/status` response path would then write both the cache and the aggregate, with the aggregate as the authoritative source.
+
 ## References
 
 - ADR-004: Temporary Storage Strategy

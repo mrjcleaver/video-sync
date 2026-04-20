@@ -16,6 +16,8 @@ import {
 import type { ShortsStatusResponse } from "../app/api/shorts/status/route";
 import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 import { resolveExternalUrl } from "../lib/urlResolver";
+import { loadClientLog, type LogRecord } from "../lib/logger";
+import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -52,7 +54,7 @@ const ADMIN_ACTOR = JSON.stringify({
 interface Props {
   video: VideoRecordJSON;
   onMutated: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 export default function VideoCard({ video, onMutated, onEvent }: Props) {
@@ -87,6 +89,14 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
   const [shortsLoading, setShortsLoading] = useState(false);
   const [shortsError, setShortsError] = useState<string | null>(null);
   const [shortsPhase, setShortsPhase] = useState("");
+  const [showLog, setShowLog] = useState(false);
+  const [logTick, setLogTick] = useState(0);
+
+  const videoLog = useMemo<LogRecord[]>(() => {
+    if (!showLog) return [];
+    return loadClientLog().filter(r => r.video_id === video.id);
+    // logTick bumps the memo when events occur
+  }, [showLog, video.id, logTick]);
 
   const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
 
@@ -138,7 +148,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       if (!genRes.ok) throw new Error(genData.error ?? `Submission failed (${genRes.status})`);
       const jobId = genData.jobId!;
 
-      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId}`);
+      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId}`, { video_id: video.id });
       setShowShortsModal(false);
 
       // Poll for completion (max 10 min, every 15 s)
@@ -161,14 +171,14 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
             jobId,
             clips: statusData.clips,
           });
-          onEvent(`ShortsIndexed: ${count} clip(s) from "${video.title}"${dateTag(video.recorded_at)} — review in Shorts panel`);
+          onEvent(`ShortsIndexed: ${count} clip(s) from "${video.title}"${dateTag(video.recorded_at)} — review in Shorts panel`, { video_id: video.id });
           onMutated();
           break;
         }
       }
     } catch (err) {
       setShortsError(String(err));
-      onEvent(`ShortsError: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`);
+      onEvent(`ShortsError: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
     } finally {
       setShortsLoading(false);
       setShortsPhase("");
@@ -185,7 +195,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setLoomInfo(data as LoomMetadata);
-      onEvent(`LoomMetadataFetched: "${data.title}" by ${data.authorName}`);
+      onEvent(`LoomMetadataFetched: "${data.title}" by ${data.authorName}`, { video_id: video.id });
     } catch (err) {
       setLoomError(String(err));
     } finally {
@@ -206,7 +216,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         }),
       ),
     );
-    onEvent(`MetadataApplied: "${video.title}"${dateTag(video.recorded_at)} ← Loom${loomInfo.description ? " (with description)" : ""}`);
+    onEvent(`MetadataApplied: "${video.title}"${dateTag(video.recorded_at)} ← Loom${loomInfo.description ? " (with description)" : ""}`, { video_id: video.id });
     onMutated();
   }
 
@@ -214,7 +224,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     videoStore.mutate(video.id, (r) =>
       r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
     );
-    onEvent(`VideoApproved: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoApproved: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -224,7 +234,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), rule_id: null })
       )
     );
-    onEvent(`VideoScoped: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoScoped: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -237,7 +247,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`VideoSkipped: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoSkipped: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -251,7 +261,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`VideoExcluded: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoExcluded: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -259,7 +269,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     videoStore.mutate(video.id, (r) =>
       r.request_publish(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
     );
-    onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Publishing`);
+    onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Publishing`, { video_id: video.id });
     onMutated();
   }
 
@@ -282,7 +292,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         const enriched = { ...video, description: summary.summary };
         attrs = applyProcessingRules(rules, enriched);
       } catch (err) {
-        onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`);
+        onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
         // Fall through with non-LLM attrs
       } finally {
         setUploadPhase("");
@@ -345,7 +355,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
 
       if (attrs.trim_start_seconds > 0) {
         uploadBody.trimStartSeconds = attrs.trim_start_seconds;
-        onEvent(`TrimApplied: "${video.title}"${dateTag(video.recorded_at)} — ${attrs.trim_start_seconds}s from start`);
+        onEvent(`TrimApplied: "${video.title}"${dateTag(video.recorded_at)} — ${attrs.trim_start_seconds}s from start`, { video_id: video.id });
       }
 
       if (isZoomSource && zoomCreds) {
@@ -419,7 +429,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           })
         )
       );
-      onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`);
+      onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
     } catch (err) {
@@ -427,7 +437,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       videoStore.mutate(video.id, (r) =>
         r.mark_failed(JSON.stringify({ error_message: msg }))
       );
-      onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`);
+      onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
@@ -440,7 +450,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     videoStore.mutate(video.id, (r) =>
       r.abandon(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), reason: "Abandoned from dashboard" }))
     );
-    onEvent(`VideoAbandoned: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoAbandoned: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -448,7 +458,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     videoStore.mutate(video.id, (r) =>
       r.mark_to_retry(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), reason: "Retry requested from dashboard" }))
     );
-    onEvent(`VideoMarkedToRetry: "${video.title}"${dateTag(video.recorded_at)}`);
+    onEvent(`VideoMarkedToRetry: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
 
@@ -499,7 +509,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
       const data = await res.json();
 
       videoStore.setTranscript(video.id, data.transcript);
-      onEvent(`TranscriptLoaded: "${video.title}"${dateTag(video.recorded_at)} (${data.chars} chars)`);
+      onEvent(`TranscriptLoaded: "${video.title}"${dateTag(video.recorded_at)} (${data.chars} chars)`, { video_id: video.id });
       onMutated();
     } catch (err) {
       setTranscriptError(`Error: ${String(err)}`);
@@ -534,6 +544,10 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         }
       );
       const data = await res.json();
+      // Cache privacy status regardless of upload status (as long as we got a response)
+      if (res.ok && data.privacyStatus) {
+        setPrivacy(loc.external_id, normalisePrivacy(data.privacyStatus));
+      }
       if (!res.ok) {
         // Video not found or API error — mark as failed
         if (res.status === 404) {
@@ -541,7 +555,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
             videoStore.mutate(video.id, (r) =>
               r.mark_failed(JSON.stringify({ error_message: "YouTube video not found" }))
             );
-            onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube video not found`);
+            onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube video not found`, { video_id: video.id });
             onMutated();
           } catch { /* ignore if status transition not allowed */ }
           return;
@@ -569,7 +583,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
             r.mark_failed(JSON.stringify({ error_message: `YouTube status: ${data.status}` }))
           );
         } catch { /* ignore if transition not allowed */ }
-        onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube ${data.status}`);
+        onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube ${data.status}`, { video_id: video.id });
         onMutated();
         return;
       }
@@ -586,15 +600,15 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           )
         );
       } catch (wasmErr) {
-        onEvent(`LocationStatusUpdated (display only): YouTube/${loc.external_id} -> ${data.status}`);
+        onEvent(`LocationStatusUpdated (display only): YouTube/${loc.external_id} -> ${data.status}`, { video_id: video.id });
         onMutated();
         return;
       }
-      onEvent(`LocationStatusUpdated: "${video.title}"${dateTag(video.recorded_at)} YouTube/${loc.external_id} -> ${data.status}`);
+      onEvent(`LocationStatusUpdated: "${video.title}"${dateTag(video.recorded_at)} YouTube/${loc.external_id} -> ${data.status}`, { video_id: video.id });
       onMutated();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      onEvent(`YouTubeStatusCheckFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`);
+      onEvent(`YouTubeStatusCheckFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
       alert(`YouTube status check failed: ${msg}`);
     } finally {
       setCheckingStatus(null);
@@ -605,7 +619,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
     videoStore.mutate(video.id, (r) =>
       r.mark_failed(JSON.stringify({ error_message: "Manual failure from dashboard" }))
     );
-    onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Failed`);
+    onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Failed`, { video_id: video.id });
     onMutated();
   }
 
@@ -622,7 +636,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`LocationAdded: "${video.title}"${dateTag(video.recorded_at)} — ${locPlatform}/${locExternalId}`);
+    onEvent(`LocationAdded: "${video.title}"${dateTag(video.recorded_at)} — ${locPlatform}/${locExternalId}`, { video_id: video.id });
     setLocExternalId("");
     setLocExternalUrl("");
     setShowLocationForm(false);
@@ -639,7 +653,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`);
+    onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`, { video_id: video.id });
     onMutated();
   }
 
@@ -653,7 +667,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`NoteAdded: "${video.title}"${dateTag(video.recorded_at)} — "${noteText.trim()}"`);
+    onEvent(`NoteAdded: "${video.title}"${dateTag(video.recorded_at)} — "${noteText.trim()}"`, { video_id: video.id });
     setNoteText("");
     onMutated();
   }
@@ -671,7 +685,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`UpstreamLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${linkPlatform}/${linkExternalId.trim()}`);
+    onEvent(`UpstreamLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${linkPlatform}/${linkExternalId.trim()}`, { video_id: video.id });
     setLinkExternalId("");
     setShowLinkForm(false);
     onMutated();
@@ -688,7 +702,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         })
       )
     );
-    onEvent(`UpstreamUnlinked: "${video.title}"${dateTag(video.recorded_at)} <- ${link.platform}/${link.external_id}${reject ? " (rejected)" : ""}`);
+    onEvent(`UpstreamUnlinked: "${video.title}"${dateTag(video.recorded_at)} <- ${link.platform}/${link.external_id}${reject ? " (rejected)" : ""}`, { video_id: video.id });
     onMutated();
   }
 
@@ -1226,6 +1240,32 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         </div>
       )}
 
+      {showLog && (
+        <div style={{ marginTop: 10, padding: 10, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, maxHeight: 240, overflowY: "auto" }}>
+          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 6, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            Event Log — this video ({videoLog.length})
+          </div>
+          {videoLog.length === 0 ? (
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontStyle: "italic" }}>
+              No events yet for this video.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              {[...videoLog].reverse().map((r, i) => (
+                <div key={i} style={{ fontFamily: "monospace", fontSize: "0.7rem", display: "flex", gap: 6 }}>
+                  <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{r.ts.slice(11, 19)}</span>
+                  <span style={{ color: r.level === "error" ? "var(--red)" : r.level === "warn" ? "#fbbf24" : "var(--text-muted)", flexShrink: 0, width: 38 }}>
+                    {r.level}
+                  </span>
+                  <span>{r.msg}</span>
+                  {r.error && <span style={{ color: "var(--red)" }}>— {r.error}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="video-card-actions">
         {canApprove && (
           <button className="btn btn-sm btn-green" onClick={approve}>
@@ -1306,6 +1346,14 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
         >
           {showProvenance ? "Hide provenance" : "Provenance"}
         </button>
+        <button
+          className="btn btn-sm"
+          style={{ fontSize: "0.72rem" }}
+          onClick={() => { setShowLog(v => !v); setLogTick(t => t + 1); }}
+          title="Show events scoped to this video"
+        >
+          {showLog ? "Hide log" : "Log"}
+        </button>
         {!showNotes && video.notes.length === 0 && (
           <button className="btn btn-sm" onClick={() => setShowNotes(true)}>
             + Note
@@ -1317,7 +1365,7 @@ export default function VideoCard({ video, onMutated, onEvent }: Props) {
           onClick={() => {
             if (window.confirm(`Delete "${video.title}"${dateTag(video.recorded_at)}? This cannot be undone.`)) {
               videoStore.remove(video.id);
-              onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`);
+              onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
               onMutated();
             }
           }}

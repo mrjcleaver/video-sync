@@ -14,7 +14,7 @@ const ADMIN_ACTOR = JSON.stringify({
 
 interface UseRuleRunnerOpts {
   intervalMs?: number;
-  onEvent?: (ev: string) => void;
+  onEvent?: (ev: string, fields?: { video_id?: string }) => void;
   onMutated?: () => void;
 }
 
@@ -59,12 +59,12 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
               JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), rule_id: ruleId })
             )
           );
-          onEvent?.(`Rule "${ruleId}" scoped: video ${videoId}`);
+          onEvent?.(`Rule "${ruleId}" scoped: video ${videoId}`, { video_id: videoId });
         } else if (action === "auto_approve") {
           videoStore.mutate(videoId, (r) =>
             r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
           );
-          onEvent?.(`Rule "${ruleId}" auto-approved: video ${videoId}`);
+          onEvent?.(`Rule "${ruleId}" auto-approved: video ${videoId}`, { video_id: videoId });
         } else if (action === "auto_skip") {
           videoStore.mutate(videoId, (r) =>
             r.skip(
@@ -74,7 +74,7 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
               })
             )
           );
-          onEvent?.(`Rule "${ruleId}" auto-skipped: video ${videoId}`);
+          onEvent?.(`Rule "${ruleId}" auto-skipped: video ${videoId}`, { video_id: videoId });
         }
         applied++;
       } catch (err) {

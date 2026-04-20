@@ -81,9 +81,9 @@ export default function Dashboard() {
     setVideos(videoStore.getAll());
   }, []);
 
-  const addEvent = useCallback((ev: string) => {
+  const addEvent = useCallback((ev: string, fields?: { video_id?: string }) => {
     setEvents((prev) => [...prev, ev]);
-    clientLog("info", "event", ev);
+    clientLog("info", "event", ev, fields);
   }, []);
 
   const { isRunning: isRunnerRunning, lastRun, matchCount, runNow } = useRuleRunner({

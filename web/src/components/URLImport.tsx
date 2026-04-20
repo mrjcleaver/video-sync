@@ -108,7 +108,7 @@ async function fetchLoom(id: string, raw: string): Promise<FetchedItem> {
 
 interface Props {
   onImported: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 export default function URLImport({ onImported, onEvent }: Props) {

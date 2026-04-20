@@ -12,6 +12,24 @@ import {
 } from "../lib/backfill";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { getDisplayTitle } from "../lib/processingRules";
+import { getPrivacy, type PrivacyStatus } from "../lib/youtubePrivacyCache";
+
+/** Extract YouTube video ID from a watch URL or short URL. */
+function extractYouTubeId(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const watch = url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+  if (watch) return watch[1];
+  const short = url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  if (short) return short[1];
+  return null;
+}
+
+const PRIVACY_COLOR: Record<PrivacyStatus, { bg: string; fg: string; border: string; label: string }> = {
+  public:   { bg: "rgba(34,197,94,0.12)",  fg: "#22c55e", border: "rgba(34,197,94,0.3)",  label: "Public" },
+  unlisted: { bg: "rgba(250,204,21,0.12)", fg: "#facc15", border: "rgba(250,204,21,0.3)", label: "Unlisted" },
+  private:  { bg: "rgba(248,113,113,0.12)",fg: "#f87171", border: "rgba(248,113,113,0.3)",label: "Private" },
+  unknown:  { bg: "rgba(148,163,184,0.12)",fg: "#94a3b8", border: "rgba(148,163,184,0.3)",label: "YouTube" },
+};
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -149,6 +167,11 @@ export default function BackfillOverview({ videos, profile }: Props) {
         <span><span style={{ color: "#fbbf24" }}>■</span> Backlog</span>
         <span><span style={{ color: "var(--red)" }}>■</span> Failed</span>
         <span><span style={{ color: "var(--border)" }}>○</span> Gap</span>
+        <span style={{ marginLeft: 8 }}>Privacy:</span>
+        <span><span style={{ color: "#22c55e" }}>■</span> Public</span>
+        <span><span style={{ color: "#facc15" }}>■</span> Unlisted</span>
+        <span><span style={{ color: "#f87171" }}>■</span> Private</span>
+        <span><span style={{ color: "#94a3b8" }}>■</span> Unknown</span>
       </div>
     </div>
   );
@@ -279,23 +302,29 @@ function DateList({ slots, targetOnly, videos }: { slots: CalendarSlot[]; target
               <span style={{ width: 48 }} />
             )}
 
-            {/* YouTube link */}
-            {ytHref ? (
-              <a
-                href={ytHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                style={{
-                  ...LINK_STYLE,
-                  background: "rgba(248,113,113,0.1)",
-                  color: "#f87171",
-                  border: "1px solid rgba(248,113,113,0.25)",
-                }}
-              >
-                YouTube
-              </a>
-            ) : (
+            {/* YouTube link (coloured by privacy status when known) */}
+            {ytHref ? (() => {
+              const ytId = extractYouTubeId(ytHref);
+              const privacy: PrivacyStatus = ytId ? (getPrivacy(ytId) ?? "unknown") : "unknown";
+              const p = PRIVACY_COLOR[privacy];
+              return (
+                <a
+                  href={ytHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title={privacy === "unknown" ? "Privacy not yet checked — click Check Status on the card" : `YouTube · ${p.label}`}
+                  style={{
+                    ...LINK_STYLE,
+                    background: p.bg,
+                    color: p.fg,
+                    border: `1px solid ${p.border}`,
+                  }}
+                >
+                  {p.label}
+                </a>
+              );
+            })() : (
               <span style={{ width: 56 }} />
             )}
           </div>

@@ -34,7 +34,7 @@ interface ZoomMeeting {
 
 interface Props {
   onImported: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {

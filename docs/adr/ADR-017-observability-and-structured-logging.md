@@ -285,3 +285,27 @@ All log records follow these naming conventions for future cardinality/indexing:
 | Vercel Analytics | Cloud-only; not available in self-hosted / devcontainer |
 | Storing logs in WASM heap | WASM heap is explicitly kept lean (ADR-017 context); JS side is correct home for logs |
 | Per-component log files | One unified file is simpler to tail, rotate, and ingest |
+
+---
+
+## Addendum: Per-Video Event Log (2026-04-20)
+
+### Problem
+
+The global Event Log shows every event from every video interleaved with system-level events. With a catalog of hundreds of videos, correlating "what happened to *this* video" meant scanning titles in message text, which is error-prone (especially when many recordings share the same title — see also the date disambiguation addendum).
+
+### Decision
+
+The event log schema (`LogRecord.video_id`) already supports per-video filtering — it just wasn't being populated consistently. Change:
+
+1. Widen `onEvent` prop signature everywhere from `(ev: string) => void` to `(ev: string, fields?: { video_id?: string }) => void`.
+2. Update `addEvent` in `page.tsx` to pass the `fields` object through to `clientLog(level, component, msg, fields)`.
+3. Every `onEvent(...)` call in `VideoCard.tsx` (29 sites), `BackfillPanel.tsx` (2 sites), and `useRuleRunner.ts` (3 sites) now passes `{ video_id: <id> }` as the second argument.
+4. `VideoCard.tsx` renders a new collapsible "Log" panel that reads from `loadClientLog()` and filters by `video_id === video.id`. Toggled by a button next to "Provenance" in the card action bar.
+
+### Consequences
+
+- The global EventLog (structured view) is unchanged — still shows everything.
+- Per-video log is opt-in per card (click "Log" to reveal), so default card density is preserved.
+- Because entries are stored in the shared `video-sync:eventlog` localStorage buffer (max 500 entries, FIFO), per-video history is naturally capped. A busy video may lose older entries as the global buffer rotates.
+- Future: if per-video history becomes too short, consider a second buffer keyed by `video_id` with its own eviction policy. Out of scope for this change.

@@ -19,7 +19,7 @@ const TAB_KEY = "video-sync:import-tab";
 
 interface Props {
   onImported: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 export default function ImportPanel({ onImported, onEvent }: Props) {
