@@ -200,10 +200,12 @@ export function buildCalendarMonth(
 ): CalendarSlot[] {
   const targetDays = profile.criteria.days_of_week ?? [4, 5];
 
-  // Index by date string, keeping highest-priority status per day
+  // Index ALL videos by recorded date, keeping highest-priority status per day.
+  // Profile criteria (platform, duration, title) determine target days, not
+  // which videos appear — so published videos always show even if the profile
+  // criteria have since been tightened.
   const byDate = new Map<string, VideoRecordJSON>();
   for (const v of videos) {
-    if (!matchesProfile(v, { ...profile, criteria: { ...profile.criteria, days_of_week: undefined } })) continue;
     const key = (v.recorded_at || v.indexed_at).slice(0, 10);
     const prev = byDate.get(key);
     if (!prev || statusRank(v.status) > statusRank(prev.status)) byDate.set(key, v);
