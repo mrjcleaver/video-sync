@@ -18,6 +18,7 @@ import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { loadClientLog, type LogRecord } from "../lib/logger";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
+import { fetchChannelUploads, rankCandidates, type MatchCandidate } from "../lib/youtubeUploadsCache";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -97,6 +98,8 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
   const [recoverInput, setRecoverInput] = useState("");
   const [recovering, setRecovering] = useState(false);
   const [recoverError, setRecoverError] = useState<string | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupCandidates, setLookupCandidates] = useState<import("../lib/youtubeUploadsCache").MatchCandidate[] | null>(null);
 
   const videoLog = useMemo<LogRecord[]>(() => {
     if (!showLog) return [];
@@ -483,6 +486,39 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
     const studio = trimmed.match(/studio\.youtube\.com\/video\/([A-Za-z0-9_-]{11})/);
     if (studio) return studio[1];
     return null;
+  }
+
+  /**
+   * Auto-lookup on the connected YouTube channel. Fetches (or reuses cached)
+   * channel uploads, ranks by fuzzy title + recorded-date proximity.
+   * Populates `lookupCandidates` for operator to pick from.
+   */
+  async function lookupOnYouTube(force = false) {
+    setRecoverError(null);
+    setLookupLoading(true);
+    try {
+      const { uploads } = await fetchChannelUploads(force);
+      const titleForMatch = getDisplayTitleOrRaw();
+      const candidates = rankCandidates(uploads, titleForMatch, video.recorded_at, 5);
+      setLookupCandidates(candidates);
+      if (candidates.length === 0) {
+        setRecoverError("No matching video found on the connected YouTube channel.");
+      }
+    } catch (err) {
+      setRecoverError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  function getDisplayTitleOrRaw(): string {
+    try {
+      const rules = loadProcessingRules();
+      if (rules.length === 0) return video.title;
+      return applyProcessingRules(rules, video).title || video.title;
+    } catch {
+      return video.title;
+    }
   }
 
   async function recoverFromYouTube(raw: string) {
@@ -1350,9 +1386,65 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
 
       {showRecover && (
         <div style={{ marginTop: 10, padding: 10, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6 }}>
-          <div style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Recover from YouTube</div>
-          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 8 }}>
-            Paste a YouTube video URL or 11-char ID. We&apos;ll verify via the API, link it as a Destination, cache privacy, and transition this record to Published.
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 600 }}>Recover from YouTube</div>
+            <button
+              className="btn btn-sm"
+              style={{ fontSize: "0.7rem" }}
+              onClick={() => lookupOnYouTube(false)}
+              disabled={lookupLoading || recovering}
+              title="Search the connected YouTube channel's uploads for a match by title and date"
+            >
+              {lookupLoading ? "Searching…" : (lookupCandidates ? "Re-search" : "Auto-lookup on YouTube")}
+            </button>
+          </div>
+
+          {/* Candidate list from auto-lookup */}
+          {lookupCandidates && lookupCandidates.length > 0 && (
+            <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 2 }}>
+                {lookupCandidates.length === 1 ? "Suggested match:" : "Top matches:"}
+              </div>
+              {lookupCandidates.map((c: MatchCandidate) => (
+                <div
+                  key={c.upload.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto auto auto",
+                    gap: 8,
+                    padding: "6px 8px",
+                    background: "var(--bg)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.78rem" }}>
+                    {c.upload.title}
+                  </div>
+                  <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                    {c.upload.publishedAt ? c.upload.publishedAt.slice(0, 10) : ""}
+                    {c.dateDeltaDays != null && c.dateDeltaDays <= 31 && <span style={{ color: "var(--green)", marginLeft: 4 }}>✓</span>}
+                  </div>
+                  <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }} title={`Score: ${c.score.toFixed(2)} (title ${c.titleScore.toFixed(2)})`}>
+                    {Math.round(c.score * 100)}%
+                  </div>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    style={{ fontSize: "0.68rem", padding: "2px 8px" }}
+                    onClick={() => recoverFromYouTube(c.upload.id)}
+                    disabled={recovering}
+                  >
+                    Use this
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Manual paste fallback */}
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
+            Or paste a watch URL / Studio URL / 11-char ID:
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <input
@@ -1372,7 +1464,7 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
             </button>
             <button
               className="btn btn-sm"
-              onClick={() => { setShowRecover(false); setRecoverInput(""); setRecoverError(null); }}
+              onClick={() => { setShowRecover(false); setRecoverInput(""); setRecoverError(null); setLookupCandidates(null); }}
               disabled={recovering}
             >
               Cancel

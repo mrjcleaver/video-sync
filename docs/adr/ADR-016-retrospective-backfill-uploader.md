@@ -387,3 +387,24 @@ No new Rust commands are needed — the transition chain is expressible with exi
 **Events emitted.** The sequence produces `VideoApproved`, `StatusChanged(→Publishing)`, `StatusChanged(→Published)` events in the normal way. The client logs a single `VideoRecovered` event with the YouTube URL.
 
 **Failure modes.** If the YouTube status check returns 404, the recovery aborts without touching the record (the operator pasted a bad ID or a private-to-other-channel video). If a WASM transition throws (e.g. the record is in an unexpected state), the partial progress is retained — the operator can re-run Recover, which picks up from the current status.
+
+### Auto-Lookup on the Channel
+
+Pasting a YouTube ID is the fallback, not the primary path. A new **Auto-lookup on YouTube** button inside the Recover panel enumerates the authorized channel's uploads and ranks them by fuzzy title match against this record, with a date proximity boost.
+
+New endpoint `GET /api/youtube/channel-uploads`:
+
+1. `channels.list?part=contentDetails,snippet&mine=true` → get uploads playlist ID + channel title. (1 unit)
+2. Paginate `playlistItems.list?part=snippet,contentDetails&maxResults=50` → collect `{ id, title, publishedAt }` for every upload. (1 unit per page)
+3. Batch `videos.list?part=status&id=...` in chunks of 50 to attach `privacyStatus`. (1 unit per chunk)
+
+A 1000-video channel costs ~40 units. Results cached in `localStorage["video-sync:yt-uploads"]` with a 1-hour TTL, so subsequent Recover lookups cost zero quota until expiry. The cache also seeds the privacy cache from ADR-012 — one channel fetch replaces the need for **Fill privacy** on the Overview for already-uploaded videos.
+
+**Matching algorithm** (client-side, `lib/youtubeUploadsCache.ts`):
+
+- Normalise titles (lowercase, strip punctuation, collapse whitespace).
+- Token-set overlap ratio against the record's *display* title (processing rules applied) — not the raw source title.
+- Date proximity boost up to 30% of score if `publishedAt` is within 180 days of `recorded_at`; 0 otherwise.
+- Final score = `0.7 × titleScore + dateBoost`. Top 5 candidates shown with score badges.
+
+The operator picks one with a single click, which feeds the existing Recover flow (verify via status API, chain transitions to Published). The ✓ marker on the date column indicates the YouTube publish date is within 31 days of this record's recording date — a strong signal that this is the right video.
