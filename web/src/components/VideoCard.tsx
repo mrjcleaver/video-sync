@@ -94,6 +94,7 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
   const [shortsPhase, setShortsPhase] = useState("");
   const [showLog, setShowLog] = useState(false);
   const [logTick, setLogTick] = useState(0);
+  const [showParticipants, setShowParticipants] = useState(false);
   const [showRecover, setShowRecover] = useState(false);
   const [recoverInput, setRecoverInput] = useState("");
   const [recovering, setRecovering] = useState(false);
@@ -952,9 +953,39 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
         {video.participants.length > 0 && (
-          <span>{video.participants.length} participants</span>
+          <span
+            onClick={() => setShowParticipants(v => !v)}
+            style={{ cursor: "pointer", userSelect: "none" }}
+            title={showParticipants ? "Hide participants" : "Show participants"}
+          >
+            {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
+          </span>
         )}
       </div>
+
+      {showParticipants && video.participants.length > 0 && (
+        <div style={{
+          marginBottom: 8, padding: "6px 10px",
+          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+          display: "flex", flexWrap: "wrap", gap: 4,
+        }}>
+          {video.participants.map((p, i) => (
+            <span
+              key={`${p}-${i}`}
+              style={{
+                fontSize: "0.72rem",
+                padding: "2px 8px",
+                borderRadius: 10,
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                fontFamily: /\S+@\S+/.test(p) ? "monospace" : undefined,
+              }}
+            >
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
 
       {video.description && (
         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 8 }}>

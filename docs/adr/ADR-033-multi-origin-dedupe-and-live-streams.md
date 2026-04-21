@@ -133,7 +133,18 @@ When the YouTube adapter fetches a video, inspect the `liveStreamingDetails` blo
 - Absent → `IngestMethod::Upload`
 - Present → `IngestMethod::LiveBroadcast`; also capture `actualStartTime` (which gets stored as the location's `synced_at` or a new `event_start` field for date-match purposes).
 
-**Consequences for the fuzzy matcher.** The Recover matcher currently uses YouTube's `publishedAt`, which for live streams is the archive time and drifts by up to a day relative to the actual event. If `IngestMethod::LiveBroadcast` and `actualStartTime` is present, use `actualStartTime` instead — this closes the Mar-12-vs-Mar-13 gap from Observation 3.
+**Consequences for the fuzzy matcher.** The current matcher uses YouTube's `publishedAt`, which is unreliable in two ways:
+
+- **Live streams**: `publishedAt` is the archive timestamp, drifting up to a day from `actualStartTime`.
+- **Back-publishing**: this operator is working through an **18-month catalog backlog**. A video recorded in Oct 2024 and uploaded to YouTube in Apr 2026 has a `publishedAt` that is *months* away from `recorded_at`. The 180-day date window in the current fuzzy matcher misses these matches entirely.
+
+Three ordered signals for date matching, strongest first:
+
+1. **Embedded date in the YouTube title** (e.g. `Agentics Live Vibe - Coding · 15 Mar 2026`). Processing rules deliberately stamp the recording date into the title via `{{date}}` templates (ADR-014). That stamp survives across upload and live-broadcast and does not drift with back-publishing. Parse a date out of the title and compare against `recorded_at`; a same-day match is the strongest possible signal and should outweigh any date-vs-`publishedAt` delta.
+2. **`liveStreamingDetails.actualStartTime`** when the location is a LiveBroadcast. Accurate to the minute; matches the Zoom recording date.
+3. **`publishedAt`** as last resort — widen the window to 365+ days so back-publishing cases still surface, but only use this signal if neither of the above is available.
+
+Net effect: the matcher stops filtering out back-published videos where `publishedAt` is months off, and it stops drifting by a day on live broadcasts. It also stops being embarrassed by the "100% match" banner pointing at the wrong date.
 
 **Consequences for the Recover UX.** The banner should carry different wording for the two cases so the operator understands what is being claimed:
 
@@ -182,13 +193,18 @@ When the YouTube adapter fetches a video, inspect the `liveStreamingDetails` blo
 
 ## Open questions
 
-These are deferred to follow-up ADRs or implementation:
+Operator guidance supplied 2026-04-21; answers inlined.
 
-1. **Threshold for auto-linking vs suggest-only**: needs empirical calibration against the current catalog. Suggest shipping the suggestion UX first, then promote to auto-link once confidence is established.
+1. **Threshold for auto-linking vs suggest-only** → **Decided: suggest-only.** Auto-link is off the table in v1. Matches surface as inline banners (already the pattern from ADR-016 Recover); the operator confirms with a click. Thresholds can be tuned conservatively because an unshown suggestion is cheaper than a wrong auto-link.
+
 2. **UI representation of an event**: collapsed card with expandable per-source rows? Single card with multiple origin badges? Separate "Events" view? Out of scope here.
-3. **Backfill of existing duplicates**: does the system retrospectively group the existing duplicate cards, or only new imports? A one-time "find duplicates" action may be needed.
-4. **Participants as a stable key**: Fireflies uses email, Zoom sometimes uses display name only. Normalisation layer required.
-5. **Live-broadcast chat + comments**: YouTube Live chat messages are bound to the broadcast, not to the originating meeting platform. They are first-class event content (often Q&A during the session) but would attach to the YouTube `Destination` location, not to the Zoom/Meet `Origin`. Indexing those is out of scope for this ADR but worth flagging.
+
+3. **Backfill of existing duplicates** → **Decided: include a "Find duplicates" action.** On-demand scan across the current catalog, producing a list of suggested groupings the operator can accept or dismiss one-by-one. Same suggest-only philosophy as Q1. A new button (likely on the main dashboard header, next to the existing toggles) runs the heuristic over all non-Published records and presents results in a review panel.
+
+4. **Participants as a stable key**: Fireflies uses email, Zoom sometimes uses display name only. Normalisation layer required. Also — the VideoCard UI does not currently render the `participants` array at all, so operators cannot even inspect what was captured. **Action: add an expandable "Participants (N)" section to the card so the data is visible before we build matching logic on top of it.** Normalisation follows once the field is actually surfaced and the operator has a view of its quality.
+
+5. **Live-broadcast chat + comments** → **Split out to ADR-034** (exploratory). The question is whether to expose these via a Model Context Protocol server so external tools (Claude, other agents) can query them alongside the transcript. Not implemented in this ADR.
+
 6. **Meet adapter parity with Zoom**: when Google Meet support lands, does it go through the same download-re-upload path as Zoom, or should Meet recordings that were already live-broadcast be treated as link-only (no re-upload)? This may reduce to a per-profile publish preference rather than a platform-level decision.
 
 ---
