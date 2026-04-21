@@ -39,12 +39,26 @@ The **Recover from YouTube** auto-suggestion (ADR-016 addendum) matched an exist
 - The YouTube video's `publishedAt` was **Mar 13**, one day later.
 - The YouTube video was **streamed live**, not uploaded from a file.
 
-Our current model assumes the YouTube destination came from an upload pipeline we own (the SSE-backed `/api/youtube/upload`, or an out-of-band file upload). Live-streamed content is semantically different:
+Clarified model (confirmed with operator): for this workflow the meeting platform — **Zoom today, Google Meet in the near future** — is the origin in both upload and live-broadcast cases. Live broadcasting does not change where the media comes from; it only changes how YouTube ingested it.
 
-- The event **was** YouTube — YouTube is the origin, not a destination.
-- The Zoom/Fireflies captures are **parallel** captures of the same live event, not the "source material" that got uploaded.
-- YouTube's `liveStreamingDetails` on the video resource contains `scheduledStartTime` / `actualStartTime` / `actualEndTime`, which are more informative than `publishedAt` for date matching.
-- A live-streamed video has no ingest pipeline that we own, so "Recover" is really "link this existing stream to this recording" rather than "acknowledge a successful upload."
+So the picture for a single event is:
+
+```
+                          Zoom / Google Meet  (Origin)
+                         /         |         \
+                        /          |          \
+       Fireflies ────── (parallel transcript capture, Intermediate)
+                                   |
+                                   ├── YouTube Live  (Destination, ingest=LiveBroadcast)
+                                   │         or
+                                   └── YouTube Upload (Destination, ingest=Upload, post-event)
+```
+
+The catalog needs to distinguish **where the media originated** (always the meeting platform) from **how a YouTube copy was created** (live broadcast during the event, or file upload after). Our current model collapses both into a single `Destination` role and therefore:
+
+- Mis-dates live-broadcast matches because it uses YouTube's `publishedAt` instead of `liveStreamingDetails.actualStartTime`. `actualStartTime` is closer to the meeting's recorded-at and would eliminate the Mar-12-vs-Mar-13 drift.
+- Cannot express "YouTube already has this because it was streamed live" differently from "YouTube already has this because I uploaded it earlier out-of-band." Both are true and both matter — for example, a live broadcast is not re-uploadable, while an orphaned upload is.
+- Has no concept of Google Meet as a source platform. The existing adapter pattern (ADR-005) makes this additive, but the dedupe/enrichment logic proposed below must be platform-agnostic from day one or it will be rewritten as soon as Meet lands.
 
 ---
 
@@ -100,27 +114,33 @@ This keeps the *canonical source* of each field on its original record (no mutat
 
 Which record "wins" when publishing? The operator picks — or a profile-level setting designates a preferred source platform (e.g. "Zoom over Fireflies" from ADR-021). The other siblings auto-link as `UpstreamLink(TranscribedFrom)` on the destination.
 
-### 3. Live-stream awareness (addresses Observation 3)
+### 3. Ingest-method awareness (addresses Observation 3)
 
-Extend `PlatformLocation` with a capture-method discriminator:
+Meeting platforms (Zoom, Google Meet, and future additions) remain the `Origin` regardless of whether YouTube received the content via live broadcast or post-event upload. To capture the ingest distinction on the YouTube side, extend `PlatformLocation` with an optional discriminator:
 
 ```rust
-enum CaptureMethod {
-  Upload,        // file uploaded to the platform
-  LiveStream,    // streamed live on the platform
-  Unknown,       // imported from outside the system
+enum IngestMethod {
+  Upload,         // file uploaded to the platform via an API
+  LiveBroadcast,  // streamed live into the platform from an external source
+  Unknown,        // imported from outside our workflow
 }
 ```
 
-When the YouTube adapter fetches a video, inspect the `liveStreamingDetails` block (present = live stream; absent = upload). Use `actualStartTime` (when available) rather than `publishedAt` for date matching in the Recover fuzzy matcher.
+This field lives on the *destination* location, not on the VideoRecord as a whole. The same record could theoretically have both a LiveBroadcast YouTube location (during the event) and an Upload YouTube location (a re-upload of the recording later) as separate entries — the aggregate already supports multiple locations.
 
-For live-streamed YouTube videos, the semantic relationship flips:
+When the YouTube adapter fetches a video, inspect the `liveStreamingDetails` block:
 
-- **YouTube** is the `Origin` PlatformLocation (the stream is where it happened)
-- **Zoom** and **Fireflies** are `Intermediate` captures (parallel recordings of the live event)
-- There is no `Destination` — the event is already public.
+- Absent → `IngestMethod::Upload`
+- Present → `IngestMethod::LiveBroadcast`; also capture `actualStartTime` (which gets stored as the location's `synced_at` or a new `event_start` field for date-match purposes).
 
-The "Recover" action on a live-streamed match should change wording from *"Link & mark Published"* to *"Link this live stream"* and record the YouTube location as Origin rather than Destination. The record still transitions to `Published` because the content is live; the distinction is in the provenance graph, not the workflow status.
+**Consequences for the fuzzy matcher.** The Recover matcher currently uses YouTube's `publishedAt`, which for live streams is the archive time and drifts by up to a day relative to the actual event. If `IngestMethod::LiveBroadcast` and `actualStartTime` is present, use `actualStartTime` instead — this closes the Mar-12-vs-Mar-13 gap from Observation 3.
+
+**Consequences for the Recover UX.** The banner should carry different wording for the two cases so the operator understands what is being claimed:
+
+- `Upload`: *"Link & mark Published"* (unchanged)
+- `LiveBroadcast`: *"Link live broadcast"* — same state transition (`Published`), same destination linkage, but the label makes it clear that this is a simultaneous-capture association, not a retroactive upload.
+
+**Consequences for source-platform coverage.** Google Meet is the next meeting platform on the roadmap. The dedupe heuristic in §1 and the enrichment logic in §2 must treat meeting platforms as a **set**, not as "Zoom." Participant-email matching and recording-start proximity are platform-agnostic; only the ingest adapters need per-platform code. No heuristic in this ADR may hard-code `Platform::Zoom`.
 
 ---
 
@@ -155,7 +175,8 @@ The "Recover" action on a live-streamed match should change wording from *"Link 
 | **Leave manual linking only** (operator does Link Upstream each time) | Doesn't scale to 18-month backlogs; operators already miss the link step, producing the observed duplicate cards. |
 | **Embed sibling metadata on each record** (copy transcript from Fireflies onto the Zoom record) | Violates single-source-of-truth; invalidation when sibling updates is complex. Better to keep links and resolve on read. |
 | **Track capture method outside `PlatformLocation`** (a separate table) | Unnecessary indirection; capture method is a property *of* the location, not of the aggregate. |
-| **Ignore live-stream case entirely** | Observation 3 already bit us; the 100% match banner is misleading. |
+| **Ignore live-stream case entirely** | Observation 3 already bit us; the 100% match banner is misleading even without changing the Origin/Destination roles. |
+| **Flip YouTube to Origin for live streams** | Considered in the first draft of this ADR and rejected. The media still originates at the meeting platform (Zoom/Meet) — YouTube is just one of multiple simultaneous consumers of the stream. Tracking the ingest method on the destination location captures the distinction without distorting provenance. |
 
 ---
 
@@ -167,7 +188,8 @@ These are deferred to follow-up ADRs or implementation:
 2. **UI representation of an event**: collapsed card with expandable per-source rows? Single card with multiple origin badges? Separate "Events" view? Out of scope here.
 3. **Backfill of existing duplicates**: does the system retrospectively group the existing duplicate cards, or only new imports? A one-time "find duplicates" action may be needed.
 4. **Participants as a stable key**: Fireflies uses email, Zoom sometimes uses display name only. Normalisation layer required.
-5. **Live-stream chat + comments**: if YouTube is the origin of a live stream, the chat/comments are first-class event content. Indexing those is out of scope for this ADR but worth flagging.
+5. **Live-broadcast chat + comments**: YouTube Live chat messages are bound to the broadcast, not to the originating meeting platform. They are first-class event content (often Q&A during the session) but would attach to the YouTube `Destination` location, not to the Zoom/Meet `Origin`. Indexing those is out of scope for this ADR but worth flagging.
+6. **Meet adapter parity with Zoom**: when Google Meet support lands, does it go through the same download-re-upload path as Zoom, or should Meet recordings that were already live-broadcast be treated as link-only (no re-upload)? This may reduce to a per-profile publish preference rather than a platform-level decision.
 
 ---
 
