@@ -19,6 +19,13 @@ import { resolveExternalUrl } from "../lib/urlResolver";
 import { loadClientLog, type LogRecord } from "../lib/logger";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
 import { fetchChannelUploads, rankCandidates, getCachedUploads, type MatchCandidate } from "../lib/youtubeUploadsCache";
+import {
+  rejectYouTubeMatch,
+  isYouTubeMatchRejected,
+  rejectSiblingMatch,
+  isSiblingMatchRejected,
+} from "../lib/suggestionRejections";
+import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatcher";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -54,13 +61,15 @@ const ADMIN_ACTOR = JSON.stringify({
 
 interface Props {
   video: VideoRecordJSON;
+  /** Full catalog — used for cross-source sibling suggestions (ADR-033). */
+  allVideos?: VideoRecordJSON[];
   onMutated: () => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   /** Switch filter (if needed) and scroll the card into view. Used on publish transitions. */
   onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
-export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo }: Props) {
+export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavigateToVideo }: Props) {
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
@@ -95,6 +104,7 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
   const [showLog, setShowLog] = useState(false);
   const [logTick, setLogTick] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
+  const [rejectionTick, setRejectionTick] = useState(0);
   const [showRecover, setShowRecover] = useState(false);
   const [recoverInput, setRecoverInput] = useState("");
   const [recovering, setRecovering] = useState(false);
@@ -878,11 +888,51 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
     const cached = getCachedUploads();
     if (!cached) return null;
     const title = previewTitle ?? video.title;
-    const ranked = rankCandidates(cached.uploads, title, video.recorded_at, 1);
+    const ranked = rankCandidates(cached.uploads, title, video.recorded_at, 5);
     // Only surface high-confidence matches to avoid bad auto-suggestions
-    if (ranked.length === 0 || ranked[0].score < 0.7) return null;
-    return ranked[0];
-  }, [video.status, video.locations, video.title, video.recorded_at, previewTitle]);
+    const best = ranked.find(c => c.score >= 0.7 && !isYouTubeMatchRejected(video.id, c.upload.id));
+    return best ?? null;
+  }, [video.id, video.status, video.locations, video.title, video.recorded_at, previewTitle, rejectionTick]);
+
+  /**
+   * Cross-source sibling suggestion (ADR-033 dedupe).
+   * Suggest the best non-YouTube, different-source match above threshold
+   * that isn't already linked as an upstream (SameEvent) to this record.
+   */
+  const siblingSuggestion = useMemo<SiblingCandidate | null>(() => {
+    if (!allVideos || allVideos.length < 2) return null;
+    if (video.status === "Abandoned") return null;
+    const existingLinks = new Set((video.upstream_links ?? []).map(l => `${l.platform}:${l.external_id}`));
+    const candidates = rankSiblingCandidates(video, allVideos, 5);
+    const best = candidates.find(c => {
+      if (c.score < 0.55) return false;
+      if (isSiblingMatchRejected(video.id, c.video.id)) return false;
+      // Already linked as upstream? skip
+      if (existingLinks.has(`${c.video.source_platform}:${c.video.source_id}`)) return false;
+      return true;
+    });
+    return best ?? null;
+  }, [video.id, video.status, video.upstream_links, allVideos, rejectionTick]);
+
+  function acceptSibling(cand: SiblingCandidate) {
+    // Link the sibling as an upstream SameEvent on THIS record.
+    // (The two records represent parallel captures of the same event.)
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.link_upstream(JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          platform: cand.video.source_platform,
+          external_id: cand.video.source_id,
+          relation: "SameEvent",
+          linked_by: "Auto-suggestion",
+        })),
+      );
+      onEvent(`SameEventLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${cand.video.source_platform}/${cand.video.source_id}`, { video_id: video.id });
+      onMutated();
+    } catch (err) {
+      onEvent(`SameEventLinkFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
+    }
+  }
 
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
@@ -937,6 +987,19 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
           >
             {recovering ? "Linking…" : "Link & mark Published"}
           </button>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.7rem", color: "var(--red)" }}
+            onClick={() => {
+              rejectYouTubeMatch(video.id, autoSuggestion.upload.id);
+              setRejectionTick(t => t + 1);
+              onEvent(`MatchRejected: "${video.title}"${dateTag(video.recorded_at)} ≠ YouTube ${autoSuggestion.upload.id}`, { video_id: video.id });
+            }}
+            disabled={recovering}
+            title="Dismiss this suggestion — the same pair won't be suggested again."
+          >
+            Not a match
+          </button>
           <a
             href={`https://www.youtube.com/watch?v=${autoSuggestion.upload.id}`}
             target="_blank"
@@ -945,6 +1008,54 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
           >
             preview
           </a>
+        </div>
+      )}
+
+      {/* Cross-source sibling suggestion (ADR-033) */}
+      {siblingSuggestion && (
+        <div style={{
+          marginTop: 6, padding: "6px 10px",
+          background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6,
+          display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
+        }}>
+          <span>
+            <span style={{ color: "#a78bfa", fontWeight: 600 }}>Possibly same event:</span>{" "}
+            <span style={{ color: "var(--text-muted)" }}>
+              {siblingSuggestion.video.source_platform}: {siblingSuggestion.video.title}
+              {siblingSuggestion.video.recorded_at && ` · ${siblingSuggestion.video.recorded_at.slice(0, 10)}`}
+              {" · "}
+              <span title={`Participants: ${Math.round(siblingSuggestion.reasons.participant_overlap * 100)}% · Title: ${Math.round(siblingSuggestion.reasons.title_overlap * 100)}%${siblingSuggestion.reasons.time_delta_minutes != null ? ` · Δt ${Math.round(siblingSuggestion.reasons.time_delta_minutes)}min` : ""}`}>
+                {Math.round(siblingSuggestion.score * 100)}% match
+              </span>
+            </span>
+          </span>
+          <button
+            className="btn btn-sm btn-primary"
+            style={{ marginLeft: "auto", fontSize: "0.7rem" }}
+            onClick={() => acceptSibling(siblingSuggestion)}
+          >
+            Link as same event
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.7rem", color: "var(--red)" }}
+            onClick={() => {
+              rejectSiblingMatch(video.id, siblingSuggestion.video.id);
+              setRejectionTick(t => t + 1);
+              onEvent(`SiblingMatchRejected: "${video.title}"${dateTag(video.recorded_at)} ≠ ${siblingSuggestion.video.source_platform}/${siblingSuggestion.video.source_id}`, { video_id: video.id });
+            }}
+            title="Dismiss this suggestion — the same pair won't be suggested again."
+          >
+            Not a match
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.7rem", color: "var(--text-muted)", textDecoration: "underline", background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+            onClick={() => onNavigateToVideo?.(siblingSuggestion.video.id)}
+            title="Scroll to the suggested sibling record"
+          >
+            view
+          </button>
         </div>
       )}
 

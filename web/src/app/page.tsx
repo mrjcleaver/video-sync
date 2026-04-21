@@ -347,6 +347,7 @@ export default function Dashboard() {
               <VideoCard
                 key={v.id}
                 video={v}
+                allVideos={videos}
                 onMutated={refresh}
                 onEvent={addEvent}
                 onNavigateToVideo={ensureVideoVisible}

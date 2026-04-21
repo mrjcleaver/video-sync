@@ -197,6 +197,8 @@ Operator guidance supplied 2026-04-21; answers inlined.
 
 1. **Threshold for auto-linking vs suggest-only** → **Decided: suggest-only.** Auto-link is off the table in v1. Matches surface as inline banners (already the pattern from ADR-016 Recover); the operator confirms with a click. Thresholds can be tuned conservatively because an unshown suggestion is cheaper than a wrong auto-link.
 
+   **Rejection mechanism (2026-04-21 follow-up):** both the YouTube-match banner and the cross-source sibling banner need a "Not a match" button in addition to the accept affordance. Without it, a wrongly-suggested pair (e.g. a 98% title-match that is actually a different week) stays on the card forever, dismissible only by accepting a wrong answer. Rejections are persisted in `localStorage["video-sync:rejected-yt-matches"]` and `localStorage["video-sync:rejected-sibling-matches"]` — symmetric for sibling pairs (sorted pair key), directional for YouTube (video → YT-id). The autoSuggestion / siblingSuggestion memos skip rejected pairs on every render.
+
 2. **UI representation of an event**: collapsed card with expandable per-source rows? Single card with multiple origin badges? Separate "Events" view? Out of scope here.
 
 3. **Backfill of existing duplicates** → **Decided: include a "Find duplicates" action.** On-demand scan across the current catalog, producing a list of suggested groupings the operator can accept or dismiss one-by-one. Same suggest-only philosophy as Q1. A new button (likely on the main dashboard header, next to the existing toggles) runs the heuristic over all non-Published records and presents results in a review panel.
