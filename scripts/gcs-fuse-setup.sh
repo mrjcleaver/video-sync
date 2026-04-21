@@ -30,10 +30,25 @@ echo "==> Runtime service account: ${RUNTIME_SA}"
 echo
 
 echo "==> Enabling required APIs"
-gcloud services enable \
-  storage.googleapis.com \
-  run.googleapis.com \
-  --project="${PROJECT_ID}"
+if [[ "${SKIP_ENABLE:-}" == "1" ]]; then
+  echo "    (skipped — SKIP_ENABLE=1)"
+else
+  gcloud services enable \
+    storage.googleapis.com \
+    run.googleapis.com \
+    --project="${PROJECT_ID}" || {
+    echo
+    echo "!! 'gcloud services enable' failed — typically because your user"
+    echo "   lacks roles/serviceusage.serviceUsageAdmin on the project."
+    echo
+    echo "   If the APIs are already enabled (verify with:"
+    echo "     gcloud services list --enabled --project=${PROJECT_ID} \\"
+    echo "       --filter='config.name=(storage.googleapis.com OR run.googleapis.com)')"
+    echo "   you can safely skip this step by re-running:"
+    echo "     SKIP_ENABLE=1 bash scripts/gcs-fuse-setup.sh"
+    exit 1
+  }
+fi
 
 echo "==> Creating bucket (if missing)"
 if gcloud storage buckets describe "gs://${BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
