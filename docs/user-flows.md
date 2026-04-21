@@ -437,3 +437,181 @@ Click "Download .jsonl" to export full log for support
 ```
 
 **Outcome:** Operator has full visibility into system behavior.
+
+---
+
+## Flow 10: Recover a Failed or Orphaned Video from YouTube
+
+Covers two related cases:
+- An upload finished on the server side but the SSE progress stream dropped before the browser saw the completion event → record is stuck in Failed.
+- A video was uploaded to YouTube out-of-band (YouTube Studio, external tool) and should be linked back to its catalog entry.
+
+```
+Expand the Failed (or Discovered/InScope/Approved) card
+  |
+  v
+  +--> Banner already visible? ("Possible YouTube match: ...")
+  |      |
+  |      v
+  |    Click "Link & mark Published" → jump to the verify step below
+  |
+  +--> No banner: click "Recover from YouTube"
+         |
+         v
+       Recover panel opens. Two entry points:
+         |
+         +--> Click "Auto-lookup on YouTube"
+         |      |
+         |      v
+         |    fetchChannelUploads() hits /api/youtube/channel-uploads
+         |    (cached for 1 hour; ~40 quota units for a 1000-video channel)
+         |      |
+         |      v
+         |    rankCandidates scores title + date proximity
+         |      |
+         |      v
+         |    Top 5 matches shown with % score and ✓ for ≤31 day date
+         |      |
+         |      v
+         |    Click "Use this" on the right candidate
+         |
+         +--> OR paste watch URL / Studio URL / short URL / 11-char ID
+                |
+                v
+              Click "Recover"
+  |
+  v
+  (verify step)
+  POST /api/youtube/status?videoId=<id>
+  |
+  +--> 404 → abort with error, record untouched
+  |
+  +--> 200 → cache privacy, proceed
+          |
+          v
+        Chain WASM transitions to Published:
+          - if status not Approved/Publishing/Published: approve()
+          - if status now Approved: request_publish()
+          - mark_published(destination_id, destination_url, platform=YouTube)
+          |
+          v
+        mark_published idempotently adds the Destination location
+          |
+          v
+        Emit VideoRecovered event, refresh card
+          |
+          v
+        Card → Published with privacy-coloured YouTube badge
+```
+
+**Outcome:** Record state matches reality — YouTube has the video, Video Bridge records it as Published, privacy is visible.
+
+---
+
+## Flow 11: Link Same-Event Siblings (cross-source dedupe)
+
+When Zoom and Fireflies both captured the same meeting, the records arrive as two separate cards. Linking them makes the provenance graph accurate and (in future) enables cross-record metadata enrichment.
+
+```
+Card appears with purple banner:
+  "Possibly same event: Fireflies: AI Hackerspace Live · 2026-03-20 · 72% match"
+  |
+  v
+Click the "view" link to scroll to the sibling card (optional sanity check)
+  |
+  v
+Back on the current card, click "Link as same event"
+  |
+  v
+WASM command: link_upstream(
+    platform=<sibling source>,
+    external_id=<sibling source_id>,
+    relation=SameEvent,
+    linked_by=Auto-suggestion,
+)
+  |
+  v
+UpstreamLink appears on this record
+  |
+  v
+Banner disappears (the pair is now linked)
+```
+
+**Scoring:** 0.4 × participant-email Jaccard + 0.3 × recording-start proximity + 0.3 × title token overlap. Duration deliberately not used — Zoom records early, Fireflies joins late.
+
+**To dismiss** a wrong suggestion instead of accepting it: click **Not a match**. The pair is persistently rejected in `localStorage["video-sync:rejected-sibling-matches"]` (symmetric — dismissing A↔B dismisses both directions).
+
+**Outcome:** Same event, multiple captures, one logical group.
+
+---
+
+## Flow 12: Post-Import YouTube Auto-Association
+
+Happens automatically after any source import. Operator sees the result but doesn't have to trigger it.
+
+```
+Complete any import (Fireflies, Zoom, URL, YouTube, Manual)
+  |
+  v
+onImported callback in page.tsx → refreshWithYouTube()
+  |
+  +--> Refresh video state from store
+  |
+  +--> Fire-and-forget fetchChannelUploads(false):
+          - Respects 1-hour cache TTL (warm = 0 API cost)
+          - Silent on failure (YouTube might not be configured)
+          - Seeds privacy cache for every upload that has privacyStatus
+  |
+  v
+Each VideoCard re-renders with fresh data
+  |
+  v
+VideoCard's autoSuggestion useMemo runs per card:
+  - Skip if Published / Publishing / Abandoned
+  - Skip if already has YouTube Destination location
+  - Skip if match is in rejection store
+  - Find top candidate from cached uploads (≥ 0.7 score)
+  |
+  v
+Blue "Possible YouTube match" banner shows on matching cards
+  |
+  v
+Operator sees suggestions, clicks Accept / Not a match / preview as appropriate
+```
+
+**Outcome:** For operators with an 18-month backlog already partly on YouTube, one import populates the channel-uploads cache and lights up every auto-associable card at once.
+
+---
+
+## Flow 13: Fill Privacy on the Overview
+
+```
+Open Backfill Uploader → Overview tab
+  |
+  v
+Click "Fill privacy" in the header bar
+  |
+  v
+Client collects all YouTube video IDs visible in summaries that
+don't have cached privacy
+  |
+  v
+POST /api/youtube/privacy-batch with { videoIds: [...] }
+  |
+  v
+Server batches into chunks of 50, calls videos.list?part=status
+(1 quota unit per chunk; ~4 units for 200 videos)
+  |
+  v
+Response: { privacy: { id: status }, missing: [...] }
+  |
+  v
+Client writes each { id, status } to youtubePrivacyCache
+Missing IDs cached as "unknown" so repeat clicks don't re-query them
+  |
+  v
+Overview re-renders: YouTube badges change colour
+  green = Public · yellow = Unlisted · red = Private · slate = Unknown
+```
+
+**Outcome:** Every published video in the Overview shows its actual YouTube privacy at a glance.

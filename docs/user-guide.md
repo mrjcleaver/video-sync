@@ -42,11 +42,21 @@ Before importing, connect at least one source platform and one destination platf
 
 ## 2. Importing Videos
 
-Click the **Import** tab. You have four import methods:
+The **Import** panel sits directly under **Connections** and offers four source tabs, in this order: **Fireflies** (default), **Zoom**, **URL**, **Manual**. Fireflies is the default because most of the catalog's primary signal (transcripts, AI summaries, participant lists with emails) comes through Fireflies.
+
+> **What happens after import.** On every successful import the app automatically fetches your authorized YouTube channel's uploads (first call costs a few API quota units; cached for one hour). This populates the YouTube privacy cache and seeds "Possible YouTube match" banners on any newly imported card that looks like it's already on YouTube. See §4.
+
+### Fireflies Import
+
+1. Click the **Fireflies** tab within Import
+2. Click **Fetch Transcripts** to pull recent meetings from Fireflies
+3. Review and select transcripts to import
+4. Imported records include the AI-generated summary, full transcript, and participant emails
 
 ### Zoom Import
 
-1. Select a **date range** using the date pickers (default: last 30 days)
+1. Click the **Zoom** tab within Import
+2. Select a **date range** using the date pickers (default: last 30 days)
 2. Optionally add filters:
    - **Title contains**: only import recordings matching a keyword
    - **Min duration**: skip short recordings (e.g. 5-minute test calls)
@@ -55,13 +65,6 @@ Click the **Import** tab. You have four import methods:
 4. Review the list of discovered recordings — each shows title, date, duration, and participant count
 5. Check the ones you want, then click **Import Selected**
 6. Imported videos appear on the dashboard with status **Discovered**
-
-### Fireflies Import
-
-1. Click the **Fireflies** tab within Import
-2. Click **Fetch Transcripts** to pull recent meetings from Fireflies
-3. Review and select transcripts to import
-4. Imported records include the AI-generated summary and full transcript
 
 ### URL Import
 
@@ -113,15 +116,23 @@ Alternative paths:
 
 Each video on the dashboard is a card showing:
 
-- **Title** and duration
+- **Title** (with the processing-rule transform applied — original shown in italics below if it differs)
 - **Status badge** with color coding
-- **Source platform** icon and recording date
-- **Expand arrow** to reveal full details
+- **Source platform**, duration, recording date, **participant count** (click to expand)
+- **Suggestion banners** (blue and purple — see below)
+
+### Suggestion banners (ADR-016, ADR-033)
+
+Two kinds of banner appear automatically on non-Published cards when the app detects a likely match. Each banner has **Accept**, **Not a match**, and a preview/view link.
+
+- **Blue — "Possible YouTube match: …"** — A cached YouTube upload from your channel appears to be this record (≥ 70% score). Click **Link & mark Published** to run the Recover flow: verifies via the YouTube API, caches privacy, creates the Destination location, transitions this record to Published. **Preview** opens the YouTube page so you can sanity-check first. **Not a match** dismisses the pair permanently (stored in `localStorage["video-sync:rejected-yt-matches"]`).
+- **Purple — "Possibly same event: …"** — Another record in the catalog (different source platform) looks like a parallel capture of the same meeting (≥ 55% score, weighted by participant-email overlap, recording-start proximity, and title overlap — **not** duration, which diverges when Zoom starts earlier than Fireflies). Click **Link as same event** to create an `UpstreamLink(SameEvent)`. **View** scrolls to the sibling card. **Not a match** dismisses the pair.
 
 ### Expanded Card Actions
 
 **Metadata:**
-- View and edit title, description, tags, participants
+- View and edit title, description, tags
+- **Participants (N)**: click to expand the full list (emails render in monospace so Fireflies/Zoom normalisation gaps are visible at a glance)
 - View transcript (fetched from Fireflies or Zoom)
 - Add internal notes with timestamps
 
@@ -129,15 +140,26 @@ Each video on the dashboard is a card showing:
 - **Approve**: Move to Approved (ready for publish)
 - **Skip**: Mark as Skipped
 - **Exclude**: Permanently abandon
+- **Retry**: Re-attempt publishing after a failure
 
 **Publishing:**
-- **Publish to YouTube**: Downloads from source, uploads to YouTube with current metadata
+- **Publish to YouTube**: Downloads from source, uploads to YouTube with current metadata. On click, the main filter automatically switches to **Active** so you can watch the Publishing → Published/Failed transition.
 - **Generate Shorts**: Send to Opus Clip for short-form clip generation
 
+**Recovery (non-Published cards):**
+- **Recover from YouTube**: opens a panel for linking an existing YouTube video to this record. Two ways:
+  - **Auto-lookup on YouTube** — searches your authorized channel's cached uploads and shows the top 5 fuzzy matches with scores and a ✓ if the date is within 31 days. One click on **Use this** runs the recovery flow.
+  - **Manual paste** — paste a watch URL, short URL, Studio URL, or 11-character ID and click **Recover**.
+  Either path verifies the video exists, caches its privacy, and chains `approve → request_publish → mark_published` to reach the Published state. Useful for videos whose upload dropped the SSE stream (server succeeded but the browser thought it failed) or videos that were uploaded out-of-band.
+
 **Provenance:**
-- **Locations**: See every platform this video exists on (Origin, Intermediate, Destination) with external links
+- **Locations**: See every platform this video exists on (Origin, Intermediate, Destination) with external links. Each YouTube location has a **Check Status** button that calls the YouTube API — it updates the privacy cache as a side effect.
 - **Add Location**: Manually attach an enriched version (e.g. a Loom edit of a Zoom recording)
 - **Link Upstream**: Connect this video to a related recording (same event, transcribed from, etc.)
+
+**Inspection:**
+- **Log**: per-card event log. Shows only entries whose `video_id` matches this card — much quieter than the global Event Log.
+- **Provenance**: toggles a detailed view of relationships on this card.
 
 ### Bulk Operations
 
@@ -199,11 +221,36 @@ Found in the **Post-Processing Rules** tab. These fire after a video is publishe
 
 ## 6. Backfill Orchestration
 
-For publishing large batches of approved videos (e.g. 18 months of backlog), use the **Backfill** tab.
+For publishing large batches of approved videos (e.g. 18 months of backlog), use the **Backfill Uploader** panel (positioned directly under Import).
+
+The panel has four tabs: **Overview** (default), **Profiles**, **Queue**, **Calendar**. The header has a **↻ refresh** button that re-pulls video data from the store — click it after an import if the views look stale.
+
+### Overview tab
+
+Shows the **entire profile date range at a glance**, designed for operators working through 18-month backlogs. Header bar:
+
+- `pct% published` · counts by status (Published / Approved / Backlog / Failed / Gap) · `~N days to clear at K/day` estimate
+- Green progress bar under the numbers
+- **Fill privacy** button — batch-checks YouTube for the privacy of every published video in view (1 quota unit per 50 videos, so a 1000-video channel costs ~20 units). Results cache for one hour.
+- **Target days only** toggle (on by default) — hides non-target weekdays so the view isn't cluttered
+
+Below that, one row per month. Each row has:
+
+- Month label (e.g. `Mar 2026`)
+- Stacked status bar coloured by state proportion
+- `published/target · N gaps` summary
+- Click the row to expand a vertical per-date list with columns: date · status dot · transformed title · **Origin** badge (clickable) · **YouTube** badge (coloured by privacy: green=public, yellow=unlisted, red=private, slate=unknown; clickable; opens the video)
+- Clicking a date row scrolls to the matching video card (auto-switches filter to `All` if the card is hidden)
+
+Legend at the bottom distinguishes **Status** (short bars, matching the stacked bar in each month) from **YouTube privacy** (pill badges, matching the actual badges above).
+
+### Calendar tab
+
+A single month grid (pick the month with ‹ ›). Same dots, same click-to-jump behaviour, plus the "Target days only" toggle.
 
 ### Setting Up a Backfill Profile
 
-1. Click **Add Profile**
+1. Click **Profiles** tab → **Add Profile**
 2. Configure:
    - **Date range**: Which recording dates to include
    - **Source platforms**: Zoom, Fireflies, Loom, or all
@@ -214,16 +261,16 @@ For publishing large batches of approved videos (e.g. 18 months of backlog), use
 
 ### Running Backfill
 
-1. Click **Populate Queue** to fill the upload queue from approved videos matching the profile
+1. Open the **Queue** tab, click **Populate Queue** to fill from approved videos matching the profile
 2. Review the queue — drag to reorder, remove individual items
-3. Click **Start Orchestrator** to begin
+3. Header bar: click **▶ Start** to begin the orchestrator
 4. The orchestrator:
    - Checks if the daily quota has been reached
    - Checks if the current time is within the configured window
    - If both pass, uploads the next video in the queue
    - Logs progress to the Event Log
    - Pauses automatically when quota is exhausted or window closes
-5. Monitor progress: uploads today, queue depth, estimated completion
+5. Monitor progress: uploads today, queue depth, estimated completion — all visible in the Overview and in the header bar
 
 ---
 
@@ -271,29 +318,59 @@ Click the **Provenance** view toggle (next to "Videos") to see a visual graph of
 
 ## 9. Event Log
 
-The Event Log at the bottom of the dashboard has two views:
+There are two ways to see events: **global** (bottom of dashboard) and **per-video** (on each card).
 
-### Session View
+### Per-video log
 
-Real-time activity from the current browser session: imports, approvals, rule runs, upload progress, errors.
+Click the **Log** button on any video card (next to Provenance) to see a filtered list of events whose `video_id` matches that card. This is usually what you want when investigating a specific video — the global log interleaves events from every card and rule run.
 
-### Structured View
+### Global Event Log
 
-Persistent log entries stored across sessions. Each entry shows:
+At the bottom of the dashboard. Two views:
+
+**Session View** — real-time activity from the current browser session: imports, approvals, rule runs, upload progress, errors.
+
+**Structured View** — persistent log entries stored across sessions. Each entry shows:
 - Timestamp
 - Level (DEBUG, INFO, WARN, ERROR)
 - Component (e.g. `api:zoom/recordings`, `runtime:memory`, `backfill:upload`)
 - Message and details
 
-**Memory pressure alerts** from the server appear here automatically (polled every 30 seconds). If you see `runtime:memory` warnings, the server is approaching its memory limit.
+**Memory pressure alerts** from the server appear here automatically (polled every 30 seconds via `GET /api/health`). If you see `runtime:memory` warnings, the server is approaching its memory limit — investigate memory-heavy activity (concurrent uploads, large transcripts).
 
 **Actions:**
 - **Download .jsonl**: Export the full log for support or debugging
-- **Clear**: Reset the log buffer
+- **Clear**: Reset the log buffer (does not affect per-video logs the next time the page loads, since those are filtered from the same buffer)
 
 ---
 
-## 10. Dashboard Filters and Sorting
+## 10. What Lives Where (Single-Browser Constraint)
+
+Most of Video Bridge's state lives in your **browser's localStorage**, not on the server. This is documented in detail in ADR-035 but the practical consequences for users are:
+
+| You'll see… | …in a different browser or on a new device |
+|-------------|--------------------------------------------|
+| Your video catalog | **Empty** — re-run imports to populate |
+| Your credentials (Zoom / YouTube / Fireflies / etc.) | **Empty** — re-authorise each platform |
+| Your ingestion / processing / post-processing rules | **Preserved** — these sync from the server |
+| Your backfill profiles | **Empty** |
+| Your "Not a match" rejections | **Empty** — rejected suggestions reappear |
+| YouTube privacy cache + uploads cache | **Empty** — one click on Fill privacy / Auto-lookup re-fills |
+
+**Practical implication**: the app is effectively single-browser, single-operator today. Two people on the same URL do not see each other's catalog. Switching from laptop to phone means an empty app.
+
+This is a known limit, not a permanent design. The roadmap to share catalog + credentials across browsers is tracked as Level 2 / Level 3 / Level 4 in ADR-035. Level 1 (making server-side rule / quota files durable across Cloud Run restarts) is ready but blocked on IAM permissions — see ADR-018 addendum.
+
+### If you accidentally wipe browser data
+
+The catalog is gone. Options:
+- Re-import from Zoom / Fireflies — import is idempotent by `source_id`, so you won't get duplicates
+- Re-authorise YouTube and run **Auto-lookup on YouTube** to re-link already-published videos to their catalog entries once they're re-imported
+- Processing / post-processing / ingestion rules come back automatically on page load because they're server-side
+
+---
+
+## 11. Dashboard Filters and Sorting
 
 ### Status Filters
 
@@ -320,7 +397,7 @@ Below the filters, a summary bar shows:
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 ### "Request failed (502)" or upload errors
 
@@ -356,3 +433,22 @@ If YouTube or Zoom requests fail with 401/403:
 2. Check the criteria carefully — all conditions must match (AND logic)
 3. Verify the rule is **enabled** and has the correct priority
 4. Check the **Run Now** button to force an immediate evaluation
+
+### Video shows Failed but is actually live on YouTube
+
+Most commonly this is a dropped SSE upload: the server finished the upload to YouTube, but the browser's upload-progress stream got cut before receiving the completion event, so the client marked the record Failed. To recover:
+
+1. Open the failed card
+2. Click **Recover from YouTube**
+3. Click **Auto-lookup on YouTube** and pick the matching video (the inline blue suggestion banner may have already surfaced it)
+4. The record transitions to Published with privacy correctly cached
+
+This also works for videos you uploaded to YouTube out-of-band (e.g. via YouTube Studio) and want to link back to the catalog.
+
+### "Possible YouTube match" banner is wrong
+
+Click **Not a match** on the banner. The pair is dismissed permanently (per-browser) and the next candidate in the ranked list will surface on the next render.
+
+### Duplicate records (same meeting from Zoom and Fireflies)
+
+The app auto-suggests `SameEvent` links via the purple banner when it detects parallel captures (ADR-033). Click **Link as same event** to connect them. This doesn't merge the records — each stays as its own capture (Zoom has the video file, Fireflies has the transcript) — but it links them in the provenance graph so Processing Rules can pull description/transcript enrichment across the link in future versions.

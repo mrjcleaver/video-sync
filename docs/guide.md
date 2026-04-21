@@ -1,5 +1,13 @@
 # Video Bridge: What It Is and How to Use It
 
+> **⚠ Legacy document.** This is the original short-form overview of Video Bridge. It remains accurate for the core concept but is **missing** many features added since: Backfill Overview, Recover from YouTube, cross-source sibling suggestions, privacy badges, per-video event logs, the single-browser constraint, and more.
+>
+> For current behaviour, read [`user-guide.md`](user-guide.md) (comprehensive) and [`user-flows.md`](user-flows.md) (diagrams).
+>
+> This file is kept for historical continuity; it is not maintained.
+
+---
+
 ## What Is Video Bridge?
 
 Video Bridge is a **unified video indexing and publishing tool**. It solves a common problem for organizations that produce video content across multiple platforms: recordings live in Zoom, get edited in Loom, and need to end up on YouTube or Kaltura — but nobody has a single view of where everything is or what state it's in.
