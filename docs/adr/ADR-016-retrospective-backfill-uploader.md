@@ -408,3 +408,31 @@ A 1000-video channel costs ~40 units. Results cached in `localStorage["video-syn
 - Final score = `0.7 × titleScore + dateBoost`. Top 5 candidates shown with score badges.
 
 The operator picks one with a single click, which feeds the existing Recover flow (verify via status API, chain transitions to Published). The ✓ marker on the date column indicates the YouTube publish date is within 31 days of this record's recording date — a strong signal that this is the right video.
+
+### Post-Import YouTube Sync + Inline Suggestions
+
+Rather than make the operator click Recover on every orphaned record, the system pre-warms the cache and surfaces matches automatically.
+
+**On every successful source import** (Zoom, Fireflies, URL, YouTube, Manual), `page.tsx` `refreshWithYouTube()`:
+
+1. Refreshes the video state from the store (existing behaviour).
+2. If YouTube credentials are configured, fires a fire-and-forget `fetchChannelUploads(false)` — honours the 1-hour TTL, so no API cost if the cache is warm.
+3. Errors are swallowed; the import doesn't fail if YouTube is not configured.
+
+One log line `yt:uploads-sync` records how many uploads are in the cache after the fetch.
+
+**On every VideoCard render**, a `useMemo` checks the cached uploads:
+
+- Skips if the video is already Published / Publishing / Abandoned, or already has a YouTube Destination location.
+- Otherwise computes `rankCandidates(uploads, previewTitle ?? video.title, video.recorded_at, 1)`.
+- If the top match's score is **≥ 0.7**, a light-blue banner appears under the card header:
+
+  > **Possible YouTube match:** [upload title] · [publish date] · 87% match
+  > [Link & mark Published]  [preview]
+
+- Clicking **Link & mark Published** feeds the existing `recoverFromYouTube(id)` flow: verify via status, cache privacy, chain transitions.
+- **preview** is a plain link to the YouTube watch URL so the operator can sanity-check before linking.
+
+The 0.7 threshold was chosen empirically: it filters out low-overlap false positives but still catches titles that differ by date suffixes, episode numbers, or processing-rule prefixes. Below 0.7 the match is still accessible via **Auto-lookup** in the Recover panel but not surfaced automatically.
+
+**Net result for the 18-month backlog use case:** after importing Fireflies / Zoom recordings, the dashboard automatically shows blue suggestion banners on every record that already exists on YouTube. One click per record promotes the suggestion to a Published state with privacy correctly cached — no manual URL pasting, no per-card Recover clicks, no separate Fill Privacy pass.

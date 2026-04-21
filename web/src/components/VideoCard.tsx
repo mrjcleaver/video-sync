@@ -18,7 +18,7 @@ import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { loadClientLog, type LogRecord } from "../lib/logger";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
-import { fetchChannelUploads, rankCandidates, type MatchCandidate } from "../lib/youtubeUploadsCache";
+import { fetchChannelUploads, rankCandidates, getCachedUploads, type MatchCandidate } from "../lib/youtubeUploadsCache";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -865,6 +865,24 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
     return processed !== video.title ? processed : null;
   }, [video]);
 
+  /**
+   * If the YouTube uploads cache contains a confident match for this video
+   * AND this video isn't already linked to a YouTube destination, surface a
+   * one-click "Link existing YouTube video" suggestion.
+   */
+  const autoSuggestion = useMemo<MatchCandidate | null>(() => {
+    if (video.status === "Published" || video.status === "Publishing" || video.status === "Abandoned") return null;
+    const alreadyHasYT = (video.locations ?? []).some(l => l.platform === "YouTube" && l.role === "Destination");
+    if (alreadyHasYT) return null;
+    const cached = getCachedUploads();
+    if (!cached) return null;
+    const title = previewTitle ?? video.title;
+    const ranked = rankCandidates(cached.uploads, title, video.recorded_at, 1);
+    // Only surface high-confidence matches to avoid bad auto-suggestions
+    if (ranked.length === 0 || ranked[0].score < 0.7) return null;
+    return ranked[0];
+  }, [video.status, video.locations, video.title, video.recorded_at, previewTitle]);
+
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
@@ -894,6 +912,40 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
         </div>
         <span className={`status-badge status-${status}`}>{status}</span>
       </div>
+
+      {/* Auto-suggestion: this record looks like it's already on YouTube */}
+      {autoSuggestion && (
+        <div style={{
+          marginTop: 6, padding: "6px 10px",
+          background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)", borderRadius: 6,
+          display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
+        }}>
+          <span>
+            <span style={{ color: "#38bdf8", fontWeight: 600 }}>Possible YouTube match:</span>{" "}
+            <span style={{ color: "var(--text-muted)" }}>
+              {autoSuggestion.upload.title}
+              {autoSuggestion.upload.publishedAt && ` · ${autoSuggestion.upload.publishedAt.slice(0, 10)}`}
+              {" · "}{Math.round(autoSuggestion.score * 100)}% match
+            </span>
+          </span>
+          <button
+            className="btn btn-sm btn-primary"
+            style={{ marginLeft: "auto", fontSize: "0.7rem" }}
+            onClick={() => recoverFromYouTube(autoSuggestion.upload.id)}
+            disabled={recovering}
+          >
+            {recovering ? "Linking…" : "Link & mark Published"}
+          </button>
+          <a
+            href={`https://www.youtube.com/watch?v=${autoSuggestion.upload.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: "0.7rem", color: "var(--text-muted)", textDecoration: "underline" }}
+          >
+            preview
+          </a>
+        </div>
+      )}
 
       <div className="video-card-meta">
         <span>{video.source_platform}</span>

@@ -81,6 +81,27 @@ export default function Dashboard() {
     setVideos(videoStore.getAll());
   }, []);
 
+  /**
+   * Called after any source import succeeds. Triggers a background YouTube
+   * uploads fetch so the cache is populated for auto-association suggestions.
+   * Fire-and-forget: errors are swallowed (YouTube might not be configured yet).
+   */
+  const refreshWithYouTube = useCallback(() => {
+    refresh();
+    // Skip if no YouTube creds yet (saves a useless API call)
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      const conn = raw ? JSON.parse(raw) : {};
+      const ytCreds = conn["YouTube"]?.credentials;
+      if (!ytCreds?.refreshToken) return;
+    } catch { return; }
+    import("../lib/youtubeUploadsCache").then(({ fetchChannelUploads }) => {
+      fetchChannelUploads(false).then(data => {
+        clientLog("info", "yt:uploads-sync", `Fetched ${data.uploads.length} YouTube uploads`, { count: data.uploads.length });
+      }).catch(() => { /* swallow — user can still use manual Recover */ });
+    });
+  }, [refresh]);
+
   const addEvent = useCallback((ev: string, fields?: { video_id?: string }) => {
     setEvents((prev) => [...prev, ev]);
     clientLog("info", "event", ev, fields);
@@ -198,7 +219,7 @@ export default function Dashboard() {
 
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
-      <ImportPanel onImported={refresh} onEvent={addEvent} />
+      <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
 
       <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
 
