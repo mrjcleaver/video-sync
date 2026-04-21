@@ -359,3 +359,31 @@ This keeps the operator's current filter when possible (e.g. clicking a Publishe
 ### Connections Panel Collapse
 
 When `showConnections` is false, `ConnectionsPanel` returns `null` instead of rendering an empty header + HelpTip pair. The toggle button in the main header is the only affordance when collapsed. The HelpTip now lives inside the open branch so it's visible only when relevant.
+
+### Recover From YouTube
+
+**Problem.** The streaming upload path (`/api/youtube/upload` → SSE) is vulnerable to a race where the upload succeeds server-side (YouTube has the video) but the SSE connection is cut before the `complete` event reaches the browser (Cloud Run idle timeout, proxy buffering, network drop). The client falls through to `Upload stream ended without a result` and calls `mark_failed`. YouTube has the video; the app records Failed; the destination_url and YouTube Destination location are never set.
+
+A related class of problems: the operator uploaded a video to YouTube out-of-band (YouTube Studio, manual curl upload, earlier tooling) and wants to tell Video Bridge "this record is actually already on YouTube."
+
+**Decision.** Add a **Recover from YouTube** button on any card whose status is not `Published`, `Publishing`, or `Abandoned`. It opens a small input that accepts:
+
+- A full watch URL (`https://youtube.com/watch?v=...`)
+- A short URL (`youtu.be/...`)
+- A Studio URL (`studio.youtube.com/video/.../edit`)
+- A raw 11-character ID
+
+On submit, the client:
+
+1. Parses the YouTube ID.
+2. Calls `GET /api/youtube/status?videoId=...` to verify the video exists (404 → reject). Also captures `privacyStatus` into the browser-side privacy cache (ADR-012 pathway #2).
+3. Chains WASM transitions to reach `Published`:
+   - If current status is neither `Approved`, `Publishing`, nor `Published`: `approve()` (allowed from Discovered/InScope/Skipped/Failed/ToRetry)
+   - If current status is `Approved` after step 2: `request_publish()`
+   - Finally: `mark_published(destination_id, destination_url, destination_platform: YouTube)` which adds the `Destination` PlatformLocation for us (idempotent: the existing code skips duplicates).
+
+No new Rust commands are needed — the transition chain is expressible with existing domain operations.
+
+**Events emitted.** The sequence produces `VideoApproved`, `StatusChanged(→Publishing)`, `StatusChanged(→Published)` events in the normal way. The client logs a single `VideoRecovered` event with the YouTube URL.
+
+**Failure modes.** If the YouTube status check returns 404, the recovery aborts without touching the record (the operator pasted a bad ID or a private-to-other-channel video). If a WASM transition throws (e.g. the record is in an unexpected state), the partial progress is retained — the operator can re-run Recover, which picks up from the current status.

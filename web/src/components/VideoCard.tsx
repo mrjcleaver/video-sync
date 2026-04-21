@@ -93,6 +93,10 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
   const [shortsPhase, setShortsPhase] = useState("");
   const [showLog, setShowLog] = useState(false);
   const [logTick, setLogTick] = useState(0);
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoverInput, setRecoverInput] = useState("");
+  const [recovering, setRecovering] = useState(false);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
 
   const videoLog = useMemo<LogRecord[]>(() => {
     if (!showLog) return [];
@@ -468,6 +472,101 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
     onMutated();
   }
 
+  /** Parse a YouTube video ID from a watch URL, short URL, Studio URL, or raw ID. */
+  function parseYouTubeId(input: string): string | null {
+    const trimmed = input.trim();
+    if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
+    const watch = trimmed.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+    if (watch) return watch[1];
+    const short = trimmed.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+    if (short) return short[1];
+    const studio = trimmed.match(/studio\.youtube\.com\/video\/([A-Za-z0-9_-]{11})/);
+    if (studio) return studio[1];
+    return null;
+  }
+
+  async function recoverFromYouTube(raw: string) {
+    setRecoverError(null);
+    const ytId = parseYouTubeId(raw);
+    if (!ytId) {
+      setRecoverError("Could not parse a YouTube video ID from that input.");
+      return;
+    }
+
+    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    try {
+      const rawStored = localStorage.getItem("video-sync:connections");
+      if (rawStored) connections = JSON.parse(rawStored);
+    } catch { /* ignore */ }
+    const ytCreds = connections["YouTube"]?.credentials;
+    if (!ytCreds?.refreshToken || !ytCreds.clientId || !ytCreds.clientSecret) {
+      setRecoverError("YouTube not authorised. Configure in Connections first.");
+      return;
+    }
+
+    setRecovering(true);
+    try {
+      // 1. Verify via YouTube status API
+      const statusRes = await fetch(
+        `/api/youtube/status?videoId=${encodeURIComponent(ytId)}`,
+        {
+          headers: {
+            "x-youtube-refresh-token": ytCreds.refreshToken,
+            "x-youtube-client-id": ytCreds.clientId,
+            "x-youtube-client-secret": ytCreds.clientSecret,
+          },
+        },
+      );
+      const statusData = await statusRes.json();
+      if (!statusRes.ok) {
+        throw new Error(statusData.error ?? `Status check failed (${statusRes.status})`);
+      }
+
+      // Cache privacy immediately
+      if (statusData.privacyStatus) {
+        setPrivacy(ytId, normalisePrivacy(statusData.privacyStatus));
+      }
+
+      const videoUrl = `https://www.youtube.com/watch?v=${ytId}`;
+
+      // 2. Chain transitions from current status → Published
+      // Path: any-non-terminal → approve → request_publish → mark_published
+      if (status !== "Approved" && status !== "Publishing" && status !== "Published") {
+        videoStore.mutate(video.id, r =>
+          r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) })),
+        );
+      }
+      const rec = videoStore.get(video.id);
+      if (rec) {
+        const cur = JSON.parse(rec.to_json()).status;
+        if (cur === "Approved") {
+          videoStore.mutate(video.id, r =>
+            r.request_publish(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) })),
+          );
+        }
+      }
+      videoStore.mutate(video.id, r =>
+        r.mark_published(JSON.stringify({
+          actor: JSON.parse(ADMIN_ACTOR),
+          destination_id: ytId,
+          destination_url: videoUrl,
+          destination_platform: "YouTube",
+        })),
+      );
+
+      onEvent(`VideoRecovered: "${video.title}"${dateTag(video.recorded_at)} -> ${videoUrl}`, { video_id: video.id });
+      onMutated();
+      setShowRecover(false);
+      setRecoverInput("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setRecoverError(msg);
+      onEvent(`VideoRecoverFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+    } finally {
+      setRecovering(false);
+    }
+  }
+
   async function loadZoomTranscript() {
     // Guard: if the store lost this record (e.g. after WASM HMR swap), re-hydrate
     if (!videoStore.get(video.id)) {
@@ -735,6 +834,9 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
   const canSkip = status === "Discovered" || status === "InScope";
   const canAbandon = status === "Failed" || status === "InScope" || status === "Discovered" || status === "Skipped" || status === "Published";
   const canRetry = status === "Failed" || status === "Published";
+  // Recover is useful for any non-Published video that's already live on YouTube
+  // (SSE-dropped uploads, out-of-band publishes, imports of existing YT content).
+  const canRecover = status !== "Published" && status !== "Publishing" && status !== "Abandoned";
   const canScope = status === "Discovered";
   const canPublish = status === "Approved";
   const isPublishing = status === "Publishing";
@@ -1246,6 +1348,42 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
         </div>
       )}
 
+      {showRecover && (
+        <div style={{ marginTop: 10, padding: 10, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: 6 }}>Recover from YouTube</div>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 8 }}>
+            Paste a YouTube video URL or 11-char ID. We&apos;ll verify via the API, link it as a Destination, cache privacy, and transition this record to Published.
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              value={recoverInput}
+              onChange={e => setRecoverInput(e.target.value)}
+              placeholder="https://youtube.com/watch?v=... or yxOw48ZBM8I"
+              style={{ flex: 1, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.8rem" }}
+              disabled={recovering}
+            />
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => recoverFromYouTube(recoverInput)}
+              disabled={recovering || !recoverInput.trim()}
+            >
+              {recovering ? "Recovering…" : "Recover"}
+            </button>
+            <button
+              className="btn btn-sm"
+              onClick={() => { setShowRecover(false); setRecoverInput(""); setRecoverError(null); }}
+              disabled={recovering}
+            >
+              Cancel
+            </button>
+          </div>
+          {recoverError && (
+            <div style={{ marginTop: 6, fontSize: "0.72rem", color: "var(--red)" }}>{recoverError}</div>
+          )}
+        </div>
+      )}
+
       {showLog && (
         <div style={{ marginTop: 10, padding: 10, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, maxHeight: 240, overflowY: "auto" }}>
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 6, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
@@ -1311,6 +1449,15 @@ export default function VideoCard({ video, onMutated, onEvent, onNavigateToVideo
         {canRetry && (
           <button className="btn btn-sm btn-yellow" onClick={markToRetry}>
             Retry
+          </button>
+        )}
+        {canRecover && (
+          <button
+            className="btn btn-sm"
+            onClick={() => { setShowRecover(v => !v); setRecoverError(null); }}
+            title="Already uploaded to YouTube? Link the existing video and mark this Published."
+          >
+            Recover from YouTube
           </button>
         )}
         {canAbandon && (
