@@ -18,12 +18,18 @@
 #   - roles/artifactregistry.writer
 #   - roles/iam.serviceAccountUser
 #
-# ─── One-time infrastructure setup ───────────────────────────────────────
-# The GCS bucket backing /app/data (ADR-018) must exist before the first
-# deploy with FUSE mounting. Run this ONCE per project:
-#   bash scripts/gcs-fuse-setup.sh
-# It creates gs://video-sync-data-agentics-487016 in us-central1 and
-# grants the Cloud Run runtime service account bucket access.
+# ─── Persistence note ────────────────────────────────────────────────────
+# /app/data is CURRENTLY ON THE EPHEMERAL FILESYSTEM. Files in data/ are
+# wiped on every cold start / new revision. See ADR-018 addendum and
+# ADR-035 for the full story. Implications:
+#   - data/backfill-state.json: uploads_today resets each restart
+#   - data/rules.json: survives only because clients re-POST from localStorage
+#   - data/server.log: captured by Cloud Logging via stdout; file is lost
+# The FUSE mount path is prepared in scripts/gcs-fuse-setup.sh but is NOT
+# enabled here pending IAM permissions. When unblocked, add:
+#   --execution-environment=gen2
+#   --add-volume=name=data,type=cloud-storage,bucket=video-sync-data-agentics-487016
+#   --add-volume-mount=volume=data,mount-path=/app/data
 #
 # ─── Deploy ──────────────────────────────────────────────────────────────
 #   ./deploy.sh
@@ -60,8 +66,6 @@ docker build \
 docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 
-BUCKET="video-sync-data-agentics-487016"
-
 gcloud run deploy video-sync \
   --image="$IMAGE:$SHA" \
   --region=us-central1 \
@@ -73,8 +77,5 @@ gcloud run deploy video-sync \
   --max-instances=3 \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --execution-environment=gen2 \
   --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=1024 \
-  --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest \
-  --add-volume="name=data,type=cloud-storage,bucket=$BUCKET" \
-  --add-volume-mount="volume=data,mount-path=/app/data"
+  --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
