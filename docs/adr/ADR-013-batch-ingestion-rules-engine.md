@@ -1,4 +1,4 @@
-dsp the d# ADR-013: Batch Ingestion with Rules Engine and Operator Memory
+# ADR-013: Batch Ingestion with Rules Engine and Operator Memory
 
 | Field | Value |
 |-------|-------|
