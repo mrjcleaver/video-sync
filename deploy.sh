@@ -18,6 +18,16 @@
 #   - roles/artifactregistry.writer
 #   - roles/iam.serviceAccountUser
 #
+# ─── Auth note (ADR-036) ─────────────────────────────────────────────────
+# ALLOW_NO_IAP=1 keeps the service in single-user dev-like mode: the
+# /api/auth/me endpoint and useCurrentActor hook return a synthetic admin
+# instead of validating an IAP JWT. Pre-IAP, this is the only safe value.
+# After running scripts/iap-setup.sh, REMOVE ALLOW_NO_IAP=1 and ADD:
+#   IAP_AUDIENCE=/projects/<num>/global/backendServices/<id>
+#   KEY_ADMIN_EMAILS=...
+#   OPERATOR_EMAILS=...
+#   VIEWER_EMAILS=...
+
 # ─── Persistence note ────────────────────────────────────────────────────
 # /app/data is CURRENTLY ON THE EPHEMERAL FILESYSTEM. Files in data/ are
 # wiped on every cold start / new revision. See ADR-018 addendum and
@@ -77,5 +87,5 @@ gcloud run deploy video-sync \
   --max-instances=3 \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=4096 \
+  --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=4096,ALLOW_NO_IAP=1 \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest

@@ -19,6 +19,7 @@ import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
 import ShortsPanel from "../components/ShortsPanel";
+import { CurrentActorProvider } from "../lib/useCurrentActor";
 
 function timeAgo(iso: string): string {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -190,6 +191,7 @@ export default function Dashboard() {
 
   return (
     <ErrorBoundary>
+    <CurrentActorProvider>
     <div className="container">
       <div className="header">
         <h1>Video Sync</h1>
@@ -376,6 +378,7 @@ export default function Dashboard() {
 
       {showLogs && <EventLog events={events} forceShow />}
     </div>
+    </CurrentActorProvider>
     </ErrorBoundary>
   );
 }

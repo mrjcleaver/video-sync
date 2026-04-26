@@ -26,6 +26,7 @@ import {
   isSiblingMatchRejected,
 } from "../lib/suggestionRejections";
 import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatcher";
+import { useCurrentActor, actorJsonOrFallback } from "../lib/useCurrentActor";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -70,6 +71,11 @@ interface Props {
 }
 
 export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavigateToVideo }: Props) {
+  // ADR-036: derive actor from IAP JWT via /api/auth/me. Falls back to the
+  // synthetic admin during boot or in dev mode (ALLOW_NO_IAP=1) so single-
+  // user behaviour is preserved until IAP is configured.
+  const { actor: currentActor } = useCurrentActor();
+  const actorJson = () => actorJsonOrFallback(currentActor);
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
@@ -240,9 +246,11 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     onMutated();
   }
 
+  // ADR-036 canonical migration target. Other call sites still use
+  // ADMIN_ACTOR; switch them over the same way once Phase 1 is reviewed.
   function approve() {
     videoStore.mutate(video.id, (r) =>
-      r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
+      r.approve(JSON.stringify({ actor: JSON.parse(actorJson()) }))
     );
     onEvent(`VideoApproved: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
