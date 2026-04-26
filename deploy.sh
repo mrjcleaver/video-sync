@@ -89,6 +89,30 @@ docker build \
 docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 
+# Auth mode is selected by whether IAP_AUDIENCE is exported.
+#   IAP mode   = IAP_AUDIENCE set    → --no-allow-unauthenticated, IAP-enforced
+#   Open mode  = IAP_AUDIENCE unset  → --allow-unauthenticated, ALLOW_NO_IAP=1
+# The dev-friendly deploy-without-iap.sh wrapper sets the *_EMAILS vars
+# but leaves IAP_AUDIENCE unset, landing here in Open mode. When the
+# operator gets the Workspace permission for Cloud Identity (or just
+# wants to flip to env-var role mapping behind IAP), they export
+# IAP_AUDIENCE and re-run deploy.sh.
+
+BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=4096"
+if [[ -n "${IAP_AUDIENCE:-}" ]]; then
+  AUTH_FLAG="--no-allow-unauthenticated"
+  AUTH_ENV="IAP_AUDIENCE=${IAP_AUDIENCE}"
+  AUTH_ENV+=",KEY_ADMIN_EMAILS=${KEY_ADMIN_EMAILS:-martin.cleaver@agentics.org}"
+  AUTH_ENV+=",OPERATOR_EMAILS=${OPERATOR_EMAILS:-martin.cleaver@agentics.org}"
+  AUTH_ENV+=",VIEWER_EMAILS=${VIEWER_EMAILS:-martin.cleaver@agentics.org}"
+  if [[ -n "${WS_DOMAIN:-}" ]]; then AUTH_ENV+=",WS_DOMAIN=${WS_DOMAIN}"; fi
+  echo "==> IAP mode (audience set, --no-allow-unauthenticated)"
+else
+  AUTH_FLAG="--allow-unauthenticated"
+  AUTH_ENV="ALLOW_NO_IAP=1"
+  echo "==> Open mode (IAP_AUDIENCE unset, --allow-unauthenticated, dev actor)"
+fi
+
 gcloud run deploy video-sync \
   --image="$IMAGE:$SHA" \
   --region=us-central1 \
@@ -98,7 +122,7 @@ gcloud run deploy video-sync \
   --cpu=2 \
   --min-instances=0 \
   --max-instances=3 \
-  --no-allow-unauthenticated \
+  $AUTH_FLAG \
   --no-cpu-throttling \
-  --set-env-vars="NODE_ENV=production,MEMORY_LIMIT_MB=4096,IAP_AUDIENCE=${IAP_AUDIENCE:?Set IAP_AUDIENCE before running deploy.sh — get it from scripts/iap-setup.sh output},KEY_ADMIN_EMAILS=${KEY_ADMIN_EMAILS:-martin.cleaver@agentics.org},OPERATOR_EMAILS=${OPERATOR_EMAILS:-martin.cleaver@agentics.org},VIEWER_EMAILS=${VIEWER_EMAILS:-martin.cleaver@agentics.org}${WS_DOMAIN:+,WS_DOMAIN=${WS_DOMAIN}}" \
+  --set-env-vars="${BASE_ENV},${AUTH_ENV}" \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
