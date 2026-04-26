@@ -250,7 +250,7 @@ The ADMIN_ACTOR migration, error-surfacing UI, type dedup, RFC-4122 namespace fi
 | Finding | Source | Plan |
 |---------|--------|------|
 | **Production deploy still has `--allow-unauthenticated` AND `ALLOW_NO_IAP=1`** | sec#1 | Acceptable while catalog is browser-local; **must** run `iap-setup.sh` before ADR-035 Phase 2 (catalog-on-server) ships. |
-| **Role mapping env-var-only** | sec#4 | Phase 2 swaps to Cloud Identity Groups API. |
+| **Role mapping env-var-only** | sec#4 | **Resolved.** `lookupRole()` now queries Cloud Identity API (`groups/-/memberships:searchTransitiveGroups`) using a metadata-server access token from the runtime SA. `WS_DOMAIN` env var drives group-name derivation (`video-sync-{role}s@{WS_DOMAIN}`). Env-var allowlists remain as a fallback path used only if the API call fails — so a transient Cloud Identity outage doesn't 401 every authenticated user. The runtime SA needs permission to read group membership: simplest path is adding the SA's email (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`) as a Manager on each of the three groups in Workspace Admin. |
 | Remaining 16 of 20 QE-recommended test cases | tester | Next-up commits as the surface stabilises. |
 
 ### Outcome

@@ -110,30 +110,99 @@ async function verifyIapJwt(token: string): Promise<{ email: string; sub: string
 }
 
 /**
- * Look up the user's Video Sync roles via Cloud Identity Groups API.
- * Returns the highest applicable role, or `null` if the user is in none
- * of the three groups — callers must treat null as "deny" (QE finding
- * sec#8 + rev#9: silent fallback to Viewer was wrong).
+ * Look up the user's Video Sync roles. Returns the highest applicable
+ * role, or `null` if the user is in none of the three groups — callers
+ * must treat null as "deny" (QE finding sec#8 + rev#9).
  *
- * For Phase 1 with no Workspace groups configured, this is gated by
- * KEY_ADMIN_EMAILS / OPERATOR_EMAILS / VIEWER_EMAILS env vars (comma-
- * separated). Phase 2 swaps to the Cloud Identity API call.
+ * Resolution order:
+ *  1. Cloud Identity Groups API (`groups/-/memberships:searchTransitiveGroups`)
+ *     when WS_DOMAIN is set. The Cloud Run runtime SA must have
+ *     permission to query group membership — typically by being a
+ *     Manager of each of the three groups (configured in Workspace
+ *     Admin > Groups), or by a project-wide Group Reader role.
+ *  2. Env var allowlist fallback (KEY_ADMIN_EMAILS / OPERATOR_EMAILS /
+ *     VIEWER_EMAILS) — used when the API path is unavailable or fails,
+ *     so the operator can ship a working deploy without waiting on
+ *     Workspace plumbing.
+ *
+ * Failures in the API path are logged but downgraded to the env-var
+ * fallback so a transient Cloud Identity outage doesn't 401 every
+ * authenticated user.
  */
 async function lookupRole(email: string): Promise<Role | null> {
   const cached = groupCache.get(email);
   if (cached && cached.expires > Date.now()) return highestRole(cached.roles);
 
-  const roles: Role[] = [];
-  const keyAdmins = (process.env.KEY_ADMIN_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
-  const operators = (process.env.OPERATOR_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
-  const viewers = (process.env.VIEWER_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+  let roles: Role[] = [];
+  const wsDomain = process.env.WS_DOMAIN;
+  if (wsDomain) {
+    try {
+      roles = await rolesFromCloudIdentity(email, wsDomain);
+    } catch (err) {
+      // Best effort — fall through to env var allowlist
+      console.warn(`Cloud Identity lookup failed for ${email}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
-  if (keyAdmins.includes(email)) roles.push("Admin");
-  if (operators.includes(email)) roles.push("Publisher");
-  if (viewers.includes(email)) roles.push("Viewer");
+  if (roles.length === 0) {
+    const keyAdmins = (process.env.KEY_ADMIN_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+    const operators = (process.env.OPERATOR_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+    const viewers = (process.env.VIEWER_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+    if (keyAdmins.includes(email)) roles.push("Admin");
+    if (operators.includes(email)) roles.push("Publisher");
+    if (viewers.includes(email)) roles.push("Viewer");
+  }
 
   groupCache.set(email, { roles, expires: Date.now() + GROUP_TTL_MS });
   return highestRole(roles);
+}
+
+/**
+ * Fetch a metadata-server access token (the Cloud Run runtime SA) and
+ * call Cloud Identity API. Returns the roles the user inherits from
+ * Workspace group membership.
+ */
+async function rolesFromCloudIdentity(email: string, domain: string): Promise<Role[]> {
+  const token = await getMetadataAccessToken();
+  const url = new URL("https://cloudidentity.googleapis.com/v1/groups/-/memberships:searchTransitiveGroups");
+  // member_key_id query is required to scope the search to this user
+  url.searchParams.set("query", `member_key_id == '${email}'`);
+  url.searchParams.set("pageSize", "200");
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cloud Identity API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json() as { memberships?: Array<{ groupKey?: { id?: string } }> };
+  const memberOf = new Set(
+    (data.memberships ?? [])
+      .map(m => m.groupKey?.id?.toLowerCase())
+      .filter((s): s is string => !!s),
+  );
+  const roles: Role[] = [];
+  if (memberOf.has(`video-sync-key-admins@${domain}`.toLowerCase())) roles.push("Admin");
+  if (memberOf.has(`video-sync-operators@${domain}`.toLowerCase())) roles.push("Publisher");
+  if (memberOf.has(`video-sync-viewers@${domain}`.toLowerCase())) roles.push("Viewer");
+  return roles;
+}
+
+let cachedToken: { value: string; expires: number } | null = null;
+async function getMetadataAccessToken(): Promise<string> {
+  if (cachedToken && cachedToken.expires > Date.now() + 30_000) return cachedToken.value;
+  const res = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  );
+  if (!res.ok) throw new Error(`Metadata token fetch ${res.status}`);
+  const data = await res.json() as { access_token: string; expires_in: number };
+  cachedToken = {
+    value: data.access_token,
+    expires: Date.now() + data.expires_in * 1000,
+  };
+  return cachedToken.value;
 }
 
 function highestRole(roles: Role[]): Role | null {

@@ -18,15 +18,24 @@
 #   - roles/artifactregistry.writer
 #   - roles/iam.serviceAccountUser
 #
-# ─── Auth note (ADR-036) ─────────────────────────────────────────────────
-# ALLOW_NO_IAP=1 keeps the service in single-user dev-like mode: the
-# /api/auth/me endpoint and useCurrentActor hook return a synthetic admin
-# instead of validating an IAP JWT. Pre-IAP, this is the only safe value.
-# After running scripts/iap-setup.sh, REMOVE ALLOW_NO_IAP=1 and ADD:
+# ─── Auth (ADR-036) ──────────────────────────────────────────────────────
+# This deploy now expects IAP to be in front of the service. Roles are
+# resolved by querying Workspace group membership via the Cloud Identity
+# API (using the Cloud Run runtime SA). Three env vars drive this:
+#
 #   IAP_AUDIENCE=/projects/<num>/global/backendServices/<id>
-#   KEY_ADMIN_EMAILS=...
-#   OPERATOR_EMAILS=...
-#   VIEWER_EMAILS=...
+#       — printed by scripts/iap-setup.sh on success. Required for
+#         JWT signature + audience verification.
+#   WS_DOMAIN=agentics.org
+#       — Cloud Identity searches groups/{role}@{WS_DOMAIN}. Optional
+#         only if you're using KEY_ADMIN_EMAILS env-var fallback.
+#   IAP_AUDIENCE must NOT be set together with ALLOW_NO_IAP=1 — the
+#       app refuses to boot if it sees both (sec#2 misconfiguration guard).
+#
+# The Cloud Run runtime SA must be allowed to query group membership.
+# Easiest path: in Workspace Admin > Groups, add the runtime SA's email
+# (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`) as a
+# Manager (or Member with view scope) on each of the three groups.
 
 # ─── Persistence note ────────────────────────────────────────────────────
 # /app/data is CURRENTLY ON THE EPHEMERAL FILESYSTEM. Files in data/ are
@@ -85,7 +94,7 @@ gcloud run deploy video-sync \
   --cpu=2 \
   --min-instances=0 \
   --max-instances=3 \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --no-cpu-throttling \
-  --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=4096,ALLOW_NO_IAP=1 \
+  --set-env-vars="NODE_ENV=production,MEMORY_LIMIT_MB=4096,WS_DOMAIN=agentics.org,IAP_AUDIENCE=${IAP_AUDIENCE:?Set IAP_AUDIENCE before running deploy.sh — get it from scripts/iap-setup.sh output}" \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
