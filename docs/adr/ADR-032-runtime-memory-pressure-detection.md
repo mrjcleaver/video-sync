@@ -13,7 +13,7 @@ Memory limit of 512 MiB exceeded with 524 MiB used.
 
 The application had no awareness this was happening. The container was terminated by the runtime with no application-level log entry, no warning to the operator, and no opportunity to shed load or surface diagnostics. The only evidence was a Cloud Logging system-level `ERROR` entry from `run.googleapis.com/varlog/system`.
 
-ADR-018 originally set `memory: 512Mi`. On 2026-04-08 the limit was increased to **1 GiB** to provide more headroom, but increasing the limit alone does not provide visibility — it merely shifts the OOM boundary. ADR-017 defines the structured logging framework but neither ADR addresses proactive memory monitoring from within the application.
+ADR-018 originally set `memory: 512Mi`. On 2026-04-08 the limit was increased to **1 GiB**, then on 2026-04-22 to **4 GiB** (with `cpu=2` per Cloud Run's requirement) after Kaltura uploads in ADR-037 hit memory pressure from `/tmp` being tmpfs. Increasing the limit alone does not provide visibility — it merely shifts the OOM boundary. ADR-017 defines the structured logging framework but neither ADR addresses proactive memory monitoring from within the application.
 
 ### Why 512 MiB is tight
 

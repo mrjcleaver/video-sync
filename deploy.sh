@@ -71,11 +71,11 @@ gcloud run deploy video-sync \
   --region=us-central1 \
   --concurrency=80 \
   --timeout=3600 \
-  --memory=1Gi \
-  --cpu=1 \
+  --memory=4Gi \
+  --cpu=2 \
   --min-instances=0 \
   --max-instances=3 \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=1024 \
+  --set-env-vars=NODE_ENV=production,MEMORY_LIMIT_MB=4096 \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
