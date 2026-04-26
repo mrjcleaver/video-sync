@@ -470,6 +470,84 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     }
   }
 
+  /**
+   * Phase 1: single-destination publish. Multi-destination (publish to both
+   * YouTube and Kaltura at once) is Phase 2 in ADR-037 — it requires
+   * decoupling the upload step from the mark_published transition.
+   */
+  async function publishToKaltura() {
+    const attrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+
+    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      if (raw) connections = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    const kaltura = connections["Kaltura"]?.credentials;
+    if (!kaltura?.partnerId || !kaltura?.apiKey) {
+      alert("Kaltura not configured. Add Partner ID and Admin Secret in Connections first.");
+      return;
+    }
+
+    setShowPreview(false);
+    setUploading(true);
+    setUploadPhase("Uploading to Kaltura…");
+
+    try {
+      const body: Record<string, unknown> = {
+        partnerId: kaltura.partnerId,
+        adminSecret: kaltura.apiKey,
+        title: attrs.title ?? video.title,
+        description: attrs.description ?? video.description ?? "",
+        tags: attrs.tags ?? video.tags ?? [],
+        downloadUrl: video.download_url,
+      };
+      if (video.download_url?.startsWith("zoom://")) {
+        const z = connections["Zoom"]?.credentials ?? {};
+        body.zoomAccountId = z.accountId;
+        body.zoomClientId = z.clientId;
+        body.zoomClientSecret = z.clientSecret;
+      }
+      if (video.download_url?.startsWith("fireflies://")) {
+        body.firefliesApiKey = connections["Fireflies"]?.credentials?.apiKey;
+      }
+
+      const res = await fetch("/api/kaltura/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `Kaltura upload failed (${res.status})`);
+      }
+      const { entryId, playerUrl } = await res.json() as { entryId: string; playerUrl: string };
+
+      videoStore.mutate(video.id, (r) =>
+        r.mark_published(JSON.stringify({
+          destination_id: entryId,
+          destination_url: playerUrl,
+          destination_platform: "Kaltura",
+        })),
+      );
+      onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}`, { video_id: video.id });
+      onMutated();
+      firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      videoStore.mutate(video.id, (r) =>
+        r.mark_failed(JSON.stringify({ error_message: msg })),
+      );
+      onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — Kaltura: ${msg}`, { video_id: video.id });
+      onMutated();
+      firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
+    } finally {
+      setUploading(false);
+      setUploadPhase("");
+    }
+  }
+
   function abandonVideo() {
     videoStore.mutate(video.id, (r) =>
       r.abandon(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), reason: "Abandoned from dashboard" }))
@@ -1528,9 +1606,13 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
             )}
           </div>
 
-          <div className="form-actions">
+          <div className="form-actions" style={{ flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginRight: 6 }}>Publish to:</span>
             <button className="btn btn-sm btn-green" onClick={publishToYouTube}>
-              Confirm &amp; Upload
+              YouTube
+            </button>
+            <button className="btn btn-sm btn-green" onClick={publishToKaltura} title="Phase 1: single destination per Publish click. Run again to add Kaltura after YouTube.">
+              Kaltura
             </button>
             <button className="btn btn-sm" onClick={() => { setShowPreview(false); setPublishAttrs(null); }}>
               Cancel
@@ -1761,7 +1843,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
               </span>
             ) : (
               <button className="btn btn-sm btn-primary" onClick={preparePublish}>
-                Publish to YouTube
+                Publish…
               </button>
             )}
             <button className="btn btn-sm btn-red" onClick={markFailed} disabled={uploading}>
