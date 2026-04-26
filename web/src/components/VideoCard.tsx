@@ -924,7 +924,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           platform: cand.video.source_platform,
           external_id: cand.video.source_id,
           relation: "SameEvent",
-          linked_by: "Auto-suggestion",
+          linked_by: "Auto",
         })),
       );
       onEvent(`SameEventLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${cand.video.source_platform}/${cand.video.source_id}`, { video_id: video.id });

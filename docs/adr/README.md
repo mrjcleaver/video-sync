@@ -41,6 +41,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-033](ADR-033-multi-origin-dedupe-and-live-streams.md) | Multi-Origin Deduplication, Description Enrichment, and Live-Stream Semantics | Proposed (exploration) |
 | [ADR-034](ADR-034-chat-query-mcp-for-live-broadcasts.md) | MCP Server for Querying Live-Broadcast Chat Messages | Proposed (exploration) |
 | [ADR-035](ADR-035-persistence-topology-and-single-browser-constraint.md) | Persistence Topology and Single-Browser Constraint | Accepted (describes current behaviour; sequences future work) |
+| [ADR-036](ADR-036-google-workspace-authentication.md) | Google Workspace Authentication and Role-Based Access | Proposed |
 
 ## ADR Format
 
