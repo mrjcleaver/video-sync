@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging } from "../../../../lib/serverLogger";
 import { downloadFromSource } from "../../../../lib/sourceDownload";
-import { promises as fs, createReadStream, statSync } from "fs";
+import { promises as fs, openAsBlob, statSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -68,7 +68,7 @@ async function kalturaCall(
 }
 
 async function uploadFileToToken(ks: string, uploadTokenId: string, filePath: string): Promise<void> {
-  const stats = statSync(filePath);
+  const sizeMb = statSync(filePath).size / (1024 * 1024);
   const form = new FormData();
   form.set("ks", ks);
   form.set("uploadTokenId", uploadTokenId);
@@ -76,22 +76,25 @@ async function uploadFileToToken(ks: string, uploadTokenId: string, filePath: st
   form.set("finalChunk", "1");
   form.set("resumeAt", "-1");
 
-  const stream = createReadStream(filePath);
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  const buf = Buffer.concat(chunks);
-  form.set("fileData", new Blob([buf], { type: "video/mp4" }), "video.mp4");
+  // openAsBlob() returns a lazy Blob backed by the file — undici reads it
+  // chunk-by-chunk when serialising the multipart body, so peak memory is
+  // ~64 KB rather than the full file size. Required to avoid OOM (503 from
+  // Cloud Run) on multi-GB livestreams. ADR-037 Phase 2 will move to
+  // Kaltura's chunked upload (resumeAt=N) for resumability.
+  const fileBlob = await openAsBlob(filePath, { type: "video/mp4" });
+  form.set("fileData", fileBlob, "video.mp4");
 
   const res = await fetch(`${KALTURA_BASE}/?service=uploadToken&action=upload&format=1`, {
     method: "POST",
     body: form,
-  });
-  if (!res.ok) throw new Error(`Kaltura upload HTTP ${res.status}: ${await res.text()}`);
+    // duplex: 'half' is required when the body is a stream
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  if (!res.ok) throw new Error(`Kaltura upload HTTP ${res.status} (${sizeMb.toFixed(1)} MB): ${await res.text()}`);
   const data = await res.json() as Record<string, unknown>;
   if ("code" in data) {
     throw new Error(`Kaltura upload error: ${(data as { code: string; message: string }).code} — ${(data as { code: string; message: string }).message}`);
   }
-  void stats;
 }
 
 async function handler(req: NextRequest): Promise<NextResponse> {
