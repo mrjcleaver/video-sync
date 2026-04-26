@@ -13,14 +13,10 @@
  */
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import type { ClientActor as Actor, Role } from "./types/actor";
 
-export type Role = "Admin" | "Publisher" | "Viewer";
-
-export interface Actor {
-  user_id: string;
-  role: Role;
-  email: string;
-}
+export type { Role };
+export type { ClientActor as Actor } from "./types/actor";
 
 interface ActorState {
   actor: Actor | null;
@@ -102,6 +98,24 @@ export function withActor(state: ActorState, extra: Record<string, unknown> = {}
   const actor = actorOrNull(state);
   if (!actor) return null;
   return JSON.stringify({ actor, ...extra });
+}
+
+/**
+ * Throwing variant of `withActor` — terser at the click-handler callsites
+ * that the migration touches. The throw bubbles to the React ErrorBoundary
+ * (page.tsx) rather than silently falling back to the synthetic admin on
+ * an authenticated-but-error state. QE-recommended migration target.
+ *
+ * Usage:
+ *   videoStore.mutate(id, r => r.approve(actorCommand(actorState)));
+ *   videoStore.mutate(id, r => r.skip(actorCommand(actorState, { reason: "…" })));
+ */
+export function actorCommand(state: ActorState, extra: Record<string, unknown> = {}): string {
+  const json = withActor(state, extra);
+  if (json === null) {
+    throw new Error(`Cannot perform action: ${state.error ?? "not authenticated"}`);
+  }
+  return json;
 }
 
 /**

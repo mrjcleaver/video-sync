@@ -19,7 +19,7 @@ import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
 import ShortsPanel from "../components/ShortsPanel";
-import { CurrentActorProvider } from "../lib/useCurrentActor";
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 function timeAgo(iso: string): string {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -55,6 +55,12 @@ export default function Dashboard() {
   const [showConnections, setShowConnections] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
+
+  // ADR-036: derived actor for command authorization. Available for the
+  // Dashboard's own bulk operations (e.g. bulkApprove); per-card mutations
+  // re-call the hook in their own components.
+  const actorState = useCurrentActor();
+  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
 
   useEffect(() => {
     const version = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
@@ -147,14 +153,9 @@ export default function Dashboard() {
 
   function bulkApprove() {
     const inScope = videos.filter((v) => v.status === "InScope");
+    const payload = cmd();
     for (const v of inScope) {
-      videoStore.mutate(v.id, (r) =>
-        r.approve(
-          JSON.stringify({
-            actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-          })
-        )
-      );
+      videoStore.mutate(v.id, (r) => r.approve(payload));
     }
     addEvent(`Bulk approved ${inScope.length} InScope videos`);
     refresh();
@@ -191,8 +192,22 @@ export default function Dashboard() {
 
   return (
     <ErrorBoundary>
-    <CurrentActorProvider>
     <div className="container">
+      {/* ADR-036: surface auth errors instead of silently falling back to admin */}
+      {actorState.error && (
+        <div style={{
+          padding: "10px 14px",
+          background: "rgba(248,113,113,0.1)",
+          border: "1px solid rgba(248,113,113,0.3)",
+          borderRadius: 6,
+          color: "#f87171",
+          fontSize: "0.85rem",
+          marginBottom: 12,
+        }}>
+          <strong>Not authenticated:</strong> {actorState.error}.{" "}
+          Mutating actions (approve, publish, etc.) will fail. Contact your Workspace admin to be added to a video-sync group.
+        </div>
+      )}
       <div className="header">
         <h1>Video Sync</h1>
         <BuildBadge />
@@ -378,7 +393,6 @@ export default function Dashboard() {
 
       {showLogs && <EventLog events={events} forceShow />}
     </div>
-    </CurrentActorProvider>
     </ErrorBoundary>
   );
 }

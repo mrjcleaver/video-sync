@@ -26,7 +26,7 @@ import {
   isSiblingMatchRejected,
 } from "../lib/suggestionRejections";
 import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatcher";
-import { useCurrentActor, actorJsonOrFallback } from "../lib/useCurrentActor";
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -54,12 +54,6 @@ function dateTag(recorded_at: string | null): string {
   return ` (${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })})`;
 }
 
-// Static admin actor for demo purposes
-const ADMIN_ACTOR = JSON.stringify({
-  user_id: "00000000-0000-0000-0000-000000000001",
-  role: "Admin",
-});
-
 interface Props {
   video: VideoRecordJSON;
   /** Full catalog — used for cross-source sibling suggestions (ADR-033). */
@@ -73,9 +67,11 @@ interface Props {
 export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavigateToVideo }: Props) {
   // ADR-036: derive actor from IAP JWT via /api/auth/me. Falls back to the
   // synthetic admin during boot or in dev mode (ALLOW_NO_IAP=1) so single-
-  // user behaviour is preserved until IAP is configured.
-  const { actor: currentActor } = useCurrentActor();
-  const actorJson = () => actorJsonOrFallback(currentActor);
+  // user behaviour is preserved until IAP is configured. Throws on auth
+  // error (state.error) so the click handler surfaces via ErrorBoundary
+  // rather than silently mutating as the synthetic admin.
+  const actorState = useCurrentActor();
+  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
@@ -236,22 +232,15 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     if (loomInfo.description) edits.description = loomInfo.description;
     videoStore.mutate(video.id, (r) =>
       r.update_metadata(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          edits,
-        }),
+        cmd({ edits, }),
       ),
     );
     onEvent(`MetadataApplied: "${video.title}"${dateTag(video.recorded_at)} ← Loom${loomInfo.description ? " (with description)" : ""}`, { video_id: video.id });
     onMutated();
   }
 
-  // ADR-036 canonical migration target. Other call sites still use
-  // ADMIN_ACTOR; switch them over the same way once Phase 1 is reviewed.
   function approve() {
-    videoStore.mutate(video.id, (r) =>
-      r.approve(JSON.stringify({ actor: JSON.parse(actorJson()) }))
-    );
+    videoStore.mutate(video.id, (r) => r.approve(cmd()));
     onEvent(`VideoApproved: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
   }
@@ -259,7 +248,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   function markInScope() {
     videoStore.mutate(video.id, (r) =>
       r.mark_in_scope(
-        JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), rule_id: null })
+        cmd({ rule_id: null })
       )
     );
     onEvent(`VideoScoped: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
@@ -269,10 +258,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   function skip() {
     videoStore.mutate(video.id, (r) =>
       r.skip(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          reason: "Skipped from dashboard",
-        })
+        cmd({ reason: "Skipped from dashboard", })
       )
     );
     onEvent(`VideoSkipped: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
@@ -283,10 +269,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     addExclusion(video.source_platform, video.source_id, "Manual exclusion");
     videoStore.mutate(video.id, (r) =>
       r.skip(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          reason: "Excluded from ingestion",
-        })
+        cmd({ reason: "Excluded from ingestion", })
       )
     );
     onEvent(`VideoExcluded: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
@@ -295,7 +278,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
   function requestPublish() {
     videoStore.mutate(video.id, (r) =>
-      r.request_publish(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
+      r.request_publish(cmd())
     );
     onEvent(`StatusChanged: "${video.title}"${dateTag(video.recorded_at)} -> Publishing`, { video_id: video.id });
     onMutated();
@@ -558,7 +541,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
   function abandonVideo() {
     videoStore.mutate(video.id, (r) =>
-      r.abandon(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), reason: "Abandoned from dashboard" }))
+      r.abandon(cmd({ reason: "Abandoned from dashboard" }))
     );
     onEvent(`VideoAbandoned: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
@@ -566,7 +549,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
   function markToRetry() {
     videoStore.mutate(video.id, (r) =>
-      r.mark_to_retry(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), reason: "Retry requested from dashboard" }))
+      r.mark_to_retry(cmd({ reason: "Retry requested from dashboard" }))
     );
     onEvent(`VideoMarkedToRetry: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     onMutated();
@@ -666,7 +649,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       // Path: any-non-terminal → approve → request_publish → mark_published
       if (status !== "Approved" && status !== "Publishing" && status !== "Published") {
         videoStore.mutate(video.id, r =>
-          r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) })),
+          r.approve(cmd()),
         );
       }
       const rec = videoStore.get(video.id);
@@ -674,17 +657,14 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         const cur = JSON.parse(rec.to_json()).status;
         if (cur === "Approved") {
           videoStore.mutate(video.id, r =>
-            r.request_publish(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) })),
+            r.request_publish(cmd()),
           );
         }
       }
       videoStore.mutate(video.id, r =>
-        r.mark_published(JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          destination_id: ytId,
+        r.mark_published(cmd({ destination_id: ytId,
           destination_url: videoUrl,
-          destination_platform: "YouTube",
-        })),
+          destination_platform: "YouTube", })),
       );
 
       onEvent(`VideoRecovered: "${video.title}"${dateTag(video.recorded_at)} -> ${videoUrl}`, { video_id: video.id });
@@ -807,12 +787,9 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         try {
           videoStore.mutate(video.id, (r) =>
             r.update_location_status(
-              JSON.stringify({
-                actor: JSON.parse(ADMIN_ACTOR),
-                platform: "YouTube",
+              cmd({ platform: "YouTube",
                 external_id: loc.external_id,
-                status: data.status,
-              })
+                status: data.status, })
             )
           );
         } catch { /* ignore */ }
@@ -829,12 +806,9 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       try {
         videoStore.mutate(video.id, (r) =>
           r.update_location_status(
-            JSON.stringify({
-              actor: JSON.parse(ADMIN_ACTOR),
-              platform: "YouTube",
+            cmd({ platform: "YouTube",
               external_id: loc.external_id,
-              status: data.status,
-            })
+              status: data.status, })
           )
         );
       } catch (wasmErr) {
@@ -865,13 +839,10 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     if (!locExternalId.trim()) return;
     videoStore.mutate(video.id, (r) =>
       r.add_location(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: locPlatform,
+        cmd({ platform: locPlatform,
           external_id: locExternalId.trim(),
           external_url: locExternalUrl.trim() || null,
-          role: locRole,
-        })
+          role: locRole, })
       )
     );
     onEvent(`LocationAdded: "${video.title}"${dateTag(video.recorded_at)} — ${locPlatform}/${locExternalId}`, { video_id: video.id });
@@ -884,11 +855,8 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   function removeLocation(loc: PlatformLocationJSON) {
     videoStore.mutate(video.id, (r) =>
       r.remove_location(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: loc.platform,
-          external_id: loc.external_id,
-        })
+        cmd({ platform: loc.platform,
+          external_id: loc.external_id, })
       )
     );
     onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`, { video_id: video.id });
@@ -899,10 +867,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     if (!noteText.trim()) return;
     videoStore.mutate(video.id, (r) =>
       r.add_note(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          text: noteText.trim(),
-        })
+        cmd({ text: noteText.trim(), })
       )
     );
     onEvent(`NoteAdded: "${video.title}"${dateTag(video.recorded_at)} — "${noteText.trim()}"`, { video_id: video.id });
@@ -914,13 +879,10 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     if (!linkExternalId.trim()) return;
     videoStore.mutate(video.id, (r) =>
       r.link_upstream(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: linkPlatform,
+        cmd({ platform: linkPlatform,
           external_id: linkExternalId.trim(),
           relation: linkRelation,
-          linked_by: "Manual",
-        })
+          linked_by: "Manual", })
       )
     );
     onEvent(`UpstreamLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${linkPlatform}/${linkExternalId.trim()}`, { video_id: video.id });
@@ -932,12 +894,9 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   function removeUpstreamLink(link: UpstreamLinkJSON, reject = false) {
     videoStore.mutate(video.id, (r) =>
       r.unlink_upstream(
-        JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: link.platform,
+        cmd({ platform: link.platform,
           external_id: link.external_id,
-          reject,
-        })
+          reject, })
       )
     );
     onEvent(`UpstreamUnlinked: "${video.title}"${dateTag(video.recorded_at)} <- ${link.platform}/${link.external_id}${reject ? " (rejected)" : ""}`, { video_id: video.id });
@@ -1005,13 +964,10 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     // (The two records represent parallel captures of the same event.)
     try {
       videoStore.mutate(video.id, (r) =>
-        r.link_upstream(JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: cand.video.source_platform,
+        r.link_upstream(cmd({ platform: cand.video.source_platform,
           external_id: cand.video.source_id,
           relation: "SameEvent",
-          linked_by: "Auto",
-        })),
+          linked_by: "Auto", })),
       );
       onEvent(`SameEventLinked: "${video.title}"${dateTag(video.recorded_at)} <- ${cand.video.source_platform}/${cand.video.source_id}`, { video_id: video.id });
       onMutated();

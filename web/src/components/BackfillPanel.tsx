@@ -17,6 +17,7 @@ import BackfillCalendar from "./BackfillCalendar";
 import BackfillOverview from "./BackfillOverview";
 import HelpTip from "./HelpTip";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
@@ -77,6 +78,8 @@ function newProfile(): BackfillProfile {
 }
 
 export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateToVideo }: Props) {
+  const actorState = useCurrentActor();
+  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [profiles, setProfilesState] = useState<BackfillProfile[]>([]);
   const [queue, setQueueState] = useState(loadQueue());
   const [clientState, setClientStateValue] = useState(loadClientState());
@@ -180,11 +183,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
 
     // Mark as publishing
     try {
-      videoStore.mutate(videoId, r =>
-        r.request_publish(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-        }))
-      );
+      videoStore.mutate(videoId, r => r.request_publish(cmd()));
       onMutated();
       onNavigateToVideo?.(videoId, "publish");
     } catch { /* may already be in Publishing */ }
@@ -227,14 +226,11 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
 
       const { videoId: ytId, videoUrl } = await res.json() as { videoId: string; videoUrl: string };
 
-      videoStore.mutate(videoId, r =>
-        r.mark_published(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-          destination_id: ytId,
-          destination_url: videoUrl,
-          platform: "YouTube",
-        }))
-      );
+      videoStore.mutate(videoId, r => r.mark_published(cmd({
+        destination_id: ytId,
+        destination_url: videoUrl,
+        platform: "YouTube",
+      })));
       // Cache privacy — we know what we uploaded with
       setPrivacy(ytId, normalisePrivacy(attrs.privacy_status ?? profile.default_privacy));
       onMutated();
@@ -260,12 +256,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
       onEvent(`Backfill: published "${video.title}"${dateTag(video.recorded_at)} → ${videoUrl}`, { video_id: videoId });
       setStatus(`Published "${video.title}"`);
     } catch (err) {
-      videoStore.mutate(videoId, r =>
-        r.mark_failed(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-          reason: String(err),
-        }))
-      );
+      videoStore.mutate(videoId, r => r.mark_failed(cmd({ reason: String(err) })));
       onMutated();
       markQueueEntryFailed(videoId, 1);
       setQueueState(loadQueue());

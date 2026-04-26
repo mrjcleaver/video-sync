@@ -24,15 +24,8 @@
 
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createHash } from "crypto";
-
-export type Role = "Admin" | "Publisher" | "Viewer";
-
-export interface Actor {
-  user_id: string;   // UUID v5 derived from sub
-  role: Role;
-  email: string;
-  sub: string;       // raw Google subject
-}
+import type { Actor, Role } from "./types/actor";
+export type { Actor, Role } from "./types/actor";
 
 const IAP_KEYS_URL = new URL("https://www.gstatic.com/iap/verify/public_key-jwk");
 const ALLOW_NO_IAP = process.env.ALLOW_NO_IAP === "1";
@@ -69,14 +62,25 @@ const GROUP_TTL_MS = 5 * 60 * 1000;
 /**
  * Derive a stable UUID v5 from a Google `sub` claim. Idempotent — same
  * sub always produces the same UUID — and avoids leaking the raw sub into
- * the WASM aggregate.
+ * the WASM aggregate. Uses a project-specific namespace UUID per RFC 4122
+ * §4.3 (QE finding sec#6: ensures off-the-shelf v5 generators reproduce
+ * the same UUID for ops/recovery scenarios).
  */
+const NAMESPACE_UUID = "f4b9e6d2-1c3a-4b2e-8c5d-7f8e9a0b1c2d"; // arbitrary, fixed
 function uuidFromSub(sub: string): string {
-  const hash = createHash("sha1").update(`video-sync:${sub}`).digest("hex");
-  // Set version 5 (name-based, SHA-1) and RFC 4122 variant
-  const v = "5" + hash.slice(13, 16);
-  const r = ((parseInt(hash.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${v}-${r}${hash.slice(18, 20)}-${hash.slice(20, 32)}`;
+  // RFC 4122: SHA-1 hash of (namespace bytes || name bytes), then set
+  // version (5) and variant (RFC 4122) bits.
+  const nsHex = NAMESPACE_UUID.replace(/-/g, "");
+  const nsBytes = Buffer.from(nsHex, "hex");
+  const nameBytes = Buffer.from(sub, "utf8");
+  const input = Buffer.concat([nsBytes, nameBytes]);
+  const hash = createHash("sha1").update(input).digest();
+  // Set version 5 (high nibble of byte 6 = 0x5)
+  hash[6] = (hash[6] & 0x0f) | 0x50;
+  // Set variant (high two bits of byte 8 = 0b10)
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const h = hash.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
 /**

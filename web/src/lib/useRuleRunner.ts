@@ -6,11 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoStore } from "./store";
 import { loadRules, runRules, type RuleAction } from "./rules";
-
-const ADMIN_ACTOR = JSON.stringify({
-  user_id: "00000000-0000-0000-0000-000000000001",
-  role: "Admin",
-});
+import { useCurrentActor, actorCommand } from "./useCurrentActor";
 
 interface UseRuleRunnerOpts {
   intervalMs?: number;
@@ -27,6 +23,11 @@ interface UseRuleRunnerResult {
 
 export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult {
   const { intervalMs = 60_000, onEvent, onMutated } = opts;
+  const actorState = useCurrentActor();
+  const cmd = useCallback(
+    (extra?: Record<string, unknown>) => actorCommand(actorState, extra),
+    [actorState],
+  );
   const [isRunning, setIsRunning] = useState(false);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [matchCount, setMatchCount] = useState(0);
@@ -54,26 +55,13 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
         if (!record) continue;
 
         if (action === "mark_in_scope") {
-          videoStore.mutate(videoId, (r) =>
-            r.mark_in_scope(
-              JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR), rule_id: ruleId })
-            )
-          );
+          videoStore.mutate(videoId, (r) => r.mark_in_scope(cmd({ rule_id: ruleId })));
           onEvent?.(`Rule "${ruleId}" scoped: video ${videoId}`, { video_id: videoId });
         } else if (action === "auto_approve") {
-          videoStore.mutate(videoId, (r) =>
-            r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
-          );
+          videoStore.mutate(videoId, (r) => r.approve(cmd()));
           onEvent?.(`Rule "${ruleId}" auto-approved: video ${videoId}`, { video_id: videoId });
         } else if (action === "auto_skip") {
-          videoStore.mutate(videoId, (r) =>
-            r.skip(
-              JSON.stringify({
-                actor: JSON.parse(ADMIN_ACTOR),
-                reason: `Auto-skipped by rule ${ruleId}`,
-              })
-            )
-          );
+          videoStore.mutate(videoId, (r) => r.skip(cmd({ reason: `Auto-skipped by rule ${ruleId}` })));
           onEvent?.(`Rule "${ruleId}" auto-skipped: video ${videoId}`, { video_id: videoId });
         }
         applied++;
@@ -86,7 +74,7 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
     setMatchCount(applied);
     setLastRun(new Date());
     setIsRunning(false);
-  }, [onEvent, onMutated]);
+  }, [onEvent, onMutated, cmd]);
 
   // Set up interval, pause when hidden
   useEffect(() => {

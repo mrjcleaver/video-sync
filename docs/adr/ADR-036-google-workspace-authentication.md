@@ -232,23 +232,27 @@ Three parallel review agents — security, code-review, test-coverage — audite
 | **`iap-setup.sh` does not enable `cloudidentity.googleapis.com`** — first-run fails at `gcloud identity groups create` | rev#10 | Added to the API-enable list. |
 | **`DEV_ACTOR.email = "dev@localhost"`** would pollute prod-shaped log queries | rev#14 | Changed to `dev-actor@invalid` (RFC-6761 reserved TLD). |
 
-### Outstanding (tracked, not fixed in this commit)
+### Follow-up commit (2026-04-22) — addressed remaining gaps
 
-These are real findings that need follow-up commits:
+The ADMIN_ACTOR migration, error-surfacing UI, type dedup, RFC-4122 namespace fix, flush-cache endpoint, and a Vitest test suite all landed shortly after. Status:
+
+| Finding | Source | Status |
+|---------|--------|--------|
+| 30 ADMIN_ACTOR call sites unmigrated | rev#1/#2/#3 | **Fixed.** All 31 call sites (incl. the page.tsx bulk-approve and BackfillPanel's 3 inline literals) now use the `actorCommand(state, extra)` helper. ADMIN_ACTOR consts removed from VideoCard, ShortsPanel, useRuleRunner. `CurrentActorProvider` lifted to `app/providers.tsx` so Dashboard itself can call the hook. |
+| `useCurrentActor` doesn't surface error to UI | rev#6 | **Fixed.** Red banner on the Dashboard when `actorState.error` is set, telling the user to contact their Workspace admin. |
+| Type duplication | rev#8 | **Fixed.** `lib/types/actor.ts` is the single source; both auth.ts and useCurrentActor.tsx import from it. `ClientActor = Omit<Actor, "sub">` makes the relationship explicit. |
+| UUIDv5 namespace not RFC-4122 | sec#6 | **Fixed.** Uses a fixed namespace UUID + RFC-4122 v5 algorithm (SHA-1 of namespace bytes ‖ name bytes, version+variant nibbles set). Reproducible by `uuidv5(sub, NAMESPACE_UUID)` in any conformant library. |
+| `flushGroupCache()` no endpoint | sec#7/rev#11 | **Fixed.** `POST /api/auth/flush-cache` requires authenticated Admin role; 401 unauth, 403 non-admin, 200 on success. |
+| Test coverage = 0 | tester | **Started.** Vitest + jsdom + @testing-library/react installed. Initial spec at `web/tests/auth.test.ts` covers ALLOW_NO_IAP dev-mode, the two-flag misconfiguration guard, no-JWT-header rejection, and UUID determinism. 4 tests passing. The remaining ~16 cases from the QE matrix (JWT audience, expiry, group cache TTL, role precedence, hook lifecycle, VideoCard.approve roundtrip) are tracked as next-up. |
+
+### Outstanding (still real, tracked)
 
 | Finding | Source | Plan |
 |---------|--------|------|
-| **Production deploy still has `--allow-unauthenticated` AND `ALLOW_NO_IAP=1`** | sec#1 | Acceptable for v0 because the catalog is browser-local (no server-side state to compromise) — there's nothing the synthetic Admin actor lets a random visitor do that they can't do anyway with the empty browser-local catalog. Once Phase 2 of ADR-035 (catalog on server) ships, this becomes critical and `iap-setup.sh` MUST run before that deploy. |
-| **30 ADMIN_ACTOR call sites unmigrated** (20 in VideoCard, 6 in ShortsPanel, 4 in useRuleRunner; BackfillPanel inlines the actor object directly) | rev#1, rev#2, rev#3 | Phase 1.5 — mechanical migration to `withActor()`. The new helper is designed to compose with sibling fields (`{ actor, rule_id, reason }`), which the original `actorJsonOrFallback` couldn't. Out of scope for this commit because each callsite needs its surrounding shape inspected. |
-| **Role mapping is env-var-only — anyone with `roles/run.admin` can self-promote** | sec#4 | Phase 2 swaps to Cloud Identity Groups API as the ADR specifies. Until then, restrict `roles/run.admin` to a tighter group and audit env-var changes via Cloud Logging. |
-| **`useCurrentActor` doesn't surface error to UI** — silent 401 | rev#6 | When the migration completes, add a top-level "Not authorised" banner that blocks mutating UI when `state.error` is set. |
-| **`flushGroupCache()` exported but no `/api/auth/flush-cache` endpoint** | sec#7, rev#11 | Phase 3 audit hardening. |
-| **UUIDv5 namespace not RFC-4122 format** — works internally but doesn't interoperate with off-the-shelf v5 generators | sec#6 | Pin a real namespace UUID once we need ops-side reproducibility (probably never; tracked anyway). |
-| **Type duplication** between `auth.ts` and `useCurrentActor.tsx` | rev#8 | Move to `lib/types/actor.ts`; trivial follow-up. |
-| **Test coverage = 0** | tester | Adopt Vitest, write the top 5 critical tests (verifyIapJwt audience, no-JWT-header path, role precedence, cache TTL, end-to-end VideoCard.approve actor JSON). Manual QE script in the tester report covers the gap until automated tests land. |
+| **Production deploy still has `--allow-unauthenticated` AND `ALLOW_NO_IAP=1`** | sec#1 | Acceptable while catalog is browser-local; **must** run `iap-setup.sh` before ADR-035 Phase 2 (catalog-on-server) ships. |
+| **Role mapping env-var-only** | sec#4 | Phase 2 swaps to Cloud Identity Groups API. |
+| Remaining 16 of 20 QE-recommended test cases | tester | Next-up commits as the surface stabilises. |
 
 ### Outcome
 
-Phase 1 ships with the critical and high-severity findings fixed in the same window the implementation landed. The medium-severity test infrastructure and low-severity polish items are tracked. The largest open item — migrating the remaining ADMIN_ACTOR sites — is gated on the `withActor()` helper which is now in place; it's mechanical, just hasn't been done yet.
-
-The IAP-disabled production state is documented as acceptable for the current "browser-local catalog" architecture; ADR-035 Phase 2 (catalog to server) is the cutover point that requires `iap-setup.sh` to run first.
+Phase 1 of ADR-036 is **functionally complete** with one structural caveat: the production service still runs without IAP enforcement, by design, until ADR-035 Phase 2 makes it security-critical. Everything required to flip the switch (auth lib, JWT verification, role-based actor derivation, error UI, audit-friendly flush endpoint, test scaffolding) is now in place. The cutover is a deploy-config change once `iap-setup.sh` runs successfully.
