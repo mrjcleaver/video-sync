@@ -133,18 +133,22 @@ async function lookupRole(email: string): Promise<Role | null> {
   const cached = groupCache.get(email);
   if (cached && cached.expires > Date.now()) return highestRole(cached.roles);
 
-  let roles: Role[] = [];
+  // Three-state outcome from the Cloud Identity attempt:
+  //   roles !== null → API authoritative (use result, even if empty = deny)
+  //   roles === null → API not attempted OR threw — fall through to env vars
+  let roles: Role[] | null = null;
   const wsDomain = process.env.WS_DOMAIN;
   if (wsDomain) {
     try {
       roles = await rolesFromCloudIdentity(email, wsDomain);
     } catch (err) {
-      // Best effort — fall through to env var allowlist
       console.warn(`Cloud Identity lookup failed for ${email}: ${err instanceof Error ? err.message : err}`);
+      // roles stays null — caller falls through to env-var allowlist
     }
   }
 
-  if (roles.length === 0) {
+  if (roles === null) {
+    roles = [];
     const keyAdmins = (process.env.KEY_ADMIN_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
     const operators = (process.env.OPERATOR_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
     const viewers = (process.env.VIEWER_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);

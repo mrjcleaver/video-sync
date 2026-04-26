@@ -19,23 +19,27 @@
 #   - roles/iam.serviceAccountUser
 #
 # ─── Auth (ADR-036) ──────────────────────────────────────────────────────
-# This deploy now expects IAP to be in front of the service. Roles are
-# resolved by querying Workspace group membership via the Cloud Identity
-# API (using the Cloud Run runtime SA). Three env vars drive this:
+# This deploy expects IAP to be in front of the service. Two role-
+# assignment modes are supported:
 #
-#   IAP_AUDIENCE=/projects/<num>/global/backendServices/<id>
-#       — printed by scripts/iap-setup.sh on success. Required for
-#         JWT signature + audience verification.
-#   WS_DOMAIN=agentics.org
-#       — Cloud Identity searches groups/{role}@{WS_DOMAIN}. Optional
-#         only if you're using KEY_ADMIN_EMAILS env-var fallback.
-#   IAP_AUDIENCE must NOT be set together with ALLOW_NO_IAP=1 — the
-#       app refuses to boot if it sees both (sec#2 misconfiguration guard).
+# Mode A — Cloud Identity (preferred, but needs Workspace permission)
+#   Set WS_DOMAIN=agentics.org. Roles come from group membership lookups
+#   via Cloud Identity searchTransitiveGroups. Requires the Cloud Run
+#   runtime SA to be a Manager on each of the three groups (configured
+#   in Workspace Admin > Groups).
 #
-# The Cloud Run runtime SA must be allowed to query group membership.
-# Easiest path: in Workspace Admin > Groups, add the runtime SA's email
-# (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`) as a
-# Manager (or Member with view scope) on each of the three groups.
+# Mode B — env-var allowlist (transitional fallback while waiting on
+#          Workspace permission)
+#   Leave WS_DOMAIN UNSET. Set the email allowlists below. The auth
+#   layer will skip the Cloud Identity call and consult these directly.
+#   Email here is for ROLE assignment only — IAP itself still gates
+#   access via group membership (set up by scripts/iap-setup.sh).
+#
+# Switch from Mode B to Mode A: add WS_DOMAIN, remove the *_EMAILS vars.
+#
+# IAP_AUDIENCE is required in both modes. Get it from iap-setup.sh.
+# IAP_AUDIENCE must NOT be set together with ALLOW_NO_IAP=1 — the
+# app refuses to boot if it sees both (sec#2 misconfiguration guard).
 
 # ─── Persistence note ────────────────────────────────────────────────────
 # /app/data is CURRENTLY ON THE EPHEMERAL FILESYSTEM. Files in data/ are
@@ -96,5 +100,5 @@ gcloud run deploy video-sync \
   --max-instances=3 \
   --no-allow-unauthenticated \
   --no-cpu-throttling \
-  --set-env-vars="NODE_ENV=production,MEMORY_LIMIT_MB=4096,WS_DOMAIN=agentics.org,IAP_AUDIENCE=${IAP_AUDIENCE:?Set IAP_AUDIENCE before running deploy.sh — get it from scripts/iap-setup.sh output}" \
+  --set-env-vars="NODE_ENV=production,MEMORY_LIMIT_MB=4096,IAP_AUDIENCE=${IAP_AUDIENCE:?Set IAP_AUDIENCE before running deploy.sh — get it from scripts/iap-setup.sh output},KEY_ADMIN_EMAILS=${KEY_ADMIN_EMAILS:-martin.cleaver@agentics.org},OPERATOR_EMAILS=${OPERATOR_EMAILS:-martin.cleaver@agentics.org},VIEWER_EMAILS=${VIEWER_EMAILS:-martin.cleaver@agentics.org}${WS_DOMAIN:+,WS_DOMAIN=${WS_DOMAIN}}" \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
