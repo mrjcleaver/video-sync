@@ -31,11 +31,16 @@ echo "==> Service: ${SERVICE}"
 echo "==> Domain:  ${DOMAIN}"
 echo
 
-# 1. Enable IAP API
-echo "==> Enabling IAP API"
-gcloud services enable iap.googleapis.com --project="${PROJECT_ID}" || {
+# 1. Enable IAP + Cloud Identity APIs
+# Cloud Identity is required for `gcloud identity groups create` below
+# (QE finding rev#10).
+echo "==> Enabling IAP + Cloud Identity APIs"
+gcloud services enable \
+  iap.googleapis.com \
+  cloudidentity.googleapis.com \
+  --project="${PROJECT_ID}" || {
   echo "  (skipped — likely missing serviceusage.serviceUsageAdmin)"
-  echo "  Verify: gcloud services list --enabled --project=${PROJECT_ID} | grep iap"
+  echo "  Verify: gcloud services list --enabled --project=${PROJECT_ID} | grep -E 'iap|cloudidentity'"
 }
 
 # 2. Create Workspace groups via Cloud Identity API

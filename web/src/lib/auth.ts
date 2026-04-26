@@ -37,14 +37,27 @@ export interface Actor {
 const IAP_KEYS_URL = new URL("https://www.gstatic.com/iap/verify/public_key-jwk");
 const ALLOW_NO_IAP = process.env.ALLOW_NO_IAP === "1";
 
+// Boot-time misconfiguration guard (QE finding sec#2 / rev#5):
+// having both flags set means a partial cutover has left auth disabled
+// while the operator thinks IAP is active. Refuse to start.
+if (ALLOW_NO_IAP && process.env.IAP_AUDIENCE) {
+  throw new Error(
+    "Auth misconfiguration: ALLOW_NO_IAP=1 and IAP_AUDIENCE are both set. " +
+    "Choose one — either remove ALLOW_NO_IAP=1 to enable IAP enforcement, " +
+    "or unset IAP_AUDIENCE to confirm dev mode is intentional.",
+  );
+}
+
 // Synthetic admin actor for dev / pre-IAP single-user mode.
 // Matches the legacy ADMIN_ACTOR UUID so existing event-sourced data still
 // resolves to the same logical actor when IAP is later enabled and
 // martin.cleaver@agentics.org becomes the bootstrap KeyAdmin.
+// Email uses RFC-6761 reserved .invalid TLD so dev events never match a
+// real audit log query (QE finding rev#14).
 const DEV_ACTOR: Actor = {
   user_id: "00000000-0000-0000-0000-000000000001",
   role: "Admin",
-  email: "dev@localhost",
+  email: "dev-actor@invalid",
   sub: "dev",
 };
 
@@ -83,21 +96,26 @@ async function verifyIapJwt(token: string): Promise<{ email: string; sub: string
     issuer: "https://cloud.google.com/iap",
     audience,
   });
-  const email = typeof payload.email === "string" ? payload.email : "";
-  const sub = typeof payload.sub === "string" ? payload.sub : "";
-  if (!email || !sub) throw new Error("IAP JWT missing email or sub claim");
-  return { email, sub };
+  if (typeof payload.email !== "string" || !payload.email) {
+    throw new Error("IAP JWT missing email claim");
+  }
+  if (typeof payload.sub !== "string" || !payload.sub) {
+    throw new Error("IAP JWT missing sub claim");
+  }
+  return { email: payload.email, sub: payload.sub };
 }
 
 /**
  * Look up the user's Video Sync roles via Cloud Identity Groups API.
- * Returns the highest applicable role.
+ * Returns the highest applicable role, or `null` if the user is in none
+ * of the three groups — callers must treat null as "deny" (QE finding
+ * sec#8 + rev#9: silent fallback to Viewer was wrong).
  *
  * For Phase 1 with no Workspace groups configured, this is gated by
  * KEY_ADMIN_EMAILS / OPERATOR_EMAILS / VIEWER_EMAILS env vars (comma-
  * separated). Phase 2 swaps to the Cloud Identity API call.
  */
-async function lookupRole(email: string): Promise<Role> {
+async function lookupRole(email: string): Promise<Role | null> {
   const cached = groupCache.get(email);
   if (cached && cached.expires > Date.now()) return highestRole(cached.roles);
 
@@ -114,15 +132,11 @@ async function lookupRole(email: string): Promise<Role> {
   return highestRole(roles);
 }
 
-function highestRole(roles: Role[]): Role {
+function highestRole(roles: Role[]): Role | null {
   if (roles.includes("Admin")) return "Admin";
   if (roles.includes("Publisher")) return "Publisher";
   if (roles.includes("Viewer")) return "Viewer";
-  // Member of no group: deny by mapping to Viewer with empty user_id later.
-  // Calling code should treat unknown users as denied, not as Viewers — but
-  // throwing here would leak through as a 500. Returning Viewer keeps the
-  // type honest; the caller decides whether to reject.
-  return "Viewer";
+  return null;  // user is in no group — deny
 }
 
 /**
@@ -140,6 +154,9 @@ export async function getActor(req: Request): Promise<Actor> {
 
   const { email, sub } = await verifyIapJwt(jwt);
   const role = await lookupRole(email);
+  if (role === null) {
+    throw new Error(`Access denied: ${email} is not a member of any video-sync group. Contact your Workspace admin to request access.`);
+  }
   return {
     user_id: uuidFromSub(sub),
     role,

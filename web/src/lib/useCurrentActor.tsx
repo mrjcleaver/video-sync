@@ -69,9 +69,48 @@ export function useCurrentActor(): ActorState {
 }
 
 /**
- * Returns a JSON string suitable for `actor: ...` in WASM commands.
- * Falls back to the synthetic admin actor when the real one isn't loaded
- * yet (boot, network error). Migration target for ADMIN_ACTOR sites.
+ * Returns the actor object suitable for embedding in a WASM command JSON.
+ *
+ * - `state.actor` if loaded → real authenticated actor
+ * - `FALLBACK_ACTOR` while `state.loading` → keeps single-user dev mode
+ *   responsive; safe because the WASM aggregate's authorization is
+ *   re-checked server-side once Phase 2 lands
+ * - `null` on `state.error` (e.g. /api/auth/me returned 401) → callers
+ *   MUST refuse to run the command rather than silently fall back to
+ *   admin (QE finding sec#3 + rev#5)
+ *
+ * Use `withActor(state, extra)` for the common pattern of merging the
+ * actor into the rest of the command payload.
+ */
+export function actorOrNull(state: ActorState): Actor | null {
+  if (state.actor) return state.actor;
+  if (state.loading) return FALLBACK_ACTOR;
+  return null;  // error state — caller must check
+}
+
+/**
+ * Build the JSON string for a WASM command payload. Returns null on
+ * auth-error; callers should bail out with an event-log entry instead
+ * of mutating with the fallback admin.
+ *
+ * Usage:
+ *   const payload = withActor(actorState, { reason: "..." });
+ *   if (!payload) { onEvent("Cannot mutate — auth not ready"); return; }
+ *   videoStore.mutate(id, r => r.skip(payload));
+ */
+export function withActor(state: ActorState, extra: Record<string, unknown> = {}): string | null {
+  const actor = actorOrNull(state);
+  if (!actor) return null;
+  return JSON.stringify({ actor, ...extra });
+}
+
+/**
+ * Legacy compatibility shim for the canonical migrated callsite.
+ * Always returns a valid JSON string (falls back to admin in error
+ * paths, matching the pre-ADR-036 behaviour). Use `withActor` for new
+ * code so error paths block rather than silently elevate.
+ *
+ * @deprecated Use `withActor` so 401s don't silently elevate.
  */
 export function actorJsonOrFallback(actor: Actor | null): string {
   return JSON.stringify(actor ?? FALLBACK_ACTOR);
