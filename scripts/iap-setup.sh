@@ -59,8 +59,8 @@ for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; d
   fi
 done
 
-# 3. Bind groups to Cloud Run Invoker so anyone in any of the three can
-#    reach the service. In-app role check distinguishes capabilities.
+# 3a. Bind groups to Cloud Run Invoker so anyone in any of the three
+#     can have the IAP-fronted request reach the underlying service.
 echo "==> Granting Cloud Run Invoker to the three groups"
 for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; do
   gcloud run services add-iam-policy-binding "${SERVICE}" \
@@ -68,7 +68,25 @@ for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; d
     --project="${PROJECT_ID}" \
     --member="group:${group_email}" \
     --role="roles/run.invoker" \
-    || echo "  !! grant for ${group_email} failed"
+    || echo "  !! Cloud Run Invoker grant for ${group_email} failed"
+done
+
+# 3b. Bind groups to the IAP web resource so IAP itself lets them
+#     through the sign-in wall. WITHOUT this step, IAP denies with
+#     "You don't have access" even though Cloud Run's IAM policy
+#     would accept the request — IAP has its own access policy that
+#     gates BEFORE Cloud Run is even reached. Two policies, both
+#     needed.
+echo "==> Granting IAP-Secured Web App User to the three groups"
+for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; do
+  gcloud iap web add-iam-policy-binding \
+    --resource-type=cloud-run \
+    --service="${SERVICE}" \
+    --region="${REGION}" \
+    --project="${PROJECT_ID}" \
+    --member="group:${group_email}" \
+    --role="roles/iap.httpsResourceAccessor" \
+    || echo "  !! IAP grant for ${group_email} failed"
 done
 
 # 4. Enable IAP on the Cloud Run service. This is the step that
