@@ -77,16 +77,37 @@ done
 #     would accept the request — IAP has its own access policy that
 #     gates BEFORE Cloud Run is even reached. Two policies, both
 #     needed.
+#
+# Modifying IAP IAM requires roles/iap.admin which is broad. If the
+# operator running this script doesn't have it, the bindings can be
+# applied by anyone who does (one-time admin task). We probe the
+# current policy first and skip the grant if all three groups are
+# already bound — so re-runs by non-iap-admin operators don't show
+# scary PERMISSION_DENIED errors when there's nothing to do.
 echo "==> Granting IAP-Secured Web App User to the three groups"
+EXISTING_IAP_POLICY=$(gcloud iap web get-iam-policy \
+  --resource-type=cloud-run \
+  --service="${SERVICE}" \
+  --region="${REGION}" \
+  --project="${PROJECT_ID}" \
+  --format=json 2>/dev/null || echo "{}")
 for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; do
+  if echo "${EXISTING_IAP_POLICY}" | grep -q "group:${group_email}"; then
+    echo "  ${group_email} already bound to roles/iap.httpsResourceAccessor"
+    continue
+  fi
   gcloud iap web add-iam-policy-binding \
     --resource-type=cloud-run \
     --service="${SERVICE}" \
     --region="${REGION}" \
     --project="${PROJECT_ID}" \
     --member="group:${group_email}" \
-    --role="roles/iap.httpsResourceAccessor" \
-    || echo "  !! IAP grant for ${group_email} failed"
+    --role="roles/iap.httpsResourceAccessor" 2>/dev/null \
+    || {
+      echo "  !! IAP grant for ${group_email} failed (need roles/iap.admin)"
+      echo "     ask whoever has IAP admin to run the gcloud iap web add-iam-policy-binding"
+      echo "     command for this member, OR see Option 1 in the script comments."
+    }
 done
 
 # 4. Enable IAP on the Cloud Run service. This is the step that
