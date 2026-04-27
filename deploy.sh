@@ -89,17 +89,16 @@ docker build \
 docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 
-# Auth mode is selected by whether IAP_AUDIENCE is exported.
-#   IAP mode   = IAP_AUDIENCE set    → --no-allow-unauthenticated, IAP-enforced
-#   Open mode  = IAP_AUDIENCE unset  → --allow-unauthenticated, ALLOW_NO_IAP=1
-# The dev-friendly deploy-without-iap.sh wrapper sets the *_EMAILS vars
-# but leaves IAP_AUDIENCE unset, landing here in Open mode. When the
-# operator gets the Workspace permission for Cloud Identity (or just
-# wants to flip to env-var role mapping behind IAP), they export
-# IAP_AUDIENCE and re-run deploy.sh.
+# Auth mode is selected by IAP_AUDIENCE — non-empty means IAP mode.
+# Defaults to this deployment's actual audience so a bare `bash deploy.sh`
+# just works in IAP mode. To force Open mode (dev / emergency), set
+# IAP_AUDIENCE to the empty string explicitly:
+#   IAP_AUDIENCE= bash deploy.sh
+# (the deploy-without-iap.sh wrapper does this).
+IAP_AUDIENCE="${IAP_AUDIENCE-/projects/667037737667/locations/us-central1/services/video-sync}"
 
 BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=4096"
-if [[ -n "${IAP_AUDIENCE:-}" ]]; then
+if [[ -n "${IAP_AUDIENCE}" ]]; then
   AUTH_FLAG="--no-allow-unauthenticated"
   AUTH_ENV="IAP_AUDIENCE=${IAP_AUDIENCE}"
   # Mode A by default: Cloud Identity Groups API drives role lookup using
