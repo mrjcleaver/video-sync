@@ -95,12 +95,18 @@ gcloud beta run services update "${SERVICE}" \
     exit 1
   }
 
-# 5. Switch the service to require auth (after IAP is in front)
-echo "==> Removing --allow-unauthenticated"
-gcloud run services update "${SERVICE}" \
+# 5. Remove the public-access IAM binding (allUsers → run.invoker).
+#    The `--no-allow-unauthenticated` flag on `gcloud run services update`
+#    is unsupported in some gcloud versions; using IAM directly is
+#    portable and idempotent.
+echo "==> Removing public access (allUsers run.invoker binding)"
+gcloud run services remove-iam-policy-binding "${SERVICE}" \
   --region="${REGION}" \
   --project="${PROJECT_ID}" \
-  --no-allow-unauthenticated
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --quiet \
+  || echo "  (allUsers binding already absent — fine)"
 
 # 6. Compute the IAP_AUDIENCE for the JWT verifier. The Cloud Run IAP
 #    audience format is /projects/<num>/global/backendServices/<id>
