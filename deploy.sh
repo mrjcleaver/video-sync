@@ -102,11 +102,17 @@ BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=4096"
 if [[ -n "${IAP_AUDIENCE:-}" ]]; then
   AUTH_FLAG="--no-allow-unauthenticated"
   AUTH_ENV="IAP_AUDIENCE=${IAP_AUDIENCE}"
+  # Mode A by default: Cloud Identity Groups API drives role lookup using
+  # WS_DOMAIN. Confirmed working on revision 00035-lqq (2026-04-27).
+  AUTH_ENV+=",WS_DOMAIN=${WS_DOMAIN:-agentics.org}"
+  # Email allowlists kept as a transparent fallback if the Cloud Identity
+  # API ever returns a transient error — the auth code falls through only
+  # on exception (not on empty results), so this can't accidentally
+  # re-grant a user removed from groups.
   AUTH_ENV+=",KEY_ADMIN_EMAILS=${KEY_ADMIN_EMAILS:-martin.cleaver@agentics.org}"
   AUTH_ENV+=",OPERATOR_EMAILS=${OPERATOR_EMAILS:-martin.cleaver@agentics.org}"
   AUTH_ENV+=",VIEWER_EMAILS=${VIEWER_EMAILS:-martin.cleaver@agentics.org}"
-  if [[ -n "${WS_DOMAIN:-}" ]]; then AUTH_ENV+=",WS_DOMAIN=${WS_DOMAIN}"; fi
-  echo "==> IAP mode (audience set, --no-allow-unauthenticated)"
+  echo "==> IAP mode (audience set, --no-allow-unauthenticated, Mode A: groups via Cloud Identity)"
 else
   AUTH_FLAG="--allow-unauthenticated"
   AUTH_ENV="ALLOW_NO_IAP=1"

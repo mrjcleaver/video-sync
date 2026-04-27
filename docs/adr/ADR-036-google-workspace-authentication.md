@@ -1,9 +1,9 @@
 # ADR-036: Google Workspace Authentication and Role-Based Access
 
-**Status**: Proposed
+**Status**: Accepted (live as of 2026-04-27, Cloud Run revision `video-sync-00035-lqq`)
 **Date**: 2026-04-22
 **Deciders**: Architecture Team
-**Scope**: Implements ADR-035 Level 4 (multi-user identity), enables ADR-035 Level 3 (server-side credentials), supersedes part of ADR-011 (browser-only credential proxy)
+**Scope**: Implements ADR-035 Level 4 (multi-user identity), supersedes part of ADR-011 (browser-only credential proxy). **Does not** pursue ADR-035 Level 3 (server-side credential vault) — credentials remain browser-local per the operator's decision (see addendum).
 
 ---
 
@@ -249,10 +249,41 @@ The ADMIN_ACTOR migration, error-surfacing UI, type dedup, RFC-4122 namespace fi
 
 | Finding | Source | Plan |
 |---------|--------|------|
-| **Production deploy still has `--allow-unauthenticated` AND `ALLOW_NO_IAP=1`** | sec#1 | Acceptable while catalog is browser-local; **must** run `iap-setup.sh` before ADR-035 Phase 2 (catalog-on-server) ships. |
-| **Role mapping env-var-only** | sec#4 | **Resolved.** `lookupRole()` now queries Cloud Identity API (`groups/-/memberships:searchTransitiveGroups`) using a metadata-server access token from the runtime SA. `WS_DOMAIN` env var drives group-name derivation (`video-sync-{role}s@{WS_DOMAIN}`). Env-var allowlists remain as a fallback path used only if the API call fails — so a transient Cloud Identity outage doesn't 401 every authenticated user. The runtime SA needs permission to read group membership: simplest path is adding the SA's email (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`) as a Manager on each of the three groups in Workspace Admin. |
 | Remaining 16 of 20 QE-recommended test cases | tester | Next-up commits as the surface stabilises. |
 
 ### Outcome
 
-Phase 1 of ADR-036 is **functionally complete** with one structural caveat: the production service still runs without IAP enforcement, by design, until ADR-035 Phase 2 makes it security-critical. Everything required to flip the switch (auth lib, JWT verification, role-based actor derivation, error UI, audit-friendly flush endpoint, test scaffolding) is now in place. The cutover is a deploy-config change once `iap-setup.sh` runs successfully.
+Phase 1 of ADR-036 is **functionally complete and live in production** as of 2026-04-27. Everything required (auth lib, JWT verification, role-based actor derivation, error UI, audit-friendly flush endpoint, test scaffolding) is in place and exercised by real authenticated traffic.
+
+---
+
+## Cutover summary (2026-04-27)
+
+The full multi-user IAP-gated deployment landed today. Each step had a separate gate that surfaced a non-obvious gotcha; recording the chronology here in case anyone else has to repeat it.
+
+**Live state on revision `video-sync-00035-lqq`:**
+
+- Cloud Run service has IAP enabled (`gcloud beta run services update --iap`)
+- All three Workspace groups bound as both `roles/run.invoker` (Cloud Run access) and `roles/iap.httpsResourceAccessor` (IAP gate access). **Both bindings required.** Granting only one denies all users.
+- `--allow-unauthenticated` removed; `service-PROJECT_NUMBER@gcp-sa-iap.iam.gserviceaccount.com` added as `run.invoker` automatically by the IAP enable step (this is the IAP service agent calling Cloud Run on behalf of authenticated users)
+- IAP audience format: `/projects/PROJECT_NUMBER/locations/REGION/services/SERVICE_NAME`. **NOT** `/projects/.../global/backendServices/<id>` — that's load-balancer IAP. Cloud Run direct IAP uses the location/services format. The earlier draft of `iap-setup.sh` guessed wrong; corrected after diagnostic logging revealed the real `aud` claim.
+- Mode A active: `lookupRole()` queries Cloud Identity Groups API as the runtime SA. The runtime SA's existing project-level IAM was sufficient (no Workspace-side group-manager grant was actually required in this environment — possibly because `roles/run.admin` includes broader powers, or because the org grants Cloud Identity read by default).
+- Email-allowlist env vars (`KEY_ADMIN_EMAILS` etc.) remain in `deploy.sh` defaults as a transparent fallback. The auth code falls through to them only on Cloud Identity exception (not on empty results), so they cannot accidentally re-grant a user removed from groups.
+
+**Permission requests that were needed:**
+
+1. `roles/iap.admin` (broad) was avoided. The Workspace admin instead applied the `roles/iap.httpsResourceAccessor` bindings directly via `gcloud iap web add-iam-policy-binding` — three one-time commands. This is the recommended path for any future IAP-gated service in the org: don't grant `iap.admin`, just have the admin run the three commands.
+2. `roles/serviceusage.serviceUsageAdmin` (or APIs pre-enabled by an org admin) — needed to enable `iap.googleapis.com` and `cloudidentity.googleapis.com`.
+3. `roles/iap.settingsAdmin` (or an admin-enabled OAuth consent screen / brand) — needed for the `gcloud beta run services update --iap` step. Can sometimes be auto-set up; in this environment it required admin involvement.
+
+**Custom domain (`video-sync.agentics.org`):** wired up via Cloud Run domain mapping. **No auth changes required.** The IAP audience is derived from the service identity, not the URL — so requests via the custom domain hit the same IAP gate and verify against the same audience claim. If a future deployment puts an external HTTPS load balancer in front, the audience format changes to the load-balancer form and `IAP_AUDIENCE` would need updating.
+
+**Post-cutover scripts:**
+
+- `scripts/iap-setup.sh` — idempotent; can be re-run anytime to verify state. Now skips already-bound IAP IAM members so non-admin re-runs don't show errors.
+- `scripts/iap-status.sh` — read-only diagnostic. Reports API enablement, service auth posture, IAP enablement, group bindings, and prints the deploy command if ready.
+- `scripts/check-cloud-identity.sh` — read-only diagnostic specifically for whether the runtime SA can read group memberships (Mode A).
+- `deploy.sh` is mode-aware: `IAP_AUDIENCE` exported → IAP mode (Mode A by default with `WS_DOMAIN=agentics.org`). Unset → Open mode for transitional/dev work.
+- `deploy-without-iap.sh` — operator-added wrapper that deploys in Open mode with the email allowlists pre-set, useful for emergencies or local-dev deploys. Forward-compatible: the moment `IAP_AUDIENCE` is exported, the same allowlist values become the role-mapping fallback in IAP mode.
+
+**Decision deferred indefinitely:** ADR-035 Level 3 / ADR-036 §4 (server-side credential vault). The operator chose to keep platform credentials (Zoom, YouTube, Fireflies, etc.) in browser localStorage — the apartment-building "tools in your pocket" model — because per-user attribution at the YouTube/Zoom layer is more valuable than the convenience of shared org credentials. ADR-011's pattern stays as the long-term credential model, not "MVP."

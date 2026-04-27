@@ -111,9 +111,11 @@ State migration is sequenced from cheapest/lowest-risk to most complex:
 
 **Depends on**: Level 1 (for durable server storage).
 
-### Level 3 — Move credentials to server-side Secret Manager
+### Level 3 — Move credentials to server-side Secret Manager (deferred indefinitely as of 2026-04-27)
 
-**Target state**: OAuth tokens and API keys live on the server; any authenticated browser can drive the publish pipeline.
+> **Status update**: After implementing Level 4 (ADR-036), the operator decided that platform credentials (Zoom, YouTube, Fireflies, etc.) should **stay in browser localStorage** — the ADR-011 pattern is the long-term model, not an MVP shortcut. Rationale: per-user attribution at the upstream platform layer (YouTube records Alice's actual upload, not "the org's") is worth more than the operational convenience of one shared credential set. This level is preserved here for completeness; it should not be implemented without revisiting that decision.
+
+**Target state** *(if implemented)*: OAuth tokens and API keys live on the server; any authenticated browser can drive the publish pipeline.
 
 **Scope**:
 - Per-operator Secret Manager entries keyed by operator identity (see Level 4 — this level is meaningless without per-operator identity)
