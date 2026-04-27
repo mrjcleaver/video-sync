@@ -35,6 +35,8 @@ interface ZoomMeeting {
 interface Props {
   onImported: () => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {
@@ -52,17 +54,20 @@ function getZoomCredentials(): { accountId: string; clientId: string; clientSecr
   }
 }
 
-export default function ZoomImport({ onImported, onEvent }: Props) {
+export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
   const [meetings, setMeetings] = useState<ZoomMeeting[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
-  const [dateFrom, setDateFrom] = useState(() => {
+  const [localDateFrom, setLocalDateFrom] = useState(() => {
     const d = new Date(Date.now() - 30 * 86400000);
     return d.toISOString().slice(0, 10);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [localDateTo, setLocalDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const dateFrom = dateFromProp ?? localDateFrom;
+  const dateTo = dateToProp ?? localDateTo;
+  const datesAreControlled = dateFromProp !== undefined && dateToProp !== undefined;
   const [filterTitle, setFilterTitle] = useState("");
   const [filterMinLen, setFilterMinLen] = useState("2");
   const [filterMaxLen, setFilterMaxLen] = useState("");
@@ -163,19 +168,23 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
       <div className="zoom-import-header">
         <h2>Zoom Recordings</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
-          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
+          {!datesAreControlled && (
+            <>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setLocalDateFrom(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setLocalDateTo(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+            </>
+          )}
           <button
             className="btn btn-sm btn-primary"
             onClick={fetchRecordings}

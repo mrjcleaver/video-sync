@@ -356,7 +356,7 @@ export default function Dashboard() {
             {filtered.length === 0 && (
               <div className="empty-state">
                 {videos.length === 0
-                  ? "No videos indexed yet. Use Zoom Import, Fireflies Import, or Manual Entry above."
+                  ? "No videos indexed yet. Use the Meetings, URL, or Manual import tabs above."
                   : `No videos with status "${filter}".`}
               </div>
             )}
