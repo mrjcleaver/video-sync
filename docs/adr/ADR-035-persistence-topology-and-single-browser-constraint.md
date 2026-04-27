@@ -80,20 +80,19 @@ This constraint is **acceptable for MVP** because there's one operator and they 
 
 State migration is sequenced from cheapest/lowest-risk to most complex:
 
-### Level 1 — Activate GCS FUSE mount for `/app/data` (blocked on IAM)
+### Level 1 — Activate GCS FUSE mount for `/app/data` *(Implemented 2026-04-27)*
 
-**Target state**: the existing server-side files (`rules.json`, `backfill-state.json`, `server.log`) survive Cloud Run revisions, cold starts, and instance shutdowns.
+**Status**: Bucket `gs://video-sync-data-agentics-487016` (us-central1, uniform bucket-level access) created via `scripts/gcs-fuse-setup.sh`. Runtime SA holds `roles/storage.objectUser`. `deploy.sh` now uses `--execution-environment=gen2` + `--add-volume=type=cloud-storage` + `--add-volume-mount=mount-path=/app/data`. Verified post-deploy: container writes (`server.log`) appear in the bucket within seconds; new revisions inherit prior state.
 
-**Scope**:
-- Create `gs://video-sync-data-agentics-487016` in `us-central1`
-- Grant runtime SA `roles/storage.objectUser`
-- Add `--execution-environment=gen2` + `--add-volume` + `--add-volume-mount` to `deploy.sh`
+How it unblocked: the historical blockers were `roles/serviceusage.serviceUsageAdmin` (no longer needed because the storage + run APIs were already enabled by earlier work) and `roles/storage.admin` (granted to the operator at deploy-time using `roles/resourcemanager.projectIamAdmin`, which the operator already had).
 
-**Blocker**: operator account lacks `roles/serviceusage.serviceUsageAdmin` and `roles/storage.admin`. Setup script (`scripts/gcs-fuse-setup.sh`) is ready; waiting on IAM grant or admin to run it. ADR-018 addendum documents the specifics.
+All four state files now durable: `catalog.json`, `transcripts.json`, `rules.json`, `backfill-state.json`. `server.log` is in the bucket too but is not authoritative — Cloud Logging via stdout still owns the log history.
 
-**Scope explicitly excluded from Level 1**: the catalog, credentials, rejections, caches. All remain in localStorage.
+### Level 2 — Move the video catalog to the server *(Implemented 2026-04-27)*
 
-### Level 2 — Move the video catalog to the server
+**Status**: Implemented as `GET/POST/DELETE /api/catalog` and `/api/catalog/transcripts`. `videoStore` keeps localStorage as a fast-boot cache and offline fallback; on boot, after `hydrate()`, `syncWithServer()` fetches the server catalog and merges per-record using a `lastModified` ISO timestamp (last-writer-wins). Mutations push to the server with a 500ms per-record debounce. Persistence remains ephemeral (Level 1 still blocked) — first browser to boot after a cold start re-seeds the server, same self-seeding pattern as `data/rules.json`.
+
+Limitations vs. the original spec: no SQLite (Tier 2), no pagination (whole catalog returned in one GET), no per-instance file lock across Cloud Run instances (in-process lock only), and transcripts piggyback on the record's `lastModified` rather than tracking their own.
 
 **Target state**: two browsers on the same URL see the same list of videos.
 

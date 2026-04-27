@@ -41,18 +41,17 @@
 # IAP_AUDIENCE must NOT be set together with ALLOW_NO_IAP=1 — the
 # app refuses to boot if it sees both (sec#2 misconfiguration guard).
 
-# ─── Persistence note ────────────────────────────────────────────────────
-# /app/data is CURRENTLY ON THE EPHEMERAL FILESYSTEM. Files in data/ are
-# wiped on every cold start / new revision. See ADR-018 addendum and
-# ADR-035 for the full story. Implications:
-#   - data/backfill-state.json: uploads_today resets each restart
-#   - data/rules.json: survives only because clients re-POST from localStorage
-#   - data/server.log: captured by Cloud Logging via stdout; file is lost
-# The FUSE mount path is prepared in scripts/gcs-fuse-setup.sh but is NOT
-# enabled here pending IAM permissions. When unblocked, add:
-#   --execution-environment=gen2
-#   --add-volume=name=data,type=cloud-storage,bucket=video-sync-data-agentics-487016
-#   --add-volume-mount=volume=data,mount-path=/app/data
+# ─── Persistence (ADR-035 Level 1, activated 2026-04-27) ────────────────
+# /app/data is mounted from gs://video-sync-data-agentics-487016 via the
+# Cloud Storage FUSE driver (gen2 execution environment). All four state
+# files survive cold starts, scale-to-zero, and revision rollouts:
+#   - data/catalog.json        (records + per-id lastModified)
+#   - data/transcripts.json    (id → transcript text)
+#   - data/rules.json          (ingestion + processing + post-processing rules)
+#   - data/backfill-state.json (uploads_today quota counter)
+# data/server.log is still lost — it's captured by Cloud Logging via stdout.
+# Bucket setup ran via scripts/gcs-fuse-setup.sh; runtime SA has
+# roles/storage.objectUser on the bucket.
 #
 # ─── Deploy ──────────────────────────────────────────────────────────────
 #   ./deploy.sh
@@ -129,5 +128,8 @@ gcloud run deploy video-sync \
   --max-instances=3 \
   $AUTH_FLAG \
   --no-cpu-throttling \
+  --execution-environment=gen2 \
+  --add-volume=name=data,type=cloud-storage,bucket=video-sync-data-agentics-487016 \
+  --add-volume-mount=volume=data,mount-path=/app/data \
   --set-env-vars="${BASE_ENV},${AUTH_ENV}" \
   --set-secrets=OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest
