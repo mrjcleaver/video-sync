@@ -96,17 +96,31 @@ async function verifyIapJwt(token: string): Promise<{ email: string; sub: string
   if (!audience) {
     throw new Error("IAP_AUDIENCE env var not set; refusing to validate without an expected audience");
   }
-  const { payload } = await jwtVerify(token, jwks, {
-    issuer: "https://cloud.google.com/iap",
-    audience,
-  });
-  if (typeof payload.email !== "string" || !payload.email) {
-    throw new Error("IAP JWT missing email claim");
+  try {
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: "https://cloud.google.com/iap",
+      audience,
+    });
+    if (typeof payload.email !== "string" || !payload.email) {
+      throw new Error("IAP JWT missing email claim");
+    }
+    if (typeof payload.sub !== "string" || !payload.sub) {
+      throw new Error("IAP JWT missing sub claim");
+    }
+    return { email: payload.email, sub: payload.sub };
+  } catch (err) {
+    // Diagnostic: decode the JWT without verifying signature so we can log
+    // the actual audience IAP put in the token. Helps when the configured
+    // IAP_AUDIENCE doesn't match the real one (e.g. wrong format guess).
+    try {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+        console.warn(`IAP JWT verification failed. Expected audience='${audience}', got aud='${claims.aud}', iss='${claims.iss}', email='${claims.email}'. Reason: ${err instanceof Error ? err.message : err}`);
+      }
+    } catch { /* swallow — diagnostic only */ }
+    throw err;
   }
-  if (typeof payload.sub !== "string" || !payload.sub) {
-    throw new Error("IAP JWT missing sub claim");
-  }
-  return { email: payload.email, sub: payload.sub };
 }
 
 /**
