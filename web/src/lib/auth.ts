@@ -183,8 +183,16 @@ async function lookupRole(email: string): Promise<Role | null> {
 async function rolesFromCloudIdentity(email: string, domain: string): Promise<Role[]> {
   const token = await getMetadataAccessToken();
   const url = new URL("https://cloudidentity.googleapis.com/v1/groups/-/memberships:searchTransitiveGroups");
-  // member_key_id query is required to scope the search to this user
-  url.searchParams.set("query", `member_key_id == '${email}'`);
+  // Cloud Identity requires both clauses: the member_key_id to scope the
+  // search to this user, AND a labels filter to identify the group type
+  // (Workspace email groups are tagged `groups.discussion_forum`). Without
+  // the labels clause the API rejects the request with INVALID_ARGUMENT.
+  // Single-quote escaping inside the user portion to avoid CEL injection.
+  const safeEmail = email.replace(/'/g, "");
+  url.searchParams.set(
+    "query",
+    `member_key_id == '${safeEmail}' && 'cloudidentity.googleapis.com/groups.discussion_forum' in labels`,
+  );
   url.searchParams.set("pageSize", "200");
 
   const res = await fetch(url.toString(), {
