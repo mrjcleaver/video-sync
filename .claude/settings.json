@@ -47,6 +47,12 @@
             "type": "command",
             "command": "cd /workspaces/video-sync && node ./.claude/helpers/auto-memory-hook.mjs import",
             "timeout": 8000
+          },
+          {
+            "type": "command",
+            "command": "df -h / | awk 'NR==2 && +($5+0) > 85 {exit 1}' || bash /workspaces/video-sync/scripts/prune-build-artifacts.sh --apply >/dev/null 2>&1 || true",
+            "timeout": 60,
+            "async": true
           }
         ]
       }
