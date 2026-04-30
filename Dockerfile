@@ -32,7 +32,9 @@ COPY web/ .
 COPY pkg/ ../pkg/
 # Ensure public/ exists so the COPY in the runner stage doesn't fail
 RUN mkdir -p /app/public
-RUN NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA} NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE} npm run build
+# Next 15 type-check worker OOMs at the default ~2GB heap once the project
+# crossed ~30 routes; bumping --max-old-space-size keeps the worker alive.
+RUN NEXT_PUBLIC_BUILD_SHA=${BUILD_SHA} NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE} NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 # ── Stage 3: minimal runtime image ───────────────────────────────────────────
 FROM node:20-alpine AS runner

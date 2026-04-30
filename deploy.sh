@@ -75,6 +75,12 @@ set -euo pipefail
 
 cd /workspaces/video-sync
 
+# Type-check before docker build. Next.js's in-build worker OOMs in this
+# devcontainer at ~30+ routes; we run tsc separately here so type errors
+# fail fast (and don't get hidden by next.config's ignoreBuildErrors).
+echo "==> Pre-flight type check (tsc --noEmit)"
+( cd web && NODE_OPTIONS="--max-old-space-size=6144" npx tsc --noEmit )
+
 SHA=$(git rev-parse --short HEAD)
 IMAGE="us-central1-docker.pkg.dev/agentics-487016/video-sync/app"
 
@@ -97,6 +103,10 @@ docker push "$IMAGE:latest"
 IAP_AUDIENCE="${IAP_AUDIENCE-/projects/667037737667/locations/us-central1/services/video-sync}"
 
 BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=4096"
+# ADR-039: Drive artifact storage. Runtime SA must be a Manager on the
+# Shared Drive (Plan B — no domain-wide delegation).
+BASE_ENV+=",DRIVE_ROOT_FOLDER_ID=1pHH83fpK6Ca1k5D_RyDAIG8TgR83m6EP"
+BASE_ENV+=",DRIVE_SHARED_DRIVE_ID=0AOJ1mqeUKHF0Uk9PVA"
 if [[ -n "${IAP_AUDIENCE}" ]]; then
   AUTH_FLAG="--no-allow-unauthenticated"
   AUTH_ENV="IAP_AUDIENCE=${IAP_AUDIENCE}"

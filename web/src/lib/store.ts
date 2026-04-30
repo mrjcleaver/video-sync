@@ -269,16 +269,44 @@ class VideoStore {
     }
   }
 
+  private extractRecordContext(id: string): { title: string; source_platform: string; source_id: string; recorded_at: string } | null {
+    const record = this.records.get(id);
+    if (!record) return null;
+    try {
+      const j = JSON.parse(record.to_json()) as { title?: string; source_platform?: string; source_id?: string; recorded_at?: string; indexed_at?: string };
+      return {
+        title: j.title ?? "Untitled",
+        source_platform: j.source_platform ?? "Unknown",
+        source_id: j.source_id ?? id,
+        recorded_at: j.recorded_at ?? j.indexed_at ?? new Date().toISOString(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private async pushTranscript(id: string) {
     const text = this.transcripts.get(id);
     if (text === undefined) return;
+    const ctx = this.extractRecordContext(id);
+    if (!ctx) {
+      clientLog("warn", "store", "transcript push skipped — no record context", { video_id: id });
+      return;
+    }
     try {
-      const res = await fetch("/api/catalog/transcripts", {
-        method: "POST",
+      const body = `---\nrecord_id: ${id}\nsource_platform: ${ctx.source_platform}\nsource_id: ${ctx.source_id}\nrecorded_at: ${ctx.recorded_at}\ngenerated_at: ${new Date().toISOString()}\n---\n\n${text}`;
+      const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/transcript`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, text }),
+        body: JSON.stringify({
+          content: body,
+          title: ctx.title,
+          source_platform: ctx.source_platform,
+          source_id: ctx.source_id,
+          recorded_at: ctx.recorded_at,
+        }),
       });
-      if (!res.ok) throw new Error(`POST /api/catalog/transcripts ${res.status}`);
+      if (!res.ok) throw new Error(`PUT /api/artifacts/${id}/transcript ${res.status}`);
     } catch (err) {
       clientLog("warn", "store", "transcript push failed", { video_id: id, error: String(err) });
     }
@@ -290,8 +318,9 @@ class VideoStore {
     } catch (err) {
       clientLog("warn", "store", "catalog delete push failed", { video_id: id, error: String(err) });
     }
+    // Best-effort delete of the transcript artifact (if any)
     try {
-      await fetch(`/api/catalog/transcripts?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      await fetch(`/api/artifacts/${encodeURIComponent(id)}/transcript`, { method: "DELETE" });
     } catch {
       // best-effort
     }

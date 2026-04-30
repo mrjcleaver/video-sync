@@ -1,89 +1,94 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import { join } from "path";
-import { withRequestLogging } from "../../../../lib/serverLogger";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getArtifact, getMeta } from "../../../../lib/driveArtifactStore";
 
-// ADR-035 Level 2 — server-side transcript map.
+// ADR-039: this endpoint is being phased out.
 //
-// Stored separately from data/catalog.json so transcript blobs (often
-// 100KB+ each from Fireflies) don't bloat the catalog list payload.
-// Shape: { [recordId]: <transcript-text> }
+//   - GET (no id):       enumerates Drive — returns the same `{ id: text }` shape
+//                         existing browsers expect on boot.
+//   - GET (with ?id=X):  reads the single transcript from Drive.
+//   - POST:              410 Gone — clients should PUT to /api/artifacts/:id/transcript.
+//   - DELETE:            410 Gone — clients should DELETE /api/artifacts/:id/transcript.
+//
+// All responses include Deprecation + Sunset headers. Once videoStore on
+// every active browser has migrated to /api/artifacts/..., this whole
+// route is removed.
 
-const TRANSCRIPTS_FILE = join(process.cwd(), "data", "transcripts.json");
+const CATALOG_FILE = join(process.cwd(), "data", "catalog.json");
+const SUNSET_DATE = "Fri, 30 May 2026 00:00:00 GMT";
 
-type TranscriptStore = Record<string, string>;
+const DEPRECATION_HEADERS: Record<string, string> = {
+  Deprecation: "true",
+  Sunset: SUNSET_DATE,
+  Link: '</api/artifacts>; rel="successor-version"',
+};
 
-// In-process mutex (see ../route.ts for rationale).
-let writeQueue: Promise<unknown> = Promise.resolve();
-function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = writeQueue.then(fn);
-  writeQueue = next.then(() => undefined, () => undefined);
-  return next;
+interface CatalogStore {
+  records: Record<string, string>;
+  lastModified?: Record<string, string>;
 }
 
-async function readTranscripts(): Promise<TranscriptStore> {
+async function listRecordIds(): Promise<string[]> {
   try {
-    const raw = await fs.readFile(TRANSCRIPTS_FILE, "utf-8");
-    return JSON.parse(raw) as TranscriptStore;
+    const raw = await fs.readFile(CATALOG_FILE, "utf-8");
+    const c = JSON.parse(raw) as CatalogStore;
+    return Object.keys(c.records ?? {});
   } catch {
-    return {};
+    return [];
   }
 }
 
-async function writeTranscripts(store: TranscriptStore) {
-  await fs.mkdir(join(process.cwd(), "data"), { recursive: true });
-  await fs.writeFile(TRANSCRIPTS_FILE, JSON.stringify(store), "utf-8");
+function stripFrontmatter(md: string): string {
+  if (!md.startsWith("---\n")) return md;
+  const end = md.indexOf("\n---\n", 4);
+  if (end < 0) return md;
+  return md.slice(end + 5).replace(/^\n+/, "");
 }
 
 async function getHandler(req: NextRequest) {
-  const id = new URL(req.url).searchParams.get("id");
-  const store = await readTranscripts();
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+
   if (id) {
-    const text = store[id];
-    if (text === undefined) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    try {
+      const r = await getArtifact(id, "transcript");
+      if (!r) return NextResponse.json({ error: "not found" }, { status: 404, headers: DEPRECATION_HEADERS });
+      return NextResponse.json({ id, text: stripFrontmatter(r.content) }, { headers: DEPRECATION_HEADERS });
+    } catch (err) {
+      serverLog("warn", "api:catalog/transcripts", "drive read failed", { error: String(err) });
+      return NextResponse.json({ error: "drive unavailable" }, { status: 503, headers: DEPRECATION_HEADERS });
     }
-    return NextResponse.json({ id, text });
   }
-  return NextResponse.json(store);
+
+  // Bulk enumeration — slow but used by old browsers' boot sync.
+  // For each known record, fetch the transcript artifact (if any).
+  const ids = await listRecordIds();
+  const result: Record<string, string> = {};
+  await Promise.all(
+    ids.map(async (rid) => {
+      try {
+        // getMeta is cheap (cached) — skip getArtifact when no transcript exists
+        const meta = await getMeta(rid);
+        if (!meta?.artifacts.transcript) return;
+        const r = await getArtifact(rid, "transcript");
+        if (r) result[rid] = stripFrontmatter(r.content);
+      } catch {
+        // skip individual failures
+      }
+    }),
+  );
+  return NextResponse.json(result, { headers: DEPRECATION_HEADERS });
 }
 
-async function postHandler(req: NextRequest) {
-  let body: { id?: string; text?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  if (!body.id || typeof body.id !== "string") {
-    return NextResponse.json({ error: "id required" }, { status: 400 });
-  }
-  if (typeof body.text !== "string") {
-    return NextResponse.json({ error: "text required" }, { status: 400 });
-  }
-  const tid = body.id;
-  const text = body.text;
-  return withLock(async () => {
-    const current = await readTranscripts();
-    current[tid] = text;
-    await writeTranscripts(current);
-    return NextResponse.json({ ok: true, id: tid });
-  });
-}
-
-async function deleteHandler(req: NextRequest) {
-  const id = new URL(req.url).searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ error: "id query param required" }, { status: 400 });
-  }
-  return withLock(async () => {
-    const current = await readTranscripts();
-    delete current[id];
-    await writeTranscripts(current);
-    return NextResponse.json({ ok: true, id });
-  });
+async function gone() {
+  return NextResponse.json(
+    { error: "endpoint removed; use /api/artifacts/:record_id/:kind" },
+    { status: 410, headers: DEPRECATION_HEADERS },
+  );
 }
 
 export const GET = withRequestLogging("api:catalog/transcripts", getHandler);
-export const POST = withRequestLogging("api:catalog/transcripts", postHandler);
-export const DELETE = withRequestLogging("api:catalog/transcripts", deleteHandler);
+export const POST = withRequestLogging("api:catalog/transcripts", gone);
+export const DELETE = withRequestLogging("api:catalog/transcripts", gone);
