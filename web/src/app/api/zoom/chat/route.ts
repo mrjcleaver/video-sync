@@ -17,6 +17,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 
+// Dynamic — calls Zoom API.
+export const dynamic = "force-dynamic";
+
 interface RawChatLine {
   raw: string;
   isPrivate: boolean;

@@ -28,6 +28,9 @@ interface VideoRecordLike {
   indexed_at?: string;
 }
 
+// Dynamic — performs Drive I/O.
+export const dynamic = "force-dynamic";
+
 async function postHandler(req: NextRequest) {
   const actor = await getActor(req);
   if (actor.role !== "Admin") {

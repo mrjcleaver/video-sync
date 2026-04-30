@@ -8,6 +8,9 @@ import {
 } from "../../../../../lib/driveArtifactStore";
 import { withRequestLogging } from "../../../../../lib/serverLogger";
 
+// Dynamic — see ../route.ts comment.
+export const dynamic = "force-dynamic";
+
 function isKind(s: string): s is ArtifactKind {
   return (ARTIFACT_KINDS as readonly string[]).includes(s);
 }
