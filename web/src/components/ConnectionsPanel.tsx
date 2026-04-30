@@ -33,14 +33,9 @@ const PLATFORMS: PlatformInfo[] = [
       { key: "clientSecret", label: "Client Secret", type: "password", placeholder: "Your Zoom OAuth Client Secret", required: true },
     ],
   },
-  {
-    name: "Loom",
-    description: "Async video messaging",
-    credentialType: "API_KEY",
-    fields: [
-      { key: "apiKey", label: "API Key", type: "password", placeholder: "Your Loom API key", required: true },
-    ],
-  },
+  // Loom — public API was discontinued in 2025. Per-URL imports still
+  // work via the URL Import tab (oEmbed / public share links). Removed
+  // from the Connections grid because there's no API key to enter.
   {
     name: "Fireflies",
     description: "AI meeting notes",
@@ -201,9 +196,11 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
         Store API credentials for external services. Credentials are saved only in your
         browser&apos;s localStorage — nothing is sent to any server until you use a feature that
         requires them. <strong>Zoom</strong> and <strong>YouTube</strong> use OAuth 2.0
-        (Account ID + Client ID + Secret). <strong>Fireflies</strong>, <strong>Loom</strong>,
-        and <strong>Kaltura</strong> use API keys. <strong>OpenRouter</strong> powers LLM
-        transcript summarisation in Processing Rules.
+        (Account ID + Client ID + Secret). <strong>Fireflies</strong> and
+        <strong>Kaltura</strong> use API keys. <strong>OpenRouter</strong> powers LLM
+        transcript summarisation in Processing Rules. <em>Loom</em> imports
+        still work per-URL via the URL Import tab — Loom&apos;s public API was
+        discontinued, so there&apos;s no key to store here.
       </HelpTip>
 
       <div className="connections-grid">
