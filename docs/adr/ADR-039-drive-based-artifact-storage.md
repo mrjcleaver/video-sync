@@ -4,7 +4,7 @@
 **Date**: 2026-04-30
 **Deciders**: Architecture Team
 **Supersedes (in part)**: ADR-035 Level 2 transcript storage
-**Related**: ADR-035 (storage topology), ADR-036 (Workspace auth), ADR-014 (publishing-attribute processing rules), ADR-015 (Fireflies import), ADR-034 (chat-query MCP)
+**Related**: ADR-035 (storage topology), ADR-036 (Workspace auth), ADR-014 (publishing-attribute processing rules), ADR-015 (Fireflies import), ADR-024 (post-processing webhook — payload extended here), ADR-034 (chat-query MCP)
 
 ---
 
@@ -184,6 +184,85 @@ Estimated duration: 15 records × ~2 sec each = 30 sec for the current dataset; 
 
 ---
 
+## Post-processing webhook payload (extends ADR-024)
+
+ADR-024 defines a fire-and-forget webhook that POSTs after publish success or failure. Today its payload embeds `video.transcript_text` inline — the full transcript, every webhook fire. With Drive as the artifact store, the webhook should send **URLs to the artifacts**, not the bodies.
+
+### New webhook payload shape
+
+```json
+{
+  "event": "publish_success",
+  "video": {
+    "id": "7f3a92ce-1c1d-4d7e-9b51-...",
+    "title": "Engineering Standup",
+    "source_platform": "Zoom",
+    "source_id": "abc123",
+    "recorded_at": "2026-04-21T14:00:00Z",
+    "description": "Short YouTube description text..."
+  },
+  "youtubeUrl": "https://www.youtube.com/watch?v=...",
+  "artifacts": {
+    "folder": {
+      "drive_web_url": "https://drive.google.com/drive/folders/1aBcD...",
+      "drive_id":      "1aBcD..."
+    },
+    "transcript": {
+      "drive_web_url": "https://drive.google.com/file/d/1xYz.../view",
+      "drive_id":      "1xYz...",
+      "api_url":       "https://video-sync.agentics.org/api/artifacts/7f3a92ce.../transcript",
+      "size":          152034,
+      "modified":      "2026-04-22T09:14:11Z"
+    },
+    "description": { "drive_web_url": "...", "drive_id": "...", "api_url": "...", "size": 4221,  "modified": "..." },
+    "summary":     { "drive_web_url": "...", "drive_id": "...", "api_url": "...", "size": 8104,  "modified": "..." },
+    "chat":        { "drive_web_url": "...", "drive_id": "...", "api_url": "...", "size": 2876,  "modified": "..." }
+  },
+  "error": null,
+  "timestamp": "2026-04-30T17:00:00Z"
+}
+```
+
+Each artifact entry carries:
+
+- `drive_web_url` — clickable Drive URL for humans (opens in Drive UI)
+- `drive_id` — stable Drive file ID for machines using the Drive API directly
+- `api_url` — server-side proxy URL (`/api/artifacts/:id/:kind`) for consumers that already have an IAP cookie or service identity to our app and don't want to set up Drive auth
+- `size`, `modified` — for cache-validation and change detection on the consumer side
+
+If an artifact doesn't exist for that record (e.g. Fireflies meeting has no `chat`), the entry is omitted entirely from `artifacts` rather than included as `null`. Consumers must handle absence.
+
+### Backwards compatibility
+
+The `video.transcript_text` field stays in the payload through one release cycle, marked deprecated in serverLog. Existing webhook consumers continue to function. Removed in the implementation follow-up to this ADR.
+
+The `event` enum is unchanged: `publish_success` | `publish_failure`. Failures still get the artifacts block — failure payloads can include `artifacts.transcript` if a transcript exists, useful for downstream "what did we try to publish" forensics.
+
+### Email action changes
+
+The email body's 500-char transcript excerpt is replaced by a single line:
+
+```
+Drive folder: https://drive.google.com/drive/folders/1aBcD...
+```
+
+Operators clicking through get the full Drive folder with all four artifacts, properly rendered. The excerpt was always a partial view; the link is strictly better.
+
+### Why both `drive_web_url` and `api_url`
+
+Two consumer modes to support:
+
+1. **Slack/IFTTT/Zapier-style webhook consumers** want a clickable URL — `drive_web_url` is right. Authenticated Workspace users opening the link in Slack get the doc directly.
+2. **Programmatic consumers** (a CMS that ingests transcripts, an LLM pipeline, a search indexer) want to fetch the body — `api_url` requires only an IAP service-to-service identity to our app, no Drive scope grant on the consumer side. Bypassing Drive's rate limits for high-volume ingestion.
+
+Including both adds ~200 bytes to the payload — negligible.
+
+### Implementation note
+
+The post-processing fire happens in `VideoCard.publishToYouTube()` (per ADR-024). The video record at that point already has the `record_id` — the server's `/api/process/notify` route resolves `record_id → artifacts` by reading `.meta.json` from Drive and including the URLs in the payload. One Drive read per webhook fire; cached aggressively (the `.meta.json` rarely changes after creation).
+
+---
+
 ## In-meeting chat capture (new)
 
 Zoom Cloud Recording API returns a `recording_files` array per recording, with entries like:
@@ -262,6 +341,7 @@ These should be resolved before implementation starts; flagging for the implemen
 
 - ADR-011: MVP Credential Proxy Pattern — preserved for OAuth credentials, deferred per ADR-035 Level 3
 - ADR-014: Publishing-Attribute Processing Rules — generates the descriptions stored here
+- ADR-024: Post-processing Webhook and Email — the webhook contract is extended here to carry Drive artifact URLs
 - ADR-015: Fireflies Import Integration — current source of one transcript stream
 - ADR-032: Runtime Memory Pressure Detection — informs the LRU cache size
 - ADR-033: Multi-Origin Dedupe — its "Find duplicates" scan needs Drive batching guidance
