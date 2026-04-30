@@ -105,7 +105,7 @@ function saveConnections(data: Record<string, ConnectionState>) {
 
 interface Props { open: boolean; onToggle: () => void; }
 
-export default function ConnectionsPanel({ open, onToggle }: Props) {
+export default function ConnectionsPanel({ open }: Props) {
   const [connections, setConnections] = useState<Record<string, ConnectionState>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
