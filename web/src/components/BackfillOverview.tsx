@@ -329,6 +329,7 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
         <span style={{ marginLeft: 10, fontWeight: 600 }}>Source:</span>
         <FilterChip id="src:Fireflies" label="Fireflies" filters={filters} onToggle={toggleFilter} bg="rgba(245,158,11,0.12)" fg="#f59e0b" border="rgba(245,158,11,0.3)" />
         <FilterChip id="src:Zoom" label="Zoom" filters={filters} onToggle={toggleFilter} bg="rgba(56,189,248,0.12)" fg="#38bdf8" border="rgba(56,189,248,0.3)" />
+        <FilterChip id="src:Kaltura" label="Kaltura" filters={filters} onToggle={toggleFilter} bg={KALTURA_STYLE.bg} fg={KALTURA_STYLE.fg} border={KALTURA_STYLE.border} />
 
         <span style={{ marginLeft: 10, fontWeight: 600 }}>YouTube:</span>
         {(["public","unlisted","private","unknown"] as const).map(p => {

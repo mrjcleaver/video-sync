@@ -193,6 +193,42 @@ export function computePublishAttrs(
 
 // ── Calendar ───────────────────────────────────────────────────────────────
 
+/** Classify a destination URL by host so we can split the legacy
+ *  singular `destination_url` between YouTube and Kaltura badges. */
+function classifyDestinationUrl(url: string): "youtube" | "kaltura" | "unknown" {
+  if (/(youtube\.com|youtu\.be)/i.test(url)) return "youtube";
+  if (/kaltura\.com/i.test(url)) return "kaltura";
+  return "unknown";
+}
+
+function videoSlotPayload(v: VideoRecordJSON): NonNullable<CalendarSlot["video"]> {
+  const ytLoc = v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination");
+  const kalLoc = v.locations?.find(l => l.platform === "Kaltura" && l.role === "Destination");
+  const ytFromLoc = ytLoc?.external_url
+    ?? (ytLoc?.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
+  const kalFromLoc = kalLoc?.external_url ?? undefined;
+
+  // Legacy single destination_url field — older records that pre-date the
+  // locations[] design. Classify by URL host so a Kaltura URL doesn't get
+  // mis-shown as a YouTube badge (or vice versa).
+  let ytFromLegacy: string | undefined;
+  let kalFromLegacy: string | undefined;
+  if (v.destination_url) {
+    const kind = classifyDestinationUrl(v.destination_url);
+    if (kind === "youtube" && !ytFromLoc) ytFromLegacy = v.destination_url;
+    else if (kind === "kaltura" && !kalFromLoc) kalFromLegacy = v.destination_url;
+    else if (kind === "unknown" && !ytFromLoc && !kalFromLoc) ytFromLegacy = v.destination_url;
+  }
+
+  return {
+    id: v.id, title: v.title, duration_seconds: v.duration_seconds,
+    source_platform: v.source_platform, status: v.status,
+    origin_url: v.download_url || undefined,
+    youtube_url: ytFromLoc ?? ytFromLegacy,
+    kaltura_url: kalFromLoc ?? kalFromLegacy,
+  };
+}
+
 export function buildCalendarMonth(
   videos: VideoRecordJSON[],
   profile: BackfillProfile,
@@ -201,15 +237,20 @@ export function buildCalendarMonth(
 ): CalendarSlot[] {
   const targetDays = profile.criteria.days_of_week ?? [4, 5];
 
-  // Index ALL videos by recorded date, keeping highest-priority status per day.
-  // Profile criteria (platform, duration, title) determine target days, not
-  // which videos appear — so published videos always show even if the profile
-  // criteria have since been tightened.
-  const byDate = new Map<string, VideoRecordJSON>();
+  // Index ALL videos by recorded date. We now keep every video that lands
+  // on a date (multiple per day allowed) — each emits its own row in the
+  // Overview, sorted by status rank descending so the most-progressed
+  // record is on top. Profile criteria don't filter; they only determine
+  // target days for the gap-vs-coverage view.
+  const byDate = new Map<string, VideoRecordJSON[]>();
   for (const v of videos) {
     const key = (v.recorded_at || v.indexed_at).slice(0, 10);
-    const prev = byDate.get(key);
-    if (!prev || statusRank(v.status) > statusRank(prev.status)) byDate.set(key, v);
+    const arr = byDate.get(key);
+    if (arr) arr.push(v);
+    else byDate.set(key, [v]);
+  }
+  for (const arr of byDate.values()) {
+    arr.sort((a, b) => statusRank(b.status) - statusRank(a.status));
   }
 
   const slots: CalendarSlot[] = [];
@@ -221,27 +262,29 @@ export function buildCalendarMonth(
     if (dateStr > today) break; // don't show future
     const dow = new Date(year, month, d).getDay();
     const inRange = dateStr >= profile.date_from && (!profile.date_to || dateStr <= profile.date_to);
-    const v = byDate.get(dateStr);
-    slots.push({
-      date: dateStr,
-      day_of_week: dow,
-      is_target: inRange && targetDays.includes(dow),
-      video: v ? (() => {
-        const ytLoc = v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination");
-        const kalLoc = v.locations?.find(l => l.platform === "Kaltura" && l.role === "Destination");
-        const ytFromLoc = ytLoc?.external_url
-          ?? (ytLoc?.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
-        // Legacy single destination_url field — assume YouTube unless a Kaltura location proves otherwise.
-        const ytFromLegacy = !ytFromLoc && v.destination_url && !kalLoc ? v.destination_url : undefined;
-        return {
-          id: v.id, title: v.title, duration_seconds: v.duration_seconds,
-          source_platform: v.source_platform, status: v.status,
-          origin_url: v.download_url || undefined,
-          youtube_url: ytFromLoc ?? ytFromLegacy,
-          kaltura_url: kalLoc?.external_url ?? undefined,
-        };
-      })() : undefined,
-    });
+    const isTarget = inRange && targetDays.includes(dow);
+    const dayVideos = byDate.get(dateStr);
+
+    if (dayVideos && dayVideos.length > 0) {
+      // Emit one slot per video on this date — Kaltura videos no longer
+      // hide behind same-day Zoom records.
+      for (const v of dayVideos) {
+        slots.push({
+          date: dateStr,
+          day_of_week: dow,
+          is_target: isTarget,
+          video: videoSlotPayload(v),
+        });
+      }
+    } else {
+      // Empty slot — target-day gap or non-target empty day.
+      slots.push({
+        date: dateStr,
+        day_of_week: dow,
+        is_target: isTarget,
+        video: undefined,
+      });
+    }
   }
   return slots;
 }
@@ -295,17 +338,26 @@ export function buildCalendarOverview(
 
   while (y < endY || (y === endY && m <= endM - 1)) {
     const slots = buildCalendarMonth(videos, profile, y, m);
-    const targetSlots = slots.filter(s => s.is_target);
+    // Multiple slots per date are possible (one per video on that date),
+    // so target_days and gaps must dedupe by date — counting days, not rows.
+    const targetDates = new Set<string>();
+    const targetDatesWithVideo = new Set<string>();
+    for (const s of slots) {
+      if (!s.is_target) continue;
+      targetDates.add(s.date);
+      if (s.video) targetDatesWithVideo.add(s.date);
+    }
+    const targetSlotsWithVideo = slots.filter(s => s.is_target && s.video);
     summaries.push({
       year: y,
       month: m,
       label: `${MONTH_NAMES_SHORT[m]} ${y}`,
-      target_days: targetSlots.length,
-      published: targetSlots.filter(s => s.video?.status === "Published").length,
-      approved: targetSlots.filter(s => s.video?.status === "Approved" || s.video?.status === "Publishing").length,
-      in_backlog: targetSlots.filter(s => s.video && (s.video.status === "InScope" || s.video.status === "Discovered")).length,
-      failed: targetSlots.filter(s => s.video?.status === "Failed" || s.video?.status === "ToRetry").length,
-      gaps: targetSlots.filter(s => !s.video).length,
+      target_days: targetDates.size,
+      published: targetSlotsWithVideo.filter(s => s.video?.status === "Published").length,
+      approved: targetSlotsWithVideo.filter(s => s.video?.status === "Approved" || s.video?.status === "Publishing").length,
+      in_backlog: targetSlotsWithVideo.filter(s => s.video && (s.video.status === "InScope" || s.video.status === "Discovered")).length,
+      failed: targetSlotsWithVideo.filter(s => s.video?.status === "Failed" || s.video?.status === "ToRetry").length,
+      gaps: targetDates.size - targetDatesWithVideo.size,
       slots,
     });
     m++;

@@ -11,6 +11,9 @@ pub enum SourcePlatform {
     Loom,
     Fireflies,
     YouTube,
+    /// Direct uploads to Kaltura (often live-streamed via OBS/Streamyard
+    /// to Kaltura's RTMP ingest, then captured as VOD).
+    Kaltura,
 }
 
 /// Any platform a video can exist on (source or destination).
@@ -32,6 +35,7 @@ impl From<SourcePlatform> for Platform {
             SourcePlatform::Loom => Platform::Loom,
             SourcePlatform::Fireflies => Platform::Fireflies,
             SourcePlatform::YouTube => Platform::YouTube,
+            SourcePlatform::Kaltura => Platform::Kaltura,
         }
     }
 }
