@@ -1138,6 +1138,42 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
             {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
           </span>
         )}
+        {/* Drive folder link — opens the artifacts folder (transcript,
+            description, summary, chat) for this record. */}
+        <a
+          href={`/api/artifacts/${encodeURIComponent(video.id)}/folder`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open this record's Drive folder (transcript, description, summary, chat)"
+          style={{
+            fontSize: "0.7rem",
+            padding: "1px 6px",
+            borderRadius: 10,
+            background: "rgba(56,189,248,0.06)",
+            color: "#7dd3fc",
+            border: "1px solid rgba(56,189,248,0.2)",
+            textDecoration: "none",
+          }}
+        >
+          Drive
+        </a>
+        {/* Catalog UUID — clickable to copy. Useful when correlating with
+            server logs, .meta.json files, or webhook payloads. */}
+        <span
+          onClick={() => {
+            navigator.clipboard?.writeText(video.id).catch(() => {});
+          }}
+          title="Click to copy the catalog ID"
+          style={{
+            cursor: "pointer",
+            fontFamily: "monospace",
+            fontSize: "0.7rem",
+            color: "var(--text-muted)",
+            userSelect: "all",
+          }}
+        >
+          {video.id.slice(0, 8)}…
+        </span>
       </div>
 
       {showParticipants && video.participants.length > 0 && (
