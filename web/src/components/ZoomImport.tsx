@@ -115,9 +115,75 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     });
   }
 
+  /**
+   * Background-fetch the Zoom in-meeting CHAT for a record (if available)
+   * and push it to Drive as `chat.md`. Best-effort; failures are logged
+   * to the event stream and don't block the import.
+   */
+  async function fetchAndStoreChat(args: {
+    record_id: string;
+    meeting_uuid: string;
+    title: string;
+    source_id: string;
+    recorded_at: string;
+    creds: { accountId: string; clientId: string; clientSecret: string };
+  }): Promise<void> {
+    try {
+      const res = await fetch("/api/zoom/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...args.creds, meetingUuid: args.meeting_uuid }),
+      });
+      if (res.status === 404) return; // no CHAT file for this recording — common, silent
+      if (!res.ok) {
+        onEvent(`Zoom chat fetch failed for "${args.title}": ${res.status}`);
+        return;
+      }
+      const data = await res.json() as { content: string; participants: string[]; private_chats_stripped: boolean; private_chats_stripped_count: number; lines: number };
+      if (!data.content) return;
+
+      const frontmatter = [
+        "---",
+        `record_id: ${args.record_id}`,
+        "source_platform: Zoom",
+        `source_id: ${args.source_id}`,
+        `recorded_at: ${args.recorded_at}`,
+        `generated_at: ${new Date().toISOString()}`,
+        `private_chats_stripped: ${data.private_chats_stripped}`,
+        ...(data.private_chats_stripped_count > 0 ? [`private_chats_stripped_count: ${data.private_chats_stripped_count}`] : []),
+        `participants: [${data.participants.join(", ")}]`,
+        "---",
+        "",
+        "",
+      ].join("\n");
+
+      const putRes = await fetch(`/api/artifacts/${encodeURIComponent(args.record_id)}/chat`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: frontmatter + data.content,
+          title: args.title,
+          source_platform: "Zoom",
+          source_id: args.source_id,
+          recorded_at: args.recorded_at,
+        }),
+      });
+      if (!putRes.ok) {
+        onEvent(`Zoom chat upload failed for "${args.title}": ${putRes.status}`);
+        return;
+      }
+      onEvent(`Zoom chat captured for "${args.title}" (${data.lines} lines${data.private_chats_stripped_count > 0 ? `, ${data.private_chats_stripped_count} private stripped` : ""})`);
+    } catch (err) {
+      onEvent(`Zoom chat error for "${args.title}": ${String(err)}`);
+    }
+  }
+
   function importSelected() {
     let count = 0;
     let skipped = 0;
+    const chatJobs: Array<() => Promise<void>> = [];
+    const creds = getZoomCredentials();
+
     for (const meeting of meetings) {
       if (!selected.has(meeting.uuid)) continue;
 
@@ -148,6 +214,20 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
       onEvent(`VideoIndexed: "${meeting.topic}" (Zoom import)`);
+
+      // ADR-039: capture in-meeting chat to Drive if a CHAT file exists
+      if (creds && meeting.recording_files?.some((f) => f.file_type === "CHAT")) {
+        const recordId = record.id();
+        chatJobs.push(() => fetchAndStoreChat({
+          record_id: recordId,
+          meeting_uuid: meeting.uuid,
+          title: meeting.topic,
+          source_id: sourceId,
+          recorded_at: meeting.start_time,
+          creds,
+        }));
+      }
+
       count++;
     }
 
@@ -160,6 +240,13 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
       setMeetings([]);
       setSelected(new Set());
       setFetched(false);
+
+      // Fire chat fetches in the background, throttled to avoid hammering Zoom
+      void (async () => {
+        for (const job of chatJobs) {
+          await job();
+        }
+      })();
     }
   }
 
