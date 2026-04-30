@@ -58,22 +58,29 @@ Move all four artifact types to a Workspace-owned Google Drive folder, as Markdo
 
 ```
 [Shared Drive: agentics.org] / Video-Sync Artifacts /
-  2026-04-21--zoom-abc123-engineering-standup /
-    transcript.md
-    description.md
-    summary.md
-    chat.md
-    .meta.json
-  2026-04-22--fireflies-xyz789-board-review /
-    transcript.md
-    description.md
-    summary.md
-    .meta.json   ← no chat.md (Fireflies has no chat capture)
-  ...
+  2026 /
+    04 /
+      2026-04-21--zoom-abc123-engineering-standup /
+        transcript.md
+        description.md
+        summary.md
+        chat.md
+        .meta.json
+      2026-04-22--fireflies-xyz789-board-review /
+        transcript.md
+        description.md
+        summary.md
+        .meta.json   ← no chat.md (Fireflies has no chat capture)
+      ...
+    05 /
+      ...
+  2027 /
+    ...
 ```
 
 - **Top-level**: a single Shared Drive folder, `Video-Sync Artifacts`. Configurable via env var `DRIVE_ROOT_FOLDER_ID`.
-- **Per-meeting folder**: name format `<recorded_at_yyyymmdd>--<source-platform>-<source-id-truncated-12>-<slugified-title-32>`. Slugify drops anything outside `[a-z0-9-]`. The leading date prefix gives chronological browsing in Drive's default sort.
+- **Year/month nesting**: `<YYYY>/<MM>/<meeting-folder>`. Keeps any one Drive UI list under ~30-100 entries even at 1000+ meetings; year/month is also how operators tend to look for "that meeting from March". Year/month folders are auto-created on first write.
+- **Per-meeting folder**: name format `<recorded_at_yyyymmdd>--<source-platform>-<source-id-truncated-12>-<slugified-title-32>`. Slugify drops anything outside `[a-z0-9-]`. The leading date prefix gives chronological browsing within the month.
 - **File names** are stable: `transcript.md`, `description.md`, `summary.md`, `chat.md`. Missing files are valid — not every meeting has every artifact. `.meta.json` is always present and acts as the index.
 
 ### File contents
@@ -133,6 +140,26 @@ A dedicated Google Workspace service account `video-sync-drive@agentics-487016.i
 
 Service account key storage: Secret Manager, named `DRIVE_SERVICE_ACCOUNT_KEY`, mounted into Cloud Run via `--set-secrets`. Same pattern as `OPENROUTER_API_KEY`.
 
+### Plan B: skip domain-wide delegation entirely
+
+Domain-wide delegation is a high-blast-radius primitive — a leaked SA key can impersonate **any** Workspace user. If reviewers reject DwD on security grounds (legitimate; it's a known foot-gun), the alternative:
+
+1. **Use the Cloud Run runtime SA directly**, no DwD, no impersonation. SAs can own and create files in a Shared Drive when added as a member.
+2. Add the runtime SA email (`667037737667-compute@developer.gserviceaccount.com`) to the Shared Drive as **Manager**, same way you'd add a human.
+3. The SA owns the files it creates; reads/writes attributed to it in the Drive activity log.
+
+Tradeoffs vs Plan A (DwD):
+
+| | Plan A (DwD + bot user) | Plan B (runtime SA, no DwD) |
+|--|--|--|
+| Audit-log actor | `video-sync-bot@agentics.org` (human-readable) | SA email (less readable) |
+| Impersonation blast radius if key leaks | Whole Workspace | Just the Shared Drive |
+| Workspace seat cost | Yes (bot user) | No |
+| Setup steps | Workspace admin + GCP IAM | GCP IAM only |
+| Required OAuth scope | `drive.file` | `drive.file` |
+
+Plan B is **strictly safer and simpler**; Plan A's only advantage is prettier audit logs. Recommend Plan B unless audit-log readability is a hard requirement from compliance.
+
 ---
 
 ## API surface
@@ -162,6 +189,22 @@ Mitigations:
 4. **`.meta.json` is always cached aggressively** (1 hour TTL on server, indefinite on client until explicit refresh). It's the only thing in the catalog GET path.
 
 Worst case: a "Find duplicates" scan (ADR-033) iterating every transcript would hit the rate limit. We don't do this today — if we add it, batch via Drive's `files.export` with `Accept: text/plain` and parallelism capped at 10.
+
+---
+
+## Out-of-band edits (operator edits the Drive copy directly)
+
+A predictable workflow: operator notices the LLM-generated summary has a factual error, opens `summary.md` in Drive, fixes it, then publishes the video via the app. Whose version goes to YouTube — the app's stale cache, or Drive's edited version?
+
+**Decision: Drive is read-through at publish time, never cache-served for the publish path.** Specifically:
+
+- The catalog list page and per-record detail panel may serve cached artifacts (acceptable staleness, fast UI).
+- `VideoCard.publishToYouTube()` and the post-processing webhook handler MUST issue a fresh `Drive.files.get` (or `If-Modified-Since` revalidation) for each artifact it consumes — `description` for the YouTube description, `summary` for the email body.
+- Cost is one Drive read per publish (~300ms); negligible compared to the YouTube upload itself.
+
+Knock-on: when the app's UI saves an edit (`PUT /api/artifacts/:id/:kind`), the server writes to Drive AND invalidates the cache entry by Drive's `modifiedTime` — so the next read by anyone gets the fresh copy. The cache key being `(drive_file_id, modified_time)` makes this automatic.
+
+What we don't try to handle: simultaneous edits (operator A in the app, operator B in Drive's editor). Drive's last-writer-wins on the file body; we don't merge. Document this as a known limitation; operators coordinate out-of-band as they always have.
 
 ---
 
@@ -283,7 +326,7 @@ We currently fetch `TRANSCRIPT` (ADR-015 indirectly via Fireflies, plus Zoom's o
 
 Capture path: extend `web/src/app/api/zoom/recordings/route.ts` to also pass through chat URLs, and add a new fetch step in the Zoom import flow that downloads the chat (if present), normalises to markdown (one line per message, frontmatter with participant list), and stores as `chat.md`.
 
-Privacy note: private chats (the "to Bob (privately)" line) ARE included by Zoom in the host's chat export. If this is a concern, add a config knob `STRIP_PRIVATE_CHATS=1` that filters lines containing `(privately)`. Default off (transcript is what the host received from Zoom, not a fabrication).
+Privacy: private chats (the "to Bob (privately)" line) ARE included by Zoom in the host's chat export. **Default behaviour: stripped.** Lines containing `(privately)` are filtered out before writing `chat.md`, and the frontmatter records `private_chats_stripped: true`. To capture private chats verbatim (e.g. for legal hold or full audit), set `INCLUDE_PRIVATE_CHATS=1` per import or globally — the operator who flips this should know they're now retaining content participants explicitly marked private. Privacy-safe default reduces compliance friction for orgs that haven't audited their Zoom retention policy.
 
 ---
 
@@ -307,7 +350,7 @@ Privacy note: private chats (the "to Bob (privately)" line) ARE included by Zoom
 
 ### Risks
 
-- **Domain-wide delegation is powerful** — if the service account key leaks, the attacker can impersonate any Workspace user. Mitigation: key in Secret Manager, narrow OAuth scopes (`drive.file` not `drive`), bot-user-only impersonation, rotation every 90 days.
+- **Service account key leak** — Plan A (DwD): leaked key = impersonate any Workspace user; mitigation is Secret Manager, narrow `drive.file` scope, bot-user-only impersonation, 90-day rotation. Plan B (runtime SA): leaked key = read/write the Shared Drive only; substantially smaller blast radius. Plan B recommended unless compliance specifically requires human-readable audit-log actors.
 - **Drive folder accidentally moved or shared too broadly** — same blast radius as a misconfigured GCS bucket today, but more visible. Mitigation: folder is in a Shared Drive (org-owned, not personal), with audit logging.
 - **`.meta.json` corruption** orphans the per-record artifacts. Recovery: scan the folder, rebuild `.meta.json` from filenames. Document the recovery script alongside the migration script.
 
