@@ -515,14 +515,30 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       }
       const { entryId, playerUrl } = await res.json() as { entryId: string; playerUrl: string };
 
-      videoStore.mutate(video.id, (r) =>
-        r.mark_published(JSON.stringify({
-          destination_id: entryId,
-          destination_url: playerUrl,
-          destination_platform: "Kaltura",
-        })),
-      );
-      onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}`, { video_id: video.id });
+      // If the video is already Published (e.g. to YouTube), `mark_published`
+      // would fail the WASM transition (Published → Published not allowed).
+      // In that case, append a Kaltura destination location instead — same
+      // observable result for the Overview, no status churn.
+      if (video.status === "Published") {
+        videoStore.mutate(video.id, (r) =>
+          r.add_location(cmd({
+            platform: "Kaltura",
+            external_id: entryId,
+            external_url: playerUrl,
+            role: "Destination",
+          })),
+        );
+        onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}`, { video_id: video.id });
+      } else {
+        videoStore.mutate(video.id, (r) =>
+          r.mark_published(JSON.stringify({
+            destination_id: entryId,
+            destination_url: playerUrl,
+            destination_platform: "Kaltura",
+          })),
+        );
+        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}`, { video_id: video.id });
+      }
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
     } catch (err) {
@@ -991,6 +1007,14 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   const alreadyPublished = (video.locations ?? []).some(
     (l) => l.role === "Destination" && l.platform === "YouTube"
   );
+  const alreadyOnKaltura = (video.locations ?? []).some(
+    (l) => l.role === "Destination" && l.platform === "Kaltura"
+  );
+  // The Kaltura side-publish button is offered when the catalog already
+  // shows a YouTube destination (or is post-Published) but Kaltura is
+  // missing. Kaltura must be configured in Connections.
+  const canSidePublishKaltura = !alreadyOnKaltura
+    && (status === "Published" || (status === "Approved" && alreadyPublished));
 
   return (
     <div className="video-card" id={`video-card-${video.id}`}>
@@ -1775,8 +1799,18 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         )}
         {canPublish && alreadyPublished && (
           <span style={{ fontSize: "0.8rem", color: "var(--green)", padding: "4px 10px" }}>
-            Already published
+            Already on YouTube
           </span>
+        )}
+        {canSidePublishKaltura && (
+          <button
+            className="btn btn-sm btn-green"
+            onClick={publishToKaltura}
+            disabled={uploading}
+            title="Add this video to Kaltura too — keeps the YouTube copy as-is"
+          >
+            {uploading ? "Uploading…" : "Publish to Kaltura"}
+          </button>
         )}
         {canRetry && (
           <button className="btn btn-sm btn-yellow" onClick={markToRetry}>

@@ -86,8 +86,28 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
   // privacyTick forces re-render when cache is updated
   void privacyTick;
   const summaries = buildCalendarOverview(videos, profile);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expandedSet, setExpandedSet] = useState<Set<string>>(new Set());
   const [targetOnly, setTargetOnly] = useState(true);
+
+  // Filter chips — when any are active, only rows matching ALL active
+  // filters render. Chip categories:
+  //   src:Zoom / src:Fireflies / src:Loom        — by source platform
+  //   yt:public / yt:unlisted / yt:private       — by YouTube privacy
+  //   yt:none                                    — not yet on YouTube
+  //   kaltura                                    — has a Kaltura destination
+  //   drive                                      — has any Drive artifact
+  const [filters, setFilters] = useState<Set<string>>(new Set());
+  function toggleFilter(id: string) {
+    setFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function clearFilters() { setFilters(new Set()); }
+  function expandAll() { setExpandedSet(new Set(summaries.map(s => `${s.year}-${s.month}`))); }
+  function closeAll() { setExpandedSet(new Set()); }
 
   // Collect all YouTube IDs from visible summaries that don't yet have cached privacy
   function collectUnknownYouTubeIds(): string[] {
@@ -225,13 +245,19 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
           <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
           Target days only
         </label>
+        <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={expandAll} title="Expand every month">
+          Expand all
+        </button>
+        <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={closeAll} title="Collapse every month" disabled={expandedSet.size === 0}>
+          Close all
+        </button>
       </div>
 
       {/* Month rows */}
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {summaries.map((s) => {
           const key = `${s.year}-${s.month}`;
-          const isExpanded = expanded === key;
+          const isExpanded = expandedSet.has(key);
           const barTotal = s.target_days || 1;
           const pubW = (s.published / barTotal) * 100;
           const appW = (s.approved / barTotal) * 100;
@@ -241,7 +267,12 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
           return (
             <div key={key}>
               <div
-                onClick={() => setExpanded(isExpanded ? null : key)}
+                onClick={() => setExpandedSet(prev => {
+                  const next = new Set(prev);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "72px 1fr 120px 20px",
@@ -274,15 +305,16 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
 
               {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} />
+                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} filters={filters} />
               )}
             </div>
           );
         })}
       </div>
 
-      {/* Legend — status uses bar swatches (matching the stacked bars),
-          privacy uses mini-badges (matching the actual badge pills). */}
+      {/* Legend / filter chips — click any chip to filter the expanded
+          rows. Multiple chips combine with AND. Status swatches (the
+          stacked bars) are non-interactive; everything else filters. */}
       <div style={{ marginTop: 10, fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontWeight: 600 }}>Status:</span>
         <LegendBar color="var(--green)" label="Published" />
@@ -293,26 +325,128 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
           <span style={{ width: 8, height: 8, borderRadius: "50%", border: "1.5px solid var(--border)", display: "inline-block" }} />
           Gap
         </span>
-        <span style={{ marginLeft: 10, fontWeight: 600 }}>YouTube privacy:</span>
+
+        <span style={{ marginLeft: 10, fontWeight: 600 }}>Source:</span>
+        <FilterChip id="src:Fireflies" label="Fireflies" filters={filters} onToggle={toggleFilter} bg="rgba(245,158,11,0.12)" fg="#f59e0b" border="rgba(245,158,11,0.3)" />
+        <FilterChip id="src:Zoom" label="Zoom" filters={filters} onToggle={toggleFilter} bg="rgba(56,189,248,0.12)" fg="#38bdf8" border="rgba(56,189,248,0.3)" />
+
+        <span style={{ marginLeft: 10, fontWeight: 600 }}>YouTube:</span>
         {(["public","unlisted","private","unknown"] as const).map(p => {
           const c = PRIVACY_COLOR[p];
           return (
-            <span
+            <FilterChip
               key={p}
-              style={{
-                ...LINK_STYLE,
-                background: c.bg,
-                color: c.fg,
-                border: `1px solid ${c.border}`,
-              }}
-            >
-              {c.label}
-            </span>
+              id={`yt:${p}`}
+              label={c.label}
+              filters={filters}
+              onToggle={toggleFilter}
+              bg={c.bg}
+              fg={c.fg}
+              border={c.border}
+            />
           );
         })}
+        <FilterChip id="yt:none" label="No YT" filters={filters} onToggle={toggleFilter} bg="rgba(148,163,184,0.06)" fg="#94a3b8" border="rgba(148,163,184,0.2)" />
+
+        <span style={{ marginLeft: 10, fontWeight: 600 }}>Other:</span>
+        <FilterChip id="kaltura" label="Kaltura" filters={filters} onToggle={toggleFilter} bg={KALTURA_STYLE.bg} fg={KALTURA_STYLE.fg} border={KALTURA_STYLE.border} />
+        <FilterChip id="drive" label="Drive" filters={filters} onToggle={toggleFilter} bg={DRIVE_STYLE.bg} fg={DRIVE_STYLE.fg} border={DRIVE_STYLE.border} />
+
+        {filters.size > 0 && (
+          <button className="btn btn-sm" style={{ fontSize: "0.7rem", marginLeft: 6 }} onClick={clearFilters} title="Clear all filters">
+            Clear filters ({filters.size})
+          </button>
+        )}
       </div>
     </div>
   );
+}
+
+function FilterChip({ id, label, filters, onToggle, bg, fg, border }: {
+  id: string;
+  label: string;
+  filters: Set<string>;
+  onToggle: (id: string) => void;
+  bg: string;
+  fg: string;
+  border: string;
+}) {
+  const active = filters.has(id);
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(id)}
+      style={{
+        ...LINK_STYLE,
+        background: active ? fg : bg,
+        color: active ? "var(--bg-card, #fff)" : fg,
+        border: `1px solid ${border}`,
+        cursor: "pointer",
+        opacity: filters.size > 0 && !active ? 0.55 : 1,
+      }}
+      title={active ? `Filter active — click to clear ${label}` : `Filter to ${label} only`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Filter slots by the active filter chip set. Empty filter set returns
+ * the input unchanged. AND across categories, OR within a category:
+ *   - sources (`src:Zoom`, `src:Fireflies`)              — OR within
+ *   - YT privacy (`yt:public`/`yt:unlisted`/`yt:private`/
+ *     `yt:unknown`/`yt:none`)                            — OR within
+ *   - destination flags (`kaltura`, `drive`)             — singletons
+ * Slots without a video are dropped when any filter is active (gaps
+ * can't satisfy filters about a video).
+ */
+function applyFilters(slots: CalendarSlot[], videoMap: Map<string, VideoRecordJSON>, filters: Set<string>): CalendarSlot[] {
+  if (filters.size === 0) return slots;
+
+  const wantedSources = new Set<string>();
+  const wantedYt = new Set<string>(); // values from yt:* including "none"
+  let wantKaltura = false;
+  let wantDrive = false;
+  for (const f of filters) {
+    if (f.startsWith("src:")) wantedSources.add(f.slice(4));
+    else if (f.startsWith("yt:")) wantedYt.add(f.slice(3));
+    else if (f === "kaltura") wantKaltura = true;
+    else if (f === "drive") wantDrive = true;
+  }
+
+  return slots.filter(slot => {
+    const v = slot.video;
+    if (!v) return false; // gaps cannot satisfy any positive filter
+
+    if (wantedSources.size > 0 && !wantedSources.has(v.source_platform)) return false;
+
+    if (wantedYt.size > 0) {
+      if (!v.youtube_url) {
+        if (!wantedYt.has("none")) return false;
+      } else {
+        const ytId = extractYouTubeId(v.youtube_url);
+        const privacy: PrivacyStatus = ytId ? (getPrivacy(ytId) ?? "unknown") : "unknown";
+        if (!wantedYt.has(privacy)) return false;
+      }
+    }
+
+    if (wantKaltura && !v.kaltura_url) return false;
+
+    if (wantDrive) {
+      // Best-effort: we can't synchronously check Drive presence. For now,
+      // treat "Published" or "Approved" videos as having Drive artifacts
+      // (this is true after migration; transcripts.json migration produced
+      // a Drive folder for every record with a transcript). Refinement
+      // would need a server endpoint that returns a record-id → has-folder
+      // bitmap; defer that until the heuristic proves wrong.
+      const fullV = videoMap.get(v.id);
+      const hasTranscript = fullV?.transcript_text != null;
+      if (!hasTranscript && v.status !== "Published") return false;
+    }
+
+    return true;
+  });
 }
 
 /** Format a date string as "Thu 15" */
@@ -323,9 +457,9 @@ function shortDate(dateStr: string): string {
 }
 
 /** Vertical date list with status, title, and clickable origin/destination links. */
-function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[]; onNavigateToVideo?: (id: string, intent?: "publish") => void }) {
+function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[]; onNavigateToVideo?: (id: string, intent?: "publish") => void; filters: Set<string> }) {
   const videoMap = new Map(videos.map(v => [v.id, v]));
-  const visible = targetOnly ? slots.filter(s => s.is_target) : slots;
+  const visible = applyFilters(targetOnly ? slots.filter(s => s.is_target) : slots, videoMap, filters);
 
   // When not in target-only mode, insert week separators
   // Show week-start (Mon) dates as section headers
