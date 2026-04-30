@@ -39,6 +39,19 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
 
+  // When the operator picks the 1st of any month as the start date, auto-fill
+  // the end date to the last day of that same month. Saves the second click
+  // for the common "import all of <month>" workflow.
+  function onDateFromChange(value: string) {
+    setDateFrom(value);
+    if (/^\d{4}-\d{2}-01$/.test(value)) {
+      const [y, m] = value.split("-").map(Number);
+      // Day 0 of next month = last day of current month, in UTC
+      const last = new Date(Date.UTC(y, m, 0));
+      setDateTo(last.toISOString().slice(0, 10));
+    }
+  }
+
   function selectTab(tab: Tab) {
     setActive(tab);
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* ignore */ }
@@ -79,7 +92,7 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
               <input
                 type="date"
                 value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                onChange={(e) => onDateFromChange(e.target.value)}
                 style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
               />
               <span>to</span>

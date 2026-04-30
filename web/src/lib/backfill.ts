@@ -54,6 +54,7 @@ export interface CalendarSlot {
     status: string;
     origin_url?: string;   // source download URL (may be pseudo-URL)
     youtube_url?: string;  // destination URL on YouTube
+    kaltura_url?: string;  // destination URL on Kaltura
   };
 }
 
@@ -225,16 +226,21 @@ export function buildCalendarMonth(
       date: dateStr,
       day_of_week: dow,
       is_target: inRange && targetDays.includes(dow),
-      video: v ? {
-        id: v.id, title: v.title, duration_seconds: v.duration_seconds,
-        source_platform: v.source_platform, status: v.status,
-        origin_url: v.download_url || undefined,
-        youtube_url: v.destination_url
-          ?? v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination")?.external_url
-          ?? (v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination")?.external_id
-            ? `https://www.youtube.com/watch?v=${v.locations.find(l => l.platform === "YouTube" && l.role === "Destination")!.external_id}`
-            : undefined),
-      } : undefined,
+      video: v ? (() => {
+        const ytLoc = v.locations?.find(l => l.platform === "YouTube" && l.role === "Destination");
+        const kalLoc = v.locations?.find(l => l.platform === "Kaltura" && l.role === "Destination");
+        const ytFromLoc = ytLoc?.external_url
+          ?? (ytLoc?.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
+        // Legacy single destination_url field — assume YouTube unless a Kaltura location proves otherwise.
+        const ytFromLegacy = !ytFromLoc && v.destination_url && !kalLoc ? v.destination_url : undefined;
+        return {
+          id: v.id, title: v.title, duration_seconds: v.duration_seconds,
+          source_platform: v.source_platform, status: v.status,
+          origin_url: v.download_url || undefined,
+          youtube_url: ytFromLoc ?? ytFromLegacy,
+          kaltura_url: kalLoc?.external_url ?? undefined,
+        };
+      })() : undefined,
     });
   }
   return slots;

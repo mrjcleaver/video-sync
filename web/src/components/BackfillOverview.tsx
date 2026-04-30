@@ -24,11 +24,27 @@ function extractYouTubeId(url: string | null | undefined): string | null {
   return null;
 }
 
+// YouTube lozenge: privacy-aware label. Always prefixed "YT:" so it's
+// obviously YouTube vs. other destination platforms.
 const PRIVACY_COLOR: Record<PrivacyStatus, { bg: string; fg: string; border: string; label: string }> = {
-  public:   { bg: "rgba(34,197,94,0.12)",  fg: "#22c55e", border: "rgba(34,197,94,0.3)",  label: "Public" },
-  unlisted: { bg: "rgba(250,204,21,0.12)", fg: "#facc15", border: "rgba(250,204,21,0.3)", label: "Unlisted" },
-  private:  { bg: "rgba(248,113,113,0.12)",fg: "#f87171", border: "rgba(248,113,113,0.3)",label: "Private" },
+  public:   { bg: "rgba(34,197,94,0.12)",  fg: "#22c55e", border: "rgba(34,197,94,0.3)",  label: "YT: Public" },
+  unlisted: { bg: "rgba(250,204,21,0.12)", fg: "#facc15", border: "rgba(250,204,21,0.3)", label: "YT: Unlisted" },
+  private:  { bg: "rgba(248,113,113,0.12)",fg: "#f87171", border: "rgba(248,113,113,0.3)",label: "YT: Private" },
   unknown:  { bg: "rgba(148,163,184,0.12)",fg: "#94a3b8", border: "rgba(148,163,184,0.3)",label: "YouTube" },
+};
+
+// Kaltura lozenge — single style; we don't track per-entry privacy.
+const KALTURA_STYLE = {
+  bg: "rgba(168,85,247,0.12)",
+  fg: "#a855f7",
+  border: "rgba(168,85,247,0.3)",
+};
+
+// Drive lozenge — opens the Drive folder for this record's artifacts.
+const DRIVE_STYLE = {
+  bg: "rgba(56,189,248,0.06)",
+  fg: "#7dd3fc",
+  border: "rgba(56,189,248,0.2)",
 };
 
 interface Props {
@@ -350,6 +366,8 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: Cal
         const color = v ? statusColor(v.status) : slot.is_target ? "var(--border)" : "transparent";
         const originHref = v ? resolveExternalUrl(v.origin_url) : null;
         const ytHref = v?.youtube_url ?? null;
+        const kalHref = v?.kaltura_url ?? null;
+        const driveHref = v ? `/api/artifacts/${encodeURIComponent(v.id)}/folder` : null;
 
         return (
           <div
@@ -357,7 +375,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: Cal
             onClick={v ? () => (onNavigateToVideo ?? scrollToVideo)(v.id) : undefined}
             style={{
               display: "grid",
-              gridTemplateColumns: "52px 10px 1fr auto auto",
+              gridTemplateColumns: "52px 10px 1fr auto auto auto auto",
               alignItems: "center",
               gap: 6,
               padding: "3px 4px",
@@ -424,7 +442,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: Cal
               <span style={{ width: 48 }} />
             )}
 
-            {/* YouTube link (coloured by privacy status when known) */}
+            {/* YouTube lozenge (coloured by privacy status when known) */}
             {ytHref ? (() => {
               const ytId = extractYouTubeId(ytHref);
               const privacy: PrivacyStatus = ytId ? (getPrivacy(ytId) ?? "unknown") : "unknown";
@@ -435,7 +453,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: Cal
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={e => e.stopPropagation()}
-                  title={privacy === "unknown" ? "Privacy not yet checked — click Check Status on the card" : `YouTube · ${p.label}`}
+                  title={privacy === "unknown" ? "Published to YouTube — privacy not yet checked" : `YouTube · ${privacy}`}
                   style={{
                     ...LINK_STYLE,
                     background: p.bg,
@@ -447,7 +465,49 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo }: { slots: Cal
                 </a>
               );
             })() : (
+              <span style={{ width: 80 }} />
+            )}
+
+            {/* Kaltura lozenge */}
+            {kalHref ? (
+              <a
+                href={kalHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title="Published to Kaltura"
+                style={{
+                  ...LINK_STYLE,
+                  background: KALTURA_STYLE.bg,
+                  color: KALTURA_STYLE.fg,
+                  border: `1px solid ${KALTURA_STYLE.border}`,
+                }}
+              >
+                Kaltura
+              </a>
+            ) : (
               <span style={{ width: 56 }} />
+            )}
+
+            {/* Drive lozenge — folder of artifacts (transcript, summary, chat, ...) */}
+            {driveHref ? (
+              <a
+                href={driveHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title="Open the Drive folder containing transcript, description, summary, and chat artifacts"
+                style={{
+                  ...LINK_STYLE,
+                  background: DRIVE_STYLE.bg,
+                  color: DRIVE_STYLE.fg,
+                  border: `1px solid ${DRIVE_STYLE.border}`,
+                }}
+              >
+                Drive
+              </a>
+            ) : (
+              <span style={{ width: 48 }} />
             )}
           </div>
         );

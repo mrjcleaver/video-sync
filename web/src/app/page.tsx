@@ -14,6 +14,7 @@ import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../components/PostProcessingRulesPanel";
 import BackfillPanel from "../components/BackfillPanel";
+import SyncStatusPanel from "../components/SyncStatusPanel";
 import VideoCard from "../components/VideoCard";
 import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
@@ -237,6 +238,8 @@ export default function Dashboard() {
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
       <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
+
+      <SyncStatusPanel videos={videos} onNavigateToVideo={ensureVideoVisible} />
 
       <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
 
