@@ -4,6 +4,7 @@ import { useState } from "react";
 import ZoomImport from "./ZoomImport";
 import FirefliesImport from "./FirefliesImport";
 import KalturaImport from "./KalturaImport";
+import YouTubeLiveImport from "./YouTubeLiveImport";
 import URLImport from "./URLImport";
 import IndexForm from "./IndexForm";
 
@@ -109,6 +110,8 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
             <ZoomImport      onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} />
             <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
             <KalturaImport   onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} />
+            <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
+            <YouTubeLiveImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} />
           </>
         )}
         {active === "url"    && <URLImport onImported={onImported} onEvent={onEvent} />}
