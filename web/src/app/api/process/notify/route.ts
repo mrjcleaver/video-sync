@@ -2,10 +2,18 @@
  * POST /api/process/notify
  * Fire post-processing actions: webhook HTTP POST or Gmail email.
  * Always returns 200 — callers are fire-and-forget.
+ *
+ * ADR-039: webhook payload now includes an `artifacts` block with Drive
+ * URLs (folder + per-kind file references). Email body's transcript
+ * excerpt replaced by a Drive folder link.
+ *
+ * `video.transcript_text` stays in the payload for one release cycle as
+ * a deprecated field; consumers should switch to `artifacts.transcript`.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getMeta, buildWebhookArtifactBlock, type WebhookArtifactBlock } from "../../../../lib/driveArtifactStore";
 import nodemailer from "nodemailer";
 
 interface NotifyRequest {
@@ -26,6 +34,29 @@ interface NotifyRequest {
   error?: string;
 }
 
+function baseApiUrl(req: NextRequest): string {
+  // Env var wins; fall back to inferring from the request host.
+  const env = process.env.APP_BASE_URL;
+  if (env) return env.replace(/\/$/, "");
+  const host = req.headers.get("host");
+  if (host) return `https://${host}`;
+  return "https://video-sync.agentics.org";
+}
+
+async function resolveArtifacts(record_id: string, baseUrl: string): Promise<WebhookArtifactBlock | null> {
+  try {
+    const meta = await getMeta(record_id);
+    if (!meta) return null;
+    return buildWebhookArtifactBlock(meta, baseUrl);
+  } catch (err) {
+    serverLog("warn", "post-process:artifacts", "drive lookup failed", {
+      record_id,
+      error: String(err),
+    });
+    return null;
+  }
+}
+
 async function handler(req: NextRequest) {
   let body: NotifyRequest;
   try {
@@ -36,12 +67,17 @@ async function handler(req: NextRequest) {
 
   const { action, video, success, youtubeUrl, error } = body;
   const rid = req.headers.get("x-request-id") ?? "n/a";
+  const baseUrl = baseApiUrl(req);
+
+  // Resolve once; both webhook and email reuse it.
+  const artifacts = await resolveArtifacts(video.id, baseUrl);
 
   if (action.type === "webhook") {
     const payload = {
       event: success ? "publish_success" : "publish_failure",
       video,
       youtubeUrl: youtubeUrl ?? null,
+      ...(artifacts ? { artifacts } : {}),
       error: error ?? null,
       timestamp: new Date().toISOString(),
     };
@@ -54,6 +90,7 @@ async function handler(req: NextRequest) {
       serverLog("info", "post-process:webhook", "fired", {
         url: action.url,
         status: res.status,
+        has_artifacts: artifacts !== null,
         rid,
       });
     } catch (err) {
@@ -78,10 +115,6 @@ async function handler(req: NextRequest) {
           .replace(/\{\{status\}\}/g, statusLabel)
       : `Video ${statusLabel}: ${video.title}`;
 
-    const transcriptExcerpt = video.transcript_text
-      ? video.transcript_text.slice(0, 500) + (video.transcript_text.length > 500 ? " …" : "")
-      : null;
-
     const lines = [
       `Video: ${video.title}`,
       `Status: ${statusLabel}`,
@@ -91,7 +124,9 @@ async function handler(req: NextRequest) {
       video.recorded_at ? `Recorded: ${video.recorded_at}` : null,
       `Catalog ID: ${video.id}`,
       video.description ? `\nDescription:\n${video.description}` : null,
-      transcriptExcerpt ? `\nTranscript excerpt:\n${transcriptExcerpt}` : null,
+      artifacts?.folder.drive_web_url
+        ? `\nDrive folder: ${artifacts.folder.drive_web_url}`
+        : null,
     ].filter(Boolean);
 
     try {
