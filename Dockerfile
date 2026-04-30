@@ -27,9 +27,10 @@ ARG BUILD_DATE
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ .
-# Pre-built WASM pkg is checked in under web/../pkg — copy it so the build can
-# resolve the relative import (../../pkg)
-COPY pkg/ ../pkg/
+# WASM pkg comes from stage 0 (wasm-pack build) so the build context
+# doesn't need pkg/ checked in. The relative import in web/src/lib/wasm.ts
+# resolves via ../../pkg from the web/ working dir.
+COPY --from=wasm /build/pkg ../pkg/
 # Ensure public/ exists so the COPY in the runner stage doesn't fail
 RUN mkdir -p /app/public
 # Next 15 type-check worker OOMs at the default ~2GB heap once the project
