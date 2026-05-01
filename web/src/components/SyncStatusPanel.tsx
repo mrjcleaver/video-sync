@@ -60,9 +60,18 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
     };
   }, [videos]);
 
-  const profileObj = profileId === "__all__"
+  // Sync Status is a "what's been synced through today" view — it borrows
+  // the selected profile's source-platform / target-day shape but its
+  // date_to is always "today". Otherwise a profile with a stale date_to
+  // (e.g. set to two weeks ago when the operator was running a fixed
+  // backfill window) hides every record imported since.
+  const baseProfile = profileId === "__all__"
     ? syntheticAll
     : (profiles.find(p => p.id === profileId) ?? syntheticAll);
+  const profileObj: BackfillProfile = useMemo(
+    () => ({ ...baseProfile, date_to: new Date().toISOString().slice(0, 10) }),
+    [baseProfile],
+  );
 
   return (
     <div className="zoom-import">
