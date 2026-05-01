@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [videos, setVideos] = useState<VideoRecordJSON[]>([]);
   const [events, setEvents] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>("Active");
+  const [search, setSearch] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
   const [showConnections, setShowConnections] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
@@ -174,16 +175,37 @@ export default function Dashboard() {
     );
   }
 
-  const filtered = (
-    filter === "All" ? videos
-    : filter === "Active" ? videos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
-    : filter === "Done" ? videos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
-    : videos.filter((v) => v.status === filter)
-  ).slice().sort((a, b) =>
-    sortBy === "recorded"
-      ? new Date(b.recorded_at || b.indexed_at).getTime() - new Date(a.recorded_at || a.indexed_at).getTime()
-      : lastChange(b) - lastChange(a)
-  );
+  const filtered = (() => {
+    const base =
+      filter === "All" ? videos
+      : filter === "Active" ? videos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
+      : filter === "Done" ? videos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
+      : videos.filter((v) => v.status === filter);
+
+    // Search across title, source_platform, source_id, recorded_at,
+    // catalog id, and tags. Multiple whitespace-separated terms are
+    // ANDed (every term must appear somewhere in the haystack).
+    const q = search.trim().toLowerCase();
+    const filteredBySearch = q === "" ? base : base.filter((v) => {
+      const haystack = [
+        v.title,
+        v.source_platform,
+        v.source_id,
+        v.recorded_at ?? "",
+        v.indexed_at ?? "",
+        v.id,
+        ...(v.tags ?? []),
+        ...(v.participants ?? []),
+      ].join(" ").toLowerCase();
+      return q.split(/\s+/).every(term => haystack.includes(term));
+    });
+
+    return filteredBySearch.slice().sort((a, b) =>
+      sortBy === "recorded"
+        ? new Date(b.recorded_at || b.indexed_at).getTime() - new Date(a.recorded_at || a.indexed_at).getTime()
+        : lastChange(b) - lastChange(a),
+    );
+  })();
 
   const counts: Record<string, number> = {};
   for (const v of videos) {
@@ -338,10 +360,37 @@ export default function Dashboard() {
             </div>
           )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, marginTop: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
-              {filtered.length} video{filtered.length !== 1 ? "s" : ""}
+              {filtered.length}{search.trim() ? ` of ${videos.length}` : ""} video{filtered.length !== 1 ? "s" : ""}
             </span>
+            <input
+              type="search"
+              placeholder="Search title, source, date, tags, participants…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                padding: "4px 8px",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                color: "var(--text)",
+                fontSize: "0.8rem",
+                flex: "1 1 220px",
+                minWidth: 200,
+              }}
+              title="Multiple words AND together — all terms must appear somewhere in the record's title, source, date, id, tags, or participants."
+            />
+            {search.trim() && (
+              <button
+                className="btn btn-sm"
+                style={{ padding: "1px 8px", fontSize: "0.72rem" }}
+                onClick={() => setSearch("")}
+                title="Clear the search filter"
+              >
+                Clear
+              </button>
+            )}
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>· Sort:</span>
             {(["recorded", "updated"] as const).map((s) => (
               <button
@@ -360,7 +409,9 @@ export default function Dashboard() {
               <div className="empty-state">
                 {videos.length === 0
                   ? "No videos indexed yet. Use the Meetings, URL, or Manual import tabs above."
-                  : `No videos with status "${filter}".`}
+                  : search.trim()
+                    ? `No videos match "${search}" within "${filter}". Clear search or pick a wider filter.`
+                    : `No videos with status "${filter}".`}
               </div>
             )}
             {filtered.map((v) => (
