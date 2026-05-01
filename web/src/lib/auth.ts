@@ -176,42 +176,57 @@ async function lookupRole(email: string): Promise<Role | null> {
 }
 
 /**
- * Fetch a metadata-server access token (the Cloud Run runtime SA) and
- * call Cloud Identity API. Returns the roles the user inherits from
- * Workspace group membership.
+ * Resolve roles from Cloud Identity by checking each video-sync group
+ * for the user's membership.
+ *
+ * We deliberately don't use `memberships:searchTransitiveGroups` —
+ * that API requires the caller to have Workspace user-reader admin
+ * privileges, which the runtime SA doesn't have. Instead we query
+ * each group via `groups:lookup` + `memberships:lookup`, which the
+ * SA *can* do because it's a MEMBER+MANAGER on each group.
+ *
+ * Group resource names (groups/{id}) are stable and cached for 24h
+ * to avoid the lookup round-trip on every role check.
  */
+const GROUP_NAME_TTL_MS = 24 * 60 * 60 * 1000;
+const groupNameCache = new Map<string, { name: string; expires: number }>();
+
+async function resolveGroupName(token: string, groupEmail: string): Promise<string | null> {
+  const cached = groupNameCache.get(groupEmail);
+  if (cached && cached.expires > Date.now()) return cached.name;
+  const url = new URL("https://cloudidentity.googleapis.com/v1/groups:lookup");
+  url.searchParams.set("groupKey.id", groupEmail);
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`groups:lookup ${groupEmail} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json() as { name?: string };
+  if (!data.name) return null;
+  groupNameCache.set(groupEmail, { name: data.name, expires: Date.now() + GROUP_NAME_TTL_MS });
+  return data.name;
+}
+
+async function isMemberOfGroup(token: string, groupName: string, userEmail: string): Promise<boolean> {
+  const url = new URL(`https://cloudidentity.googleapis.com/v1/${groupName}/memberships:lookup`);
+  url.searchParams.set("memberKey.id", userEmail);
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return false;
+  if (!res.ok) throw new Error(`memberships:lookup ${groupName} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return true; // 200 → membership exists
+}
+
 async function rolesFromCloudIdentity(email: string, domain: string): Promise<Role[]> {
   const token = await getMetadataAccessToken();
-  const url = new URL("https://cloudidentity.googleapis.com/v1/groups/-/memberships:searchTransitiveGroups");
-  // Cloud Identity requires both clauses: the member_key_id to scope the
-  // search to this user, AND a labels filter to identify the group type
-  // (Workspace email groups are tagged `groups.discussion_forum`). Without
-  // the labels clause the API rejects the request with INVALID_ARGUMENT.
-  // Single-quote escaping inside the user portion to avoid CEL injection.
-  const safeEmail = email.replace(/'/g, "");
-  url.searchParams.set(
-    "query",
-    `member_key_id == '${safeEmail}' && 'cloudidentity.googleapis.com/groups.discussion_forum' in labels`,
-  );
-  url.searchParams.set("pageSize", "200");
-
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Cloud Identity API ${res.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await res.json() as { memberships?: Array<{ groupKey?: { id?: string } }> };
-  const memberOf = new Set(
-    (data.memberships ?? [])
-      .map(m => m.groupKey?.id?.toLowerCase())
-      .filter((s): s is string => !!s),
-  );
+  const groups: Array<{ email: string; role: Role }> = [
+    { email: `video-sync-key-admins@${domain}`, role: "Admin" },
+    { email: `video-sync-operators@${domain}`, role: "Publisher" },
+    { email: `video-sync-viewers@${domain}`, role: "Viewer" },
+  ];
   const roles: Role[] = [];
-  if (memberOf.has(`video-sync-key-admins@${domain}`.toLowerCase())) roles.push("Admin");
-  if (memberOf.has(`video-sync-operators@${domain}`.toLowerCase())) roles.push("Publisher");
-  if (memberOf.has(`video-sync-viewers@${domain}`.toLowerCase())) roles.push("Viewer");
+  for (const g of groups) {
+    const name = await resolveGroupName(token, g.email);
+    if (!name) continue;                                 // group doesn't exist → skip
+    if (await isMemberOfGroup(token, name, email)) roles.push(g.role);
+  }
   return roles;
 }
 
