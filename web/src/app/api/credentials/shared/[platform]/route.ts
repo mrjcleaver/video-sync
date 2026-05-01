@@ -23,7 +23,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { withRequestLogging } from "../../../../../lib/serverLogger";
+import { withRequestLogging, serverLog } from "../../../../../lib/serverLogger";
 import { getActor } from "../../../../../lib/auth";
 import {
   isSharedPlatform,
@@ -74,7 +74,13 @@ async function putHandler(req: NextRequest, ctx: { params: Promise<{ platform: s
     const result = await setSharedCredential(platform, body, actor.email);
     return NextResponse.json({ ok: true, platform, ...result });
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    serverLog("error", "api:credentials/shared", "set failed", {
+      platform,
+      actor: actor.email,
+      error: detail,
+    });
+    return NextResponse.json({ error: detail }, { status: 500 });
   }
 }
 
