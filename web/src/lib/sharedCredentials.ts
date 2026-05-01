@@ -46,7 +46,12 @@ const valueCache = new Map<SharedPlatform, CacheEntry>();
 let _client: SecretManagerServiceClient | null = null;
 
 function client(): SecretManagerServiceClient {
-  if (!_client) _client = new SecretManagerServiceClient();
+  if (!_client) {
+    // Force REST transport — gRPC's protobuf descriptors don't survive
+    // Next.js's webpack bundling, which manifests as "Error: undefined
+    // undefined: undefined" with no actionable detail.
+    _client = new SecretManagerServiceClient({ fallback: "rest" });
+  }
   return _client;
 }
 
