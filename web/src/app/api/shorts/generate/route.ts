@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 // Opus Clip API — see https://help.opus.pro/api-reference/overview
 const OPUS_API_BASE = "https://api.opus.pro/api";
@@ -35,13 +36,17 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { parentYouTubeUrl, videoTitle, captions, prompt, apiKey } = body;
+  const { parentYouTubeUrl, videoTitle, captions, prompt } = body;
 
   if (!parentYouTubeUrl) {
     return NextResponse.json({ error: "parentYouTubeUrl is required" }, { status: 400 });
   }
+
+  // ADR-042: operator override (body) → shared secret → none.
+  const sharedOC = (await getSharedCredential("opusclip")) ?? {};
+  const apiKey = body.apiKey || (sharedOC as { apiKey?: string }).apiKey;
   if (!apiKey) {
-    return NextResponse.json({ error: "apiKey is required" }, { status: 400 });
+    return NextResponse.json({ error: "apiKey is required (set in Connections or shared by key admin)" }, { status: 400 });
   }
 
   serverLog("info", "shorts:generate", "Submitting clip job to Opus Clip", {

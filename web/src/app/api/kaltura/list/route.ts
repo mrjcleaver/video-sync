@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 // Dynamic — calls Kaltura API.
 export const dynamic = "force-dynamic";
@@ -62,8 +63,9 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const partnerId = body.partnerId || process.env.KALTURA_PARTNER_ID;
-  const adminSecret = body.adminSecret || process.env.KALTURA_ADMIN_SECRET;
+  const shared = (await getSharedCredential("kaltura")) ?? {};
+  const partnerId = body.partnerId || (shared as { partnerId?: string }).partnerId || process.env.KALTURA_PARTNER_ID;
+  const adminSecret = body.adminSecret || (shared as { adminSecret?: string }).adminSecret || process.env.KALTURA_ADMIN_SECRET;
   if (!partnerId || !adminSecret) {
     return NextResponse.json({ error: "partnerId and adminSecret are required" }, { status: 400 });
   }

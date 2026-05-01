@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging } from "../../../../lib/serverLogger";
 import { downloadFromSource } from "../../../../lib/sourceDownload";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 import { promises as fs, openAsBlob, statSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -105,8 +106,9 @@ async function handler(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const partnerId = body.partnerId || process.env.KALTURA_PARTNER_ID;
-  const adminSecret = body.adminSecret || process.env.KALTURA_ADMIN_SECRET;
+  const sharedKaltura = (await getSharedCredential("kaltura")) ?? {};
+  const partnerId = body.partnerId || (sharedKaltura as { partnerId?: string }).partnerId || process.env.KALTURA_PARTNER_ID;
+  const adminSecret = body.adminSecret || (sharedKaltura as { adminSecret?: string }).adminSecret || process.env.KALTURA_ADMIN_SECRET;
   if (!partnerId || !adminSecret || !body.title || !body.downloadUrl) {
     return NextResponse.json(
       { error: "partnerId, adminSecret, title, and downloadUrl are required" },

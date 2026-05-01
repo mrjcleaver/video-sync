@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 async function handler(req: NextRequest) {
   let body: { accountId?: string; clientId?: string; clientSecret?: string; from?: string; to?: string };
@@ -9,9 +10,11 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const accountId = body.accountId || process.env.ZOOM_ACCOUNT_ID;
-  const clientId = body.clientId || process.env.ZOOM_CLIENT_ID;
-  const clientSecret = body.clientSecret || process.env.ZOOM_CLIENT_SECRET;
+  // ADR-042 resolution: operator override (body) → shared secret → env-var legacy.
+  const shared = (await getSharedCredential("zoom")) ?? {};
+  const accountId = (body.accountId || (shared as { accountId?: string }).accountId) || process.env.ZOOM_ACCOUNT_ID;
+  const clientId = (body.clientId || (shared as { clientId?: string }).clientId) || process.env.ZOOM_CLIENT_ID;
+  const clientSecret = (body.clientSecret || (shared as { clientSecret?: string }).clientSecret) || process.env.ZOOM_CLIENT_SECRET;
   if (!accountId || !clientId || !clientSecret) {
     return NextResponse.json(
       { error: "accountId, clientId, and clientSecret are required" },

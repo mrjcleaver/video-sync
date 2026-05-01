@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 // Dynamic — calls Zoom API.
 export const dynamic = "force-dynamic";
@@ -97,9 +98,10 @@ async function handler(req: NextRequest) {
   }
 
   const rid = req.headers.get("x-request-id") ?? "n/a";
-  const accountId = body.accountId || process.env.ZOOM_ACCOUNT_ID;
-  const clientId = body.clientId || process.env.ZOOM_CLIENT_ID;
-  const clientSecret = body.clientSecret || process.env.ZOOM_CLIENT_SECRET;
+  const shared = (await getSharedCredential("zoom")) ?? {};
+  const accountId = (body.accountId || (shared as { accountId?: string }).accountId) || process.env.ZOOM_ACCOUNT_ID;
+  const clientId = (body.clientId || (shared as { clientId?: string }).clientId) || process.env.ZOOM_CLIENT_ID;
+  const clientSecret = (body.clientSecret || (shared as { clientSecret?: string }).clientSecret) || process.env.ZOOM_CLIENT_SECRET;
   const { meetingUuid } = body;
   if (!accountId || !clientId || !clientSecret || !meetingUuid) {
     return NextResponse.json(

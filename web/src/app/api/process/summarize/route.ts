@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 const DEFAULT_MODEL = "google/gemini-2.0-flash-001";
 const FALLBACK_MODEL = "anthropic/claude-haiku-4-5";
@@ -29,8 +30,9 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Key priority: request body (from Connections panel) > env var fallback
-  const apiKey = body.apiKey?.trim() || process.env.OPENROUTER_API_KEY;
+  // ADR-042 resolution: operator override (body) → shared secret → env legacy.
+  const sharedOR = (await getSharedCredential("openrouter")) ?? {};
+  const apiKey = body.apiKey?.trim() || (sharedOR as { apiKey?: string }).apiKey?.trim() || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
       { error: "OpenRouter API key not configured. Add it in the Connections panel." },

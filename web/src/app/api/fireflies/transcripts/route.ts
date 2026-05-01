@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 const FIREFLIES_GRAPHQL = "https://api.fireflies.ai/graphql";
 const PAGE_SIZE = 50; // Fireflies max per query
@@ -162,7 +163,8 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const apiKey = body.apiKey?.trim() || process.env.FIREFLIES_API_KEY;
+  const shared = (await getSharedCredential("fireflies")) ?? {};
+  const apiKey = body.apiKey?.trim() || (shared as { apiKey?: string }).apiKey?.trim() || process.env.FIREFLIES_API_KEY;
   const { from, to } = body;
   if (!apiKey?.trim()) {
     return NextResponse.json(
