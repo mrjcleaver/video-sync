@@ -74,11 +74,35 @@ function timeDeltaMinutes(a: string | null, b: string | null): number | null {
   return Math.abs(ta - tb) / 60000;
 }
 
-function timeScore(deltaMin: number | null): number {
+/** UTC calendar day key (YYYY-MM-DD) extracted from any Date-parseable string. */
+function calendarDayUtc(s: string | null): string | null {
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function sameCalendarDay(a: string | null, b: string | null): boolean {
+  const da = calendarDayUtc(a);
+  const db = calendarDayUtc(b);
+  return da !== null && db !== null && da === db;
+}
+
+/**
+ * Score temporal proximity. Tolerant of different date formats and
+ * timezone-shifted timestamps: same UTC calendar day always gets at
+ * least 0.6 even when the wallclock hours differ (e.g. a YouTube
+ * Live broadcast's actualStartTime vs. a Fireflies meeting's
+ * end-of-call timestamp on the same day).
+ */
+function timeScore(target: string | null, candidate: string | null, deltaMin: number | null): number {
   if (deltaMin == null) return 0;
-  if (deltaMin <= 10) return 1;       // near-simultaneous → full credit
-  if (deltaMin <= 60) return 1 - (deltaMin - 10) / 50 * 0.5;  // 60 min → 0.5
-  if (deltaMin <= 240) return 0.25;   // same half-day
+  if (deltaMin <= 10) return 1;            // near-simultaneous
+  if (deltaMin <= 60) return 0.85;         // within an hour
+  if (deltaMin <= 4 * 60) return 0.7;      // four hours
+  if (sameCalendarDay(target, candidate)) return 0.6;  // same UTC day
+  if (deltaMin <= 24 * 60) return 0.4;     // 24 h delta but cross-day in UTC (timezone shift)
+  if (deltaMin <= 48 * 60) return 0.2;
   return 0;
 }
 
@@ -96,12 +120,33 @@ export function rankSiblingCandidates(
     // Published-to-YouTube matches belong to the ADR-016 Recover flow, not here
     if (v.source_platform === "YouTube") continue;
 
+    const candidateRecorded = v.recorded_at ?? v.indexed_at;
     const participant_overlap = participantJaccard(target.participants ?? [], v.participants ?? []);
-    const time_delta_minutes = timeDeltaMinutes(targetRecorded, v.recorded_at ?? v.indexed_at);
+    const time_delta_minutes = timeDeltaMinutes(targetRecorded, candidateRecorded);
     const title_overlap = tokenOverlap(target.title, v.title);
-    const t = timeScore(time_delta_minutes);
+    const t = timeScore(targetRecorded, candidateRecorded, time_delta_minutes);
 
-    const score = participant_overlap * 0.4 + t * 0.3 + title_overlap * 0.3;
+    // Re-allocate weights when a signal is genuinely unavailable so
+    // sources without participant metadata (e.g. YouTube Live broadcasts,
+    // Zoom recordings before joining) aren't capped at 0.6 by the missing
+    // 0.4 participant slot. Title and time pick up the slack.
+    const participantsAvailable =
+      (target.participants?.length ?? 0) > 0 && (v.participants?.length ?? 0) > 0;
+    const timeAvailable = time_delta_minutes !== null;
+
+    let pW = 0.4, tW = 0.3, titleW = 0.3;
+    if (!participantsAvailable) {
+      // Redistribute equally to time + title (or all to title if time also missing)
+      tW += timeAvailable ? 0.2 : 0;
+      titleW += timeAvailable ? 0.2 : 0.4;
+      pW = 0;
+    }
+    if (!timeAvailable) {
+      titleW += tW;
+      tW = 0;
+    }
+
+    const score = participant_overlap * pW + t * tW + title_overlap * titleW;
     if (score <= 0) continue;
 
     candidates.push({
