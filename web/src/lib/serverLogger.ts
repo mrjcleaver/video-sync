@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { type LogLevel, type LogRecord, buildRecord, emitServerLine, redact } from "./logger";
+import { getActor } from "./auth";
 import { join } from "path";
 import { appendFileSync, mkdirSync } from "fs";
 
@@ -57,9 +58,40 @@ export function serverLog(
 
 type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse>;
 
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Best-effort actor resolution for audit logging. Doesn't throw — the
+ * wrapper logs the request even when auth is missing/invalid (those
+ * become explicit `actor_error` entries, which IS the access-attempt
+ * audit trail for unauthenticated requests).
+ */
+async function resolveActorForAudit(req: NextRequest): Promise<Record<string, unknown>> {
+  try {
+    const actor = await getActor(req);
+    return {
+      actor_email: actor.email,
+      actor_role: actor.role,
+      actor_user_id: actor.user_id,
+    };
+  } catch (err) {
+    return { actor_error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /**
  * Wraps a Next.js API route handler with structured request/response logging.
  * Generates or forwards an X-Request-ID correlation header.
+ *
+ * Each request emits two log lines (req + res). Both carry:
+ *   - audit: "access" (GET/HEAD/OPTIONS) or "mutation" (POST/PUT/PATCH/DELETE)
+ *   - actor_email / actor_role / actor_user_id  when IAP-authenticated
+ *   - actor_error                                when unauthenticated/invalid
+ *
+ * Filter the structured log stream:
+ *   `audit=mutation`  → who-did-what trail for state-changing ops
+ *   `audit=access`    → who-read-what trail
+ *   `actor_error`     → unauthenticated access attempts
  *
  * Usage:
  *   async function handler(req) { ... }
@@ -70,15 +102,17 @@ export function withRequestLogging(component: string, handler: RouteHandler): Ro
     const rid = req.headers.get("x-request-id") ?? crypto.randomUUID().slice(0, 8);
     const t0 = Date.now();
     const path = new URL(req.url).pathname;
+    const audit = MUTATING_METHODS.has(req.method.toUpperCase()) ? "mutation" : "access";
+    const actorFields = await resolveActorForAudit(req);
 
-    serverLog("info", component, "req", { method: req.method, path, rid });
+    serverLog("info", component, "req", { method: req.method, path, rid, audit, ...actorFields });
 
     let res: NextResponse;
     try {
       res = await handler(req, ctx);
     } catch (err) {
       const duration_ms = Date.now() - t0;
-      serverLog("error", component, "unhandled", { error: String(err), duration_ms, rid });
+      serverLog("error", component, "unhandled", { error: String(err), duration_ms, rid, audit, ...actorFields });
       return NextResponse.json(
         { error: "Internal server error", rid },
         { status: 500, headers: { "x-request-id": rid } },
@@ -87,7 +121,7 @@ export function withRequestLogging(component: string, handler: RouteHandler): Ro
 
     const duration_ms = Date.now() - t0;
     const level: LogLevel = res.status >= 500 ? "error" : res.status >= 400 ? "warn" : "info";
-    serverLog(level, component, "res", { status: res.status, duration_ms, rid });
+    serverLog(level, component, "res", { status: res.status, duration_ms, rid, audit, ...actorFields });
     res.headers.set("x-request-id", rid);
     return res;
   };
