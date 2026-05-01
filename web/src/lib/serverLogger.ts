@@ -54,6 +54,56 @@ export function serverLog(
   writeToFile(line);
 }
 
+// ── In-memory audit ring buffer (ADR-041) ────────────────────────────────────
+
+export interface AuditEvent {
+  id: string;             // monotonic per-instance id (ts-counter)
+  ts: string;             // ISO timestamp of the response
+  actor_email: string | null;
+  actor_role: string | null;
+  actor_error: string | null;
+  audit: "access" | "mutation";
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  rid: string;
+}
+
+const AUDIT_BUFFER_MAX = 500;
+const recentAudit: AuditEvent[] = [];
+let _auditSeq = 0;
+
+function pushAudit(entry: Omit<AuditEvent, "id" | "ts">): void {
+  // Skip the polling endpoint to prevent feedback noise — every poll
+  // would otherwise immediately re-appear in the next poll.
+  if (entry.path === "/api/audit/recent") return;
+  const event: AuditEvent = {
+    ...entry,
+    id: `${Date.now()}-${++_auditSeq}`,
+    ts: new Date().toISOString(),
+  };
+  recentAudit.push(event);
+  if (recentAudit.length > AUDIT_BUFFER_MAX) {
+    recentAudit.splice(0, recentAudit.length - AUDIT_BUFFER_MAX);
+  }
+}
+
+/**
+ * Read recent audit events. `sinceIso` filters to events strictly later
+ * than the given ISO timestamp (used by the client poll to dedupe).
+ * Without `sinceIso` returns the last `limit` entries.
+ *
+ * Buffer is per-Cloud-Run-instance; multi-instance deployments will
+ * have per-instance views. ADR-041 §risks documents this.
+ */
+export function getRecentAudit(sinceIso?: string, limit = 100): AuditEvent[] {
+  if (sinceIso) {
+    return recentAudit.filter(e => e.ts > sinceIso);
+  }
+  return recentAudit.slice(-limit);
+}
+
 // ── Request logging middleware ────────────────────────────────────────────────
 
 type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse>;
@@ -122,6 +172,17 @@ export function withRequestLogging(component: string, handler: RouteHandler): Ro
     const duration_ms = Date.now() - t0;
     const level: LogLevel = res.status >= 500 ? "error" : res.status >= 400 ? "warn" : "info";
     serverLog(level, component, "res", { status: res.status, duration_ms, rid, audit, ...actorFields });
+    pushAudit({
+      actor_email: (actorFields.actor_email as string | undefined) ?? null,
+      actor_role: (actorFields.actor_role as string | undefined) ?? null,
+      actor_error: (actorFields.actor_error as string | undefined) ?? null,
+      audit,
+      method: req.method,
+      path,
+      status: res.status,
+      duration_ms,
+      rid,
+    });
     res.headers.set("x-request-id", rid);
     return res;
   };

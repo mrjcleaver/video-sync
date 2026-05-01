@@ -116,6 +116,35 @@ export default function Dashboard() {
     clientLog("info", "event", ev, fields);
   }, []);
 
+  // ADR-041: poll the server's audit buffer and surface entries into the
+  // EventLog so the operator sees who-did-what across the app, not only
+  // the actions their own browser triggered. Polls every 8 seconds.
+  useEffect(() => {
+    let lastSince = new Date().toISOString();
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/audit/recent?since=${encodeURIComponent(lastSince)}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json() as { events?: Array<{ id: string; ts: string; actor_email: string | null; actor_error: string | null; audit: string; method: string; path: string; status: number; duration_ms: number }> };
+        for (const e of data.events ?? []) {
+          // Skip noisy GET 200s; surface mutations, errors, and auth failures
+          const isMutation = e.audit === "mutation";
+          const isError = e.status >= 400;
+          const isUnauth = !!e.actor_error;
+          if (!isMutation && !isError && !isUnauth) continue;
+          const who = e.actor_email ?? (e.actor_error ? `unauth (${e.actor_error.slice(0, 60)})` : "anon");
+          const verb = isMutation ? "[mutation]" : isError ? "[error]" : "[access]";
+          setEvents(prev => [...prev, `${verb} ${e.method} ${e.path} ${e.status} (${e.duration_ms}ms) by ${who}`]);
+          if (e.ts > lastSince) lastSince = e.ts;
+        }
+      } catch { /* offline or transient — skip */ }
+    };
+    const id = setInterval(tick, 8000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   /**
    * Ensure a video card is visible, switching filter if necessary, then scroll.
    * Called from Overview/Calendar clicks and from Publish transitions.
