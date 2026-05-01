@@ -74,7 +74,18 @@ async function putHandler(req: NextRequest, ctx: { params: Promise<{ platform: s
     const result = await setSharedCredential(platform, body, actor.email);
     return NextResponse.json({ ok: true, platform, ...result });
   } catch (err) {
-    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    // gRPC errors from @google-cloud/secret-manager carry .code (numeric),
+    // .details, and .metadata in addition to (or instead of) name/message.
+    // Dump every plausible field so we can actually see what failed.
+    const e = err as Record<string, unknown> & Error;
+    const detail = JSON.stringify({
+      name: e?.name,
+      message: e?.message,
+      code: e?.code,
+      details: e?.details,
+      stack: typeof e?.stack === "string" ? e.stack.split("\n").slice(0, 6).join(" | ") : undefined,
+      raw: typeof err === "string" ? err : undefined,
+    });
     serverLog("error", "api:credentials/shared", "set failed", {
       platform,
       actor: actor.email,
