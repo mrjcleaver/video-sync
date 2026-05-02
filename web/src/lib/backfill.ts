@@ -78,6 +78,29 @@ export function loadProfiles(): BackfillProfile[] {
 }
 export function saveProfiles(profiles: BackfillProfile[]) {
   localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  // ADR-043: write-through to server. Best-effort; localStorage is the
+  // primary cache and survives network failures.
+  fetch("/api/backfill/profiles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profiles),
+  }).catch(() => { /* offline / 5xx — ignore */ });
+}
+
+/** ADR-043: hydrate localStorage from server on boot. Server wins
+ *  when non-empty; otherwise push local up to seed the server. */
+export async function syncProfilesFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/backfill/profiles", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json() as BackfillProfile[];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(data));
+    } else {
+      const local = loadProfiles();
+      if (local.length > 0) saveProfiles(local);
+    }
+  } catch { /* offline — ignore */ }
 }
 
 export function loadQueue(): BackfillQueueEntry[] {
@@ -85,6 +108,25 @@ export function loadQueue(): BackfillQueueEntry[] {
 }
 export function saveQueue(queue: BackfillQueueEntry[]) {
   localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  fetch("/api/backfill/queue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(queue),
+  }).catch(() => { /* offline — ignore */ });
+}
+
+export async function syncQueueFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/backfill/queue", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json() as BackfillQueueEntry[];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(data));
+    } else {
+      const local = loadQueue();
+      if (local.length > 0) saveQueue(local);
+    }
+  } catch { /* offline — ignore */ }
 }
 
 export function loadClientState(): BackfillClientState {

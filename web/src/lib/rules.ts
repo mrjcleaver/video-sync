@@ -91,6 +91,28 @@ export function loadExclusions(): ExclusionEntry[] {
 
 export function saveExclusions(entries: ExclusionEntry[]): void {
   localStorage.setItem(EXCLUSIONS_KEY, JSON.stringify(entries));
+  // ADR-043: write-through to server so Bob doesn't re-import what
+  // Alice already excluded. Best-effort; localStorage is the primary.
+  fetch("/api/exclusions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entries),
+  }).catch(() => { /* offline — ignore */ });
+}
+
+/** ADR-043: hydrate localStorage from server on boot. Server-wins-if-non-empty. */
+export async function syncExclusionsFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/exclusions", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json() as ExclusionEntry[];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem(EXCLUSIONS_KEY, JSON.stringify(data));
+    } else {
+      const local = loadExclusions();
+      if (local.length > 0) saveExclusions(local);
+    }
+  } catch { /* offline — ignore */ }
 }
 
 export function addExclusion(

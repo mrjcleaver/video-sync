@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
-import { loadExclusions, syncRulesFromServer } from "../lib/rules";
+import { loadExclusions, syncRulesFromServer, syncExclusionsFromServer } from "../lib/rules";
+import { syncProfilesFromServer, syncQueueFromServer } from "../lib/backfill";
 import { syncProcessingRulesFromServer, syncPostProcessingRulesFromServer } from "../lib/processingRules";
 import { clientLog } from "../lib/logger";
 import { useRuleRunner } from "../lib/useRuleRunner";
@@ -70,11 +71,14 @@ export default function Dashboard() {
     const date = process.env.NEXT_PUBLIC_BUILD_DATE ?? new Date().toISOString();
     clientLog("info", "app:boot", `Video Sync v${version} (${sha}) built ${date}`);
 
-    // Sync rules from server before booting UI (ADR-031)
+    // Sync server-shared state before booting UI (ADR-031, ADR-043)
     Promise.all([
       syncRulesFromServer(),
       syncProcessingRulesFromServer(),
       syncPostProcessingRulesFromServer(),
+      syncProfilesFromServer(),
+      syncQueueFromServer(),
+      syncExclusionsFromServer(),
     ]).finally(() => {
       bootStore().then(() => {
         setReady(true);
