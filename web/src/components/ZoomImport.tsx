@@ -74,11 +74,10 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
 
   async function fetchRecordings() {
-    const creds = getZoomCredentials();
-    if (!creds) {
-      setError("Zoom credentials not configured. Go to Connections and add your Account ID, Client ID, and Client Secret.");
-      return;
-    }
+    // ADR-042: don't gate on local creds — the server resolves through
+    // local override → shared default → env var. If nothing is configured
+    // anywhere, the server returns 400 with a clear message.
+    const creds = getZoomCredentials() ?? {};
 
     setLoading(true);
     setError(null);
@@ -126,13 +125,13 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     title: string;
     source_id: string;
     recorded_at: string;
-    creds: { accountId: string; clientId: string; clientSecret: string };
+    creds: { accountId: string; clientId: string; clientSecret: string } | null;
   }): Promise<void> {
     try {
       const res = await fetch("/api/zoom/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...args.creds, meetingUuid: args.meeting_uuid }),
+        body: JSON.stringify({ ...(args.creds ?? {}), meetingUuid: args.meeting_uuid }),
       });
       if (res.status === 404) return; // no CHAT file for this recording — common, silent
       if (!res.ok) {
@@ -216,7 +215,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
       onEvent(`VideoIndexed: "${meeting.topic}" (Zoom import)`);
 
       // ADR-039: capture in-meeting chat to Drive if a CHAT file exists
-      if (creds && meeting.recording_files?.some((f) => f.file_type === "CHAT")) {
+      if (meeting.recording_files?.some((f) => f.file_type === "CHAT")) {
         const recordId = record.id();
         chatJobs.push(() => fetchAndStoreChat({
           record_id: recordId,

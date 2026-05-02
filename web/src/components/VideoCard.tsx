@@ -475,11 +475,11 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       if (raw) connections = JSON.parse(raw);
     } catch { /* ignore */ }
 
+    // ADR-042: Kaltura is shared-only by default; the server's resolver
+    // will fall through to the Admin-managed Secret Manager entry if the
+    // operator has no local override. We pass the local creds when they
+    // exist (legacy operator setups) but don't gate on them.
     const kaltura = connections["Kaltura"]?.credentials;
-    if (!kaltura?.partnerId || !kaltura?.apiKey) {
-      alert("Kaltura not configured. Add Partner ID and Admin Secret in Connections first.");
-      return;
-    }
 
     setShowPreview(false);
     setUploading(true);
@@ -487,13 +487,15 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
     try {
       const body: Record<string, unknown> = {
-        partnerId: kaltura.partnerId,
-        adminSecret: kaltura.apiKey,
         title: attrs.title ?? video.title,
         description: attrs.description ?? video.description ?? "",
         tags: attrs.tags ?? video.tags ?? [],
         downloadUrl: video.download_url,
       };
+      if (kaltura?.partnerId && kaltura?.apiKey) {
+        body.partnerId = kaltura.partnerId;
+        body.adminSecret = kaltura.apiKey;
+      }
       if (video.download_url?.startsWith("zoom://")) {
         const z = connections["Zoom"]?.credentials ?? {};
         body.zoomAccountId = z.accountId;

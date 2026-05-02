@@ -69,23 +69,22 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   const [liveOnly, setLiveOnly] = useState(false);
 
   async function fetchEntries() {
+    // ADR-042: Kaltura is shared-only — operators see no override field, so
+    // the local creds will normally be null. Server resolves from shared
+    // Secret Manager. If neither is configured, server returns 400.
     const creds = getKalturaCredentials();
-    if (!creds) {
-      setError("Kaltura credentials not configured. Add Partner ID and Admin Secret in Connections.");
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
+      const body: Record<string, unknown> = { from: dateFrom, to: dateTo };
+      if (creds) {
+        body.partnerId = creds.partnerId;
+        body.adminSecret = creds.apiKey;
+      }
       const res = await fetch("/api/kaltura/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          partnerId: creds.partnerId,
-          adminSecret: creds.apiKey,
-          from: dateFrom,
-          to: dateTo,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {

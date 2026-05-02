@@ -65,11 +65,9 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
 
   async function fetchTranscripts() {
+    // ADR-042: server resolves through local override → shared default → env.
+    // Pass apiKey only when set locally; absent body field falls through.
     const apiKey = getFirefliesApiKey();
-    if (!apiKey) {
-      setError("Fireflies API key not configured. Go to Connections and add your Fireflies API key.");
-      return;
-    }
 
     setLoading(true);
     setError(null);
@@ -77,7 +75,7 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
       const res = await fetch("/api/fireflies/transcripts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, from: dateFrom, to: dateTo }),
+        body: JSON.stringify({ ...(apiKey ? { apiKey } : {}), from: dateFrom, to: dateTo }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
