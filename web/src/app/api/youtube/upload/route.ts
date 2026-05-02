@@ -112,95 +112,33 @@ function extractLoomVideoId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
 async function downloadLoomToFile(videoId: string, outPath: string): Promise<void> {
-  // Scrape the Loom share page to extract video URL (same approach as loom-dl)
-  const shareUrl = `https://www.loom.com/share/${videoId}`;
-  const pageRes = await fetch(shareUrl, {
-    headers: {
-      "User-Agent": BROWSER_UA,
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
-
-  if (!pageRes.ok) {
-    throw new Error(`Loom page fetch failed (${pageRes.status}). Is the share link correct and public?`);
-  }
-
-  const html = await pageRes.text();
-
-  // Extract Apollo state containing video URLs
-  const apolloMatch = html.match(/window\.__APOLLO_STATE__\s*=\s*(\{[\s\S]+?\});?\s*<\/script>/);
-
-  let hlsUrl: string | null = null;
-  let hlsCreds: { policy: string; signature: string; keyPairId: string } | null = null;
-
-  if (apolloMatch) {
-    try {
-      const apolloData = JSON.parse(apolloMatch[1]);
-      for (const key of Object.keys(apolloData)) {
-        const obj = apolloData[key];
-        if (!obj || typeof obj !== "object") continue;
-        const m3u8Key = Object.keys(obj).find((k) => k.includes("M3U8") && obj[k]?.url);
-        if (m3u8Key && obj[m3u8Key]?.url) {
-          hlsUrl = obj[m3u8Key].url;
-          const creds = obj[m3u8Key]?.credentials;
-          if (creds) {
-            hlsCreds = { policy: creds.Policy, signature: creds.Signature, keyPairId: creds.KeyPairId };
-          }
-        }
-      }
-    } catch { /* JSON parse failed, try MP4 fallback */ }
-  }
-
-  // Try direct MP4 URL (some older videos have this)
-  const mp4Match = html.match(/https:\/\/cdn\.loom\.com\/sessions\/(?:transcoded|raw)\/[^"'\s\\]+\.mp4/);
-  if (mp4Match) {
-    const dlRes = await fetch(mp4Match[0], {
-      headers: { Referer: "https://www.loom.com/", "User-Agent": BROWSER_UA },
-    });
-    if (dlRes.ok) {
-      await streamToFile(dlRes, outPath);
-      return;
-    }
-  }
-
-  // Use ffmpeg to convert HLS stream to MP4
-  if (hlsUrl) {
-    const finalHlsUrl = hlsUrl;
-    await new Promise<void>((resolve, reject) => {
-      let headers = "Referer: https://www.loom.com/\r\n";
-      if (hlsCreds) {
-        headers += `Cookie: CloudFront-Policy=${hlsCreds.policy}; CloudFront-Signature=${hlsCreds.signature}; CloudFront-Key-Pair-Id=${hlsCreds.keyPairId}\r\n`;
-      }
-      const args = [
-        "-loglevel", "error",
-        "-headers", headers,
-        "-i", finalHlsUrl,
-        "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",
-        "-movflags", "+faststart",
-        "-y", outPath,
-      ];
-      execFile("ffmpeg", args, { timeout: 600000 }, (err, _stdout, stderr) => {
+  // yt-dlp handles Loom's Apollo-state extraction, MP4 vs HLS fallback,
+  // and CloudFront-signed chunk downloads. The previous inline scraper
+  // shelled out to ffmpeg for HLS, which silently failed on long videos
+  // (empty stderr at -loglevel error masked the actual cause). yt-dlp is
+  // already in the runtime image (Dockerfile installs ffmpeg + yt-dlp)
+  // and is the canonical path used by lib/sourceDownload.ts.
+  const url = `https://www.loom.com/share/${videoId}`;
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      "yt-dlp",
+      ["--output", outPath, "--no-playlist", "--no-warnings", "--newline", url],
+      { timeout: 3600000, maxBuffer: 16 * 1024 * 1024 },
+      (err, _stdout, stderr) => {
         if (err) {
           if (err.message.includes("ENOENT")) {
-            reject(new Error("ffmpeg is not installed. Required to download Loom HLS videos."));
+            reject(new Error("yt-dlp is not installed."));
           } else {
-            // With -loglevel error, stderr contains only the actual error (no banner)
             const detail = (stderr || "").trim() || err.message;
-            reject(new Error(`ffmpeg failed: ${detail.slice(0, 500)}`));
+            reject(new Error(`Loom download failed: ${detail.slice(0, 1500)}`));
           }
         } else {
           resolve();
         }
-      });
-    });
-    return;
-  }
-
-  throw new Error("Could not find a downloadable video URL on the Loom page. The video may be private or password-protected.");
+      },
+    );
+  });
 }
 
 async function downloadYouTubeToFile(videoId: string, outPath: string, cookies?: string): Promise<void> {
