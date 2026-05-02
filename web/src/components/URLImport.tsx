@@ -174,7 +174,9 @@ export default function URLImport({ onImported, onEvent }: Props) {
         source_platform: item.platform === "youtube" ? "YouTube" : "Loom",
         title: item.title,
         description: item.description || undefined,
-        duration_seconds: item.durationSeconds,
+        // Loom's oEmbed returns fractional seconds (e.g. 7495.15) but the
+        // WASM record's duration_seconds is u32. Round to nearest integer.
+        duration_seconds: Math.max(0, Math.round(Number(item.durationSeconds) || 0)),
         participants: [],
         download_url: item.platform === "youtube" ? `youtube://${item.id}` : item.raw,
         thumbnail_url: item.thumbnailUrl || undefined,
