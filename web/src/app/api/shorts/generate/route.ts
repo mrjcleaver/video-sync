@@ -42,9 +42,11 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "parentYouTubeUrl is required" }, { status: 400 });
   }
 
-  // ADR-042: operator override (body) → shared secret → none.
+  // ADR-042: operator override (body) → shared secret → none. Trim
+  // both sides so a whitespace-only body field doesn't shadow the
+  // shared default (consistent with the other handlers).
   const sharedOC = (await getSharedCredential("opusclip")) ?? {};
-  const apiKey = body.apiKey || (sharedOC as { apiKey?: string }).apiKey;
+  const apiKey = body.apiKey?.trim() || (sharedOC as { apiKey?: string }).apiKey?.trim();
   if (!apiKey) {
     return NextResponse.json({ error: "apiKey is required (set in Connections or shared by key admin)" }, { status: 400 });
   }

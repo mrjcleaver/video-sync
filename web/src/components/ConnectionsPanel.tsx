@@ -83,7 +83,10 @@ const PLATFORMS: PlatformInfo[] = [
     credentialType: "API_KEY",
     fields: [
       { key: "partnerId", label: "Partner ID", type: "text", placeholder: "Your Kaltura Partner ID", required: true },
-      { key: "apiKey", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
+      // Field key matches the server-side resolver (`adminSecret`), not
+      // the user-facing label "Admin Secret". Legacy local-storage entries
+      // wrote this under `apiKey` — handlers accept either form.
+      { key: "adminSecret", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
     ],
   },
   {

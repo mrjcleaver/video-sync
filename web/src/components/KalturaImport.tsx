@@ -27,16 +27,19 @@ interface Props {
   dateTo?: string;
 }
 
-function getKalturaCredentials(): { partnerId: string; apiKey: string } | null {
+function getKalturaCredentials(): { partnerId: string; adminSecret: string } | null {
   try {
     const raw = localStorage.getItem(CONNECTIONS_KEY);
     if (!raw) return null;
     const conn = JSON.parse(raw);
     const k = conn["Kaltura"];
     if (!k?.connected) return null;
-    const { partnerId, apiKey } = k.credentials ?? {};
-    if (!partnerId || !apiKey) return null;
-    return { partnerId, apiKey };
+    const { partnerId, adminSecret, apiKey } = k.credentials ?? {};
+    // Accept legacy `apiKey` field for backward compatibility with
+    // overrides saved before the field rename (ADR-042 Phase 2 fix).
+    const secret = adminSecret || apiKey;
+    if (!partnerId || !secret) return null;
+    return { partnerId, adminSecret: secret };
   } catch {
     return null;
   }
@@ -79,7 +82,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
       const body: Record<string, unknown> = { from: dateFrom, to: dateTo };
       if (creds) {
         body.partnerId = creds.partnerId;
-        body.adminSecret = creds.apiKey;
+        body.adminSecret = creds.adminSecret;
       }
       const res = await fetch("/api/kaltura/list", {
         method: "POST",

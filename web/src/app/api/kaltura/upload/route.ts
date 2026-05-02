@@ -107,8 +107,11 @@ async function handler(req: NextRequest): Promise<NextResponse> {
   }
 
   const sharedKaltura = (await getSharedCredential("kaltura")) ?? {};
-  const partnerId = body.partnerId || (sharedKaltura as { partnerId?: string }).partnerId || process.env.KALTURA_PARTNER_ID;
-  const adminSecret = body.adminSecret || (sharedKaltura as { adminSecret?: string }).adminSecret || process.env.KALTURA_ADMIN_SECRET;
+  const sharedAny = sharedKaltura as { partnerId?: string; adminSecret?: string; apiKey?: string };
+  const partnerId = body.partnerId || sharedAny.partnerId || process.env.KALTURA_PARTNER_ID;
+  // Legacy alias: shared payloads written via the Phase-2 UI before the
+  // field rename used `apiKey`. Both names accepted.
+  const adminSecret = body.adminSecret || sharedAny.adminSecret || sharedAny.apiKey || process.env.KALTURA_ADMIN_SECRET;
   if (!partnerId || !adminSecret || !body.title || !body.downloadUrl) {
     return NextResponse.json(
       { error: "partnerId, adminSecret, title, and downloadUrl are required" },

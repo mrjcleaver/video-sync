@@ -64,8 +64,11 @@ async function handler(req: NextRequest) {
   }
 
   const shared = (await getSharedCredential("kaltura")) ?? {};
-  const partnerId = body.partnerId || (shared as { partnerId?: string }).partnerId || process.env.KALTURA_PARTNER_ID;
-  const adminSecret = body.adminSecret || (shared as { adminSecret?: string }).adminSecret || process.env.KALTURA_ADMIN_SECRET;
+  const sharedAny = shared as { partnerId?: string; adminSecret?: string; apiKey?: string };
+  const partnerId = body.partnerId || sharedAny.partnerId || process.env.KALTURA_PARTNER_ID;
+  // Accept both `adminSecret` (current convention) and `apiKey` (legacy
+  // shape from earlier Phase-2 saves) when reading the shared payload.
+  const adminSecret = body.adminSecret || sharedAny.adminSecret || sharedAny.apiKey || process.env.KALTURA_ADMIN_SECRET;
   if (!partnerId || !adminSecret) {
     return NextResponse.json({ error: "partnerId and adminSecret are required" }, { status: 400 });
   }

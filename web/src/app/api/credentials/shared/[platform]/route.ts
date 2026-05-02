@@ -69,29 +69,40 @@ async function putHandler(req: NextRequest, ctx: { params: Promise<{ platform: s
   // Strip any reserved metadata keys the caller might try to spoof
   delete body._set_by;
   delete body._set_at;
+  // Reject empty bodies — saving { _set_by, _set_at } only would create
+  // a no-credentials secret that satisfies `getSharedCredential` truthiness
+  // but breaks every consumer.
+  const meaningfulFields = Object.entries(body).filter(([, v]) => v != null && v !== "");
+  if (meaningfulFields.length === 0) {
+    return NextResponse.json({ error: "body must contain at least one non-empty credential field" }, { status: 400 });
+  }
 
   try {
     const result = await setSharedCredential(platform, body, actor.email);
     return NextResponse.json({ ok: true, platform, ...result });
   } catch (err) {
-    // gRPC errors from @google-cloud/secret-manager carry .code (numeric),
-    // .details, and .metadata in addition to (or instead of) name/message.
-    // Dump every plausible field so we can actually see what failed.
+    // Log full detail (gRPC code + stack) server-side; return only the
+    // short message + a request id to the client. ADR-041 audit-trail
+    // captures the actor; the rid lets engineering correlate.
     const e = err as Record<string, unknown> & Error;
-    const detail = JSON.stringify({
+    const detail = {
       name: e?.name,
       message: e?.message,
       code: e?.code,
       details: e?.details,
       stack: typeof e?.stack === "string" ? e.stack.split("\n").slice(0, 6).join(" | ") : undefined,
       raw: typeof err === "string" ? err : undefined,
-    });
+    };
     serverLog("error", "api:credentials/shared", "set failed", {
       platform,
       actor: actor.email,
-      error: detail,
+      error: JSON.stringify(detail),
     });
-    return NextResponse.json({ error: detail }, { status: 500 });
+    const rid = req.headers.get("x-request-id") ?? "n/a";
+    const clientMessage = typeof e?.message === "string" && e.message.length > 0
+      ? e.message
+      : "Internal error writing shared credential";
+    return NextResponse.json({ error: clientMessage, rid }, { status: 500 });
   }
 }
 

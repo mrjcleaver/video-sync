@@ -116,7 +116,13 @@ async function verifyIapJwt(token: string): Promise<{ email: string; sub: string
       const parts = token.split(".");
       if (parts.length === 3) {
         const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
-        console.warn(`IAP JWT verification failed. Expected audience='${audience}', got aud='${claims.aud}', iss='${claims.iss}', email='${claims.email}'. Reason: ${err instanceof Error ? err.message : err}`);
+        // Mask the local-part of the email so the diagnostic surfaces the
+        // domain (useful for "wrong tenant" debugging) without writing the
+        // user's address to stdout / Cloud Logging on every failed request.
+        const email = typeof claims.email === "string"
+          ? claims.email.replace(/^[^@]+/, m => `${m.slice(0, 1)}***`)
+          : "(none)";
+        console.warn(`IAP JWT verification failed. Expected audience='${audience}', got aud='${claims.aud}', iss='${claims.iss}', email='${email}'. Reason: ${err instanceof Error ? err.message : err}`);
       }
     } catch { /* swallow — diagnostic only */ }
     throw err;

@@ -80,6 +80,7 @@ export async function getSharedCredential(platform: SharedPlatform): Promise<Rec
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached.value;
 
   let value: Record<string, unknown> | null = null;
+  let cacheTheResult = true;
   try {
     const [resp] = await client().accessSecretVersion({
       name: `${secretName(platform)}/versions/latest`,
@@ -95,13 +96,24 @@ export async function getSharedCredential(platform: SharedPlatform): Promise<Rec
     }
   } catch (err: unknown) {
     const code = (err as { code?: number | string }).code;
-    if (code !== 5 && code !== "NOT_FOUND") {
-      // 5 = NOT_FOUND in gRPC; anything else is a real error worth logging
-      serverLog("warn", "shared-creds", "fetch failed", { platform, error: String(err).slice(0, 200) });
+    if (code === 5 || code === "NOT_FOUND") {
+      // Genuine "not configured" — cache null so we don't pummel SM with NOT_FOUND lookups.
+      value = null;
+    } else {
+      // Transient API error (5xx, network, quota). Don't poison the
+      // 5-minute cache with null — that would lock every operator on
+      // this instance into the env-var fallback for 5 minutes after a
+      // single SM blip. Log and return null for THIS request only.
+      serverLog("warn", "shared-creds", "fetch failed (not cached)", {
+        platform,
+        error: String(err).slice(0, 200),
+        code: typeof code === "number" || typeof code === "string" ? code : "unknown",
+      });
+      cacheTheResult = false;
+      value = null;
     }
-    value = null;
   }
-  valueCache.set(platform, { value, cachedAt: Date.now() });
+  if (cacheTheResult) valueCache.set(platform, { value, cachedAt: Date.now() });
   return value;
 }
 

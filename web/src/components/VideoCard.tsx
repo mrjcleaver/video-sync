@@ -477,9 +477,11 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
     // ADR-042: Kaltura is shared-only by default; the server's resolver
     // will fall through to the Admin-managed Secret Manager entry if the
-    // operator has no local override. We pass the local creds when they
-    // exist (legacy operator setups) but don't gate on them.
+    // operator has no local override. Legacy localStorage stored the
+    // secret under `apiKey`; current Phase-2 UI uses `adminSecret`. Accept
+    // either when forwarding the override.
     const kaltura = connections["Kaltura"]?.credentials;
+    const localAdminSecret = kaltura?.adminSecret || kaltura?.apiKey;
 
     setShowPreview(false);
     setUploading(true);
@@ -492,9 +494,9 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         tags: attrs.tags ?? video.tags ?? [],
         downloadUrl: video.download_url,
       };
-      if (kaltura?.partnerId && kaltura?.apiKey) {
+      if (kaltura?.partnerId && localAdminSecret) {
         body.partnerId = kaltura.partnerId;
-        body.adminSecret = kaltura.apiKey;
+        body.adminSecret = localAdminSecret;
       }
       if (video.download_url?.startsWith("zoom://")) {
         const z = connections["Zoom"]?.credentials ?? {};
