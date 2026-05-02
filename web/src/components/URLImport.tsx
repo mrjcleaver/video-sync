@@ -28,6 +28,10 @@ interface FetchedItem {
   extra: Record<string, string>;
   needsTos: boolean;
   error?: string;
+  // Loom-specific Apollo extras (other platforms leave these undefined)
+  transcriptText?: string;
+  participants?: string[];
+  chapters?: Array<{ time: number; title: string }>;
 }
 
 function detect(input: string): DetectedUrl {
@@ -91,6 +95,28 @@ async function fetchLoom(id: string, raw: string): Promise<FetchedItem> {
   const res = await fetch(`/api/loom/metadata?url=${encodeURIComponent(raw)}`);
   const data: LoomMetadata & { error?: string } = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Loom error (${res.status})`);
+
+  // Build the participants list from the scraped owner. Prefer email
+  // (canonical identity for the dedupe matcher); fall back to name.
+  const participants: string[] = [];
+  if (data.ownerEmail) participants.push(data.ownerEmail);
+  else if (data.ownerName) participants.push(data.ownerName);
+
+  // metadata_extra carries opaque key/value strings — flatten chapters
+  // into a count + JSON blob so future UI can render them without a
+  // schema change to the WASM record.
+  const extra: Record<string, string> = {
+    author: data.authorName,
+    loom_url: raw,
+  };
+  if (data.ownerName) extra.owner_name = data.ownerName;
+  if (data.ownerEmail) extra.owner_email = data.ownerEmail;
+  if (data.language) extra.language = data.language;
+  if (data.chapters && data.chapters.length > 0) {
+    extra.chapters_count = String(data.chapters.length);
+    extra.chapters_json = JSON.stringify(data.chapters);
+  }
+
   return {
     raw,
     platform: "loom",
@@ -100,9 +126,15 @@ async function fetchLoom(id: string, raw: string): Promise<FetchedItem> {
     thumbnailUrl: data.thumbnailUrl,
     durationSeconds: data.durationSeconds ?? 0,
     channelOrAuthor: data.authorName,
-    publishedAt: new Date().toISOString(),
+    // Real recorded-at from Apollo state when available; fall back to
+    // "imported now" so older Looms whose share page no longer exposes
+    // createdAt still get a sortable timestamp.
+    publishedAt: data.createdAt ?? new Date().toISOString(),
     needsTos: false,
-    extra: { author: data.authorName, loom_url: raw },
+    extra,
+    transcriptText: data.transcriptText ?? undefined,
+    participants,
+    chapters: data.chapters ?? undefined,
   };
 }
 
@@ -177,7 +209,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
         // Loom's oEmbed returns fractional seconds (e.g. 7495.15) but the
         // WASM record's duration_seconds is u32. Round to nearest integer.
         duration_seconds: Math.max(0, Math.round(Number(item.durationSeconds) || 0)),
-        participants: [],
+        participants: item.participants ?? [],
         download_url: item.platform === "youtube" ? `youtube://${item.id}` : item.raw,
         thumbnail_url: item.thumbnailUrl || undefined,
         tags: [`${item.platform}-import`],
@@ -186,7 +218,14 @@ export default function URLImport({ onImported, onEvent }: Props) {
       };
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
-      onEvent(`VideoIndexed: "${item.title}" (${item.platform === "youtube" ? "YouTube" : "Loom"} import)`);
+      // Loom Apollo state often carries the auto-generated transcript;
+      // surface it through videoStore.setTranscript so the artifact API
+      // writes it to Drive (transcript.md) just like Fireflies/Zoom imports.
+      if (item.transcriptText) {
+        videoStore.setTranscript(record.id(), item.transcriptText);
+      }
+      const transcriptNote = item.transcriptText ? ", transcript included" : "";
+      onEvent(`VideoIndexed: "${item.title}" (${item.platform === "youtube" ? "YouTube" : "Loom"} import${transcriptNote})`);
       count++;
     }
     if (count > 0) {
