@@ -341,17 +341,32 @@ export default function ConnectionsPanel({ open }: Props) {
 
               {/* Source line */}
               <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 6 }}>
-                {status.source === "override" && (
+                {/* YouTube is per-operator by design (ADR-042 §"YouTube
+                    brand account") — uploads go out under the operator's
+                    own identity inside the brand account, so the audit
+                    trail at YouTube's layer is accurate. The "not
+                    configured" badge would otherwise read as generic. */}
+                {p.name === "YouTube" && status.source === "override" && (
+                  <span style={{ color: "var(--green)" }}>● Authorised (per-user, via Brand Account)</span>
+                )}
+                {p.name === "YouTube" && status.source === "none" && (
+                  <span>
+                    ○ Per-user — not yet authorised. YouTube credentials are deliberately
+                    not shared so that uploads carry your identity inside the brand
+                    account (accountability + Content ID audit).
+                  </span>
+                )}
+                {p.name !== "YouTube" && status.source === "override" && (
                   <span style={{ color: "var(--green)" }}>● Override active (your browser)</span>
                 )}
-                {status.source === "shared" && (
+                {p.name !== "YouTube" && status.source === "shared" && (
                   <span style={{ color: "#a78bfa" }}>
                     ● Shared default
                     {status.sharedSetBy ? ` · set by ${status.sharedSetBy}` : ""}
                     {status.sharedSetAt ? ` on ${status.sharedSetAt.slice(0, 10)}` : ""}
                   </span>
                 )}
-                {status.source === "none" && (
+                {p.name !== "YouTube" && status.source === "none" && (
                   <span>
                     ○ {sharedOnly && !adminCanShare
                       ? "The key admin has chosen not to make this available."
