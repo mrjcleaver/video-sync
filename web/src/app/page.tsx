@@ -287,6 +287,18 @@ export default function Dashboard() {
           >
             {showLogs ? "Hide Logs" : "View Logs"}
           </button>
+          {/* Feedback: link straight to a new GitHub issue. Pre-fills the
+              title with the build SHA so engineering can correlate the
+              report against deployed revision and recent commits. */}
+          <a
+            className="btn btn-sm"
+            href={`https://github.com/mrjcleaver/video-sync/issues/new?title=${encodeURIComponent(`[feedback] ${process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown"}: `)}&labels=feedback`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open a GitHub issue with feedback or a bug report"
+          >
+            Feedback
+          </a>
         </div>
       </div>
 

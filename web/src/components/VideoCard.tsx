@@ -1130,7 +1130,27 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       )}
 
       <div className="video-card-meta">
-        <span>{video.source_platform}</span>
+        {/* Origin platform — clickable when the download_url resolves to
+            a real web URL (Zoom recording, Fireflies view, YouTube watch,
+            Loom share, Kaltura entry). Title carries source_id for hover
+            disclosure without crowding the row. */}
+        {(() => {
+          const originHref = resolveExternalUrl(video.download_url);
+          const tooltip = `${video.source_platform} · ${video.source_id}`;
+          return originHref ? (
+            <a
+              href={originHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Open on ${tooltip}`}
+              style={{ color: "var(--primary, #6366f1)", textDecoration: "none" }}
+            >
+              {video.source_platform}
+            </a>
+          ) : (
+            <span title={tooltip}>{video.source_platform}</span>
+          );
+        })()}
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
         {video.participants.length > 0 && (
