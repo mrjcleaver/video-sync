@@ -299,6 +299,15 @@ export default function Dashboard() {
           >
             Feedback
           </a>
+          <a
+            className="btn btn-sm"
+            href="https://github.com/mrjcleaver/video-sync/wiki"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open the project wiki in a new tab"
+          >
+            Help
+          </a>
         </div>
       </div>
 
