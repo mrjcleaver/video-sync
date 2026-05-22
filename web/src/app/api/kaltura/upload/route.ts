@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withRequestLogging } from "../../../../lib/serverLogger";
+import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { downloadFromSource } from "../../../../lib/sourceDownload";
 import { getSharedCredential } from "../../../../lib/sharedCredentials";
 import { promises as fs, openAsBlob, statSync } from "fs";
@@ -124,6 +124,22 @@ async function handler(req: NextRequest): Promise<NextResponse> {
   }
 
   const tempPath = join(tmpdir(), `kaltura-upload-${Date.now()}.mp4`);
+  const rid = req.headers.get("x-request-id") ?? "n/a";
+  // Surface which source URL is being tried so log analysis can tell
+  // "Kaltura side failed" from "couldn't fetch source mp4". We log the
+  // scheme only — the full URL may contain credentials in query strings.
+  const sourceScheme = body.downloadUrl.startsWith("zoom://") ? "zoom"
+    : body.downloadUrl.startsWith("fireflies://") ? "fireflies"
+    : body.downloadUrl.startsWith("youtube://") ? "youtube"
+    : /loom\.com/.test(body.downloadUrl) ? "loom"
+    : body.downloadUrl.startsWith("http") ? "http"
+    : "unknown";
+  serverLog("info", "ext:kaltura-upload", "starting", {
+    rid,
+    referenceId: body.referenceId ?? null,
+    sourceScheme,
+    title: body.title.slice(0, 80),
+  });
 
   try {
     // 1. Mint admin Kaltura Session
@@ -196,10 +212,17 @@ async function handler(req: NextRequest): Promise<NextResponse> {
       uploadStatus: "ready",
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: String(err instanceof Error ? err.message : err) },
-      { status: 502 },
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    // Log to Cloud Logging so post-hoc debugging doesn't depend on the
+    // client preserving the in-app EventLog entry. Includes source scheme
+    // + referenceId so we can correlate with the picked-source decision.
+    serverLog("error", "ext:kaltura-upload", "failed", {
+      rid,
+      referenceId: body.referenceId ?? null,
+      sourceScheme,
+      error: message.slice(0, 500),
+    });
+    return NextResponse.json({ error: message }, { status: 502 });
   } finally {
     fs.unlink(tempPath).catch(() => {});
   }

@@ -600,11 +600,22 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       }
       const { entryId, playerUrl } = await res.json() as { entryId: string; playerUrl: string };
 
-      // If the video is already Published (e.g. to YouTube), `mark_published`
-      // would fail the WASM transition (Published → Published not allowed).
-      // In that case, append a Kaltura destination location instead — same
-      // observable result for the Overview, no status churn.
-      if (video.status === "Published") {
+      // mark_published is only valid from Publishing (WASM aggregate). The
+      // preview-dialog flow goes through requestPublish first so the record
+      // is in Publishing — use mark_published there. Any other entry point
+      // (side-publish button on a Published or Approved-with-YouTube record)
+      // means we're appending a peer destination, not driving the
+      // status state machine — use add_location and leave status alone.
+      if (video.status === "Publishing") {
+        videoStore.mutate(video.id, (r) =>
+          r.mark_published(JSON.stringify({
+            destination_id: entryId,
+            destination_url: playerUrl,
+            destination_platform: "Kaltura",
+          })),
+        );
+        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
+      } else {
         videoStore.mutate(video.id, (r) =>
           r.add_location(cmd({
             platform: "Kaltura",
@@ -614,23 +625,20 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           })),
         );
         onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
-      } else {
-        videoStore.mutate(video.id, (r) =>
-          r.mark_published(JSON.stringify({
-            destination_id: entryId,
-            destination_url: playerUrl,
-            destination_platform: "Kaltura",
-          })),
-        );
-        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
       }
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      videoStore.mutate(video.id, (r) =>
-        r.mark_failed(JSON.stringify({ error_message: msg })),
-      );
+      // Only call mark_failed if the WASM aggregate can accept it — i.e.,
+      // the record was in Publishing when the upload started. From the
+      // side-publish path the record is Approved/Published and mark_failed
+      // would throw "Invalid status transition", masking the real error.
+      if (video.status === "Publishing") {
+        videoStore.mutate(video.id, (r) =>
+          r.mark_failed(JSON.stringify({ error_message: msg })),
+        );
+      }
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — Kaltura: ${msg}`, { video_id: video.id });
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
