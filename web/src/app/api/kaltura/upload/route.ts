@@ -24,6 +24,10 @@ interface KalturaUploadRequest {
   title: string;
   description?: string;
   tags?: string[];
+  // ADR-044: catalog record UUID — set on the Kaltura entry as
+  // referenceId so future presence-batch sweeps can find this entry
+  // without depending on the ADR-022 description footer surviving edits.
+  referenceId?: string;
   downloadUrl: string;
   // Source-specific creds (forwarded to sourceDownload)
   zoomAccountId?: string;
@@ -161,6 +165,9 @@ async function handler(req: NextRequest): Promise<NextResponse> {
       description: body.description ?? "",
       tags: (body.tags ?? []).join(","),
     };
+    if (body.referenceId) {
+      mediaEntry.referenceId = body.referenceId;
+    }
     if (body.categoryIds && body.categoryIds.length > 0) {
       mediaEntry.categoriesIds = body.categoryIds.join(",");
     }

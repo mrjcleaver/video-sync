@@ -493,6 +493,11 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         description: attrs.description ?? video.description ?? "",
         tags: attrs.tags ?? video.tags ?? [],
         downloadUrl: video.download_url,
+        // ADR-044: stamp the catalog UUID as the Kaltura entry's referenceId
+        // so future presence-batch sweeps can find this entry by referenceId
+        // alone, without depending on description footers (which operators
+        // may edit in Kaltura's UI).
+        referenceId: video.id,
       };
       if (kaltura?.partnerId && localAdminSecret) {
         body.partnerId = kaltura.partnerId;

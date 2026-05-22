@@ -13,6 +13,7 @@ import {
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { getDisplayTitle } from "../lib/processingRules";
 import { getPrivacy, setPrivacy, normalisePrivacy, type PrivacyStatus } from "../lib/youtubePrivacyCache";
+import { getPresence, setPresenceBulk, type KalturaPresence, type KalturaState } from "../lib/kalturaPresenceCache";
 
 /** Extract YouTube video ID from a watch URL or short URL. */
 function extractYouTubeId(url: string | null | undefined): string | null {
@@ -39,6 +40,30 @@ const KALTURA_STYLE = {
   fg: "#a855f7",
   border: "rgba(168,85,247,0.3)",
 };
+
+// ADR-044: five-state Kaltura lozenge mirroring the YouTube privacy lozenge.
+const KALTURA_STATE_STYLE: Record<KalturaState, { bg: string; fg: string; border: string; label: string; textDecoration?: string; opacity?: number }> = {
+  ready:      { bg: "rgba(168,85,247,0.18)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kaltura" },
+  processing: { bg: "rgba(168,85,247,0.06)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kal: processing" },
+  live:       { bg: "rgba(244,63,94,0.18)",  fg: "#fb7185", border: "rgba(244,63,94,0.45)",  label: "Kal: LIVE" },
+  absent:     { bg: "rgba(168,85,247,0.04)", fg: "#a855f7", border: "rgba(168,85,247,0.15)", label: "no Kaltura", textDecoration: "line-through", opacity: 0.55 },
+  unknown:    { bg: "rgba(148,163,184,0.06)",fg: "#94a3b8", border: "rgba(148,163,184,0.2)", label: "Kaltura ?" },
+};
+
+/**
+ * Resolve a record's Kaltura lozenge state per ADR-044, priority:
+ *   1. locations[]/legacy URL says we have a Kaltura destination → ready
+ *   2. Presence cache (set by the Fill Kaltura status flow) → that state
+ *   3. Otherwise → unknown
+ */
+function resolveKalturaState(recordId: string, kalturaDestUrl: string | null | undefined): { state: KalturaState; href: string | null; presence: KalturaPresence | null } {
+  if (kalturaDestUrl) {
+    return { state: "ready", href: kalturaDestUrl, presence: null };
+  }
+  const presence = getPresence(recordId);
+  if (!presence) return { state: "unknown", href: null, presence: null };
+  return { state: presence.state, href: presence.playerUrl ?? null, presence };
+}
 
 // Drive lozenge — opens the Drive folder for this record's artifacts.
 const DRIVE_STYLE = {
@@ -83,8 +108,11 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
   const [privacyTick, setPrivacyTick] = useState(0);
   const [fillingPrivacy, setFillingPrivacy] = useState(false);
   const [fillStatus, setFillStatus] = useState<string>("");
-  // privacyTick forces re-render when cache is updated
+  const [fillingKaltura, setFillingKaltura] = useState(false);
+  const [kalturaTick, setKalturaTick] = useState(0);
+  // ticks force re-render when caches update
   void privacyTick;
+  void kalturaTick;
   const summaries = buildCalendarOverview(videos, profile);
   const [expandedSet, setExpandedSet] = useState<Set<string>>(new Set());
   const [targetOnly, setTargetOnly] = useState(true);
@@ -185,6 +213,77 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
     }
   }
 
+  // ADR-044: collect record IDs visible in the overview that don't yet
+  // have presence cached AND don't already have a Kaltura destination
+  // location (those resolve to `ready` directly, no API call needed).
+  function collectUncachedKalturaIds(): string[] {
+    const ids = new Set<string>();
+    for (const s of summaries) {
+      for (const slot of s.slots) {
+        const v = slot.video;
+        if (!v || v.kaltura_url) continue;
+        if (getPresence(v.id)) continue;
+        ids.add(v.id);
+      }
+    }
+    return [...ids];
+  }
+
+  async function fillKalturaStatus() {
+    const ids = collectUncachedKalturaIds();
+    if (ids.length === 0) {
+      setFillStatus("Kaltura presence already cached for every visible video.");
+      setTimeout(() => setFillStatus(""), 3000);
+      return;
+    }
+
+    setFillingKaltura(true);
+    setFillStatus(`Checking ${ids.length} video${ids.length === 1 ? "" : "s"} on Kaltura…`);
+
+    const BATCH_SIZE = 50;
+    let matched = 0;
+    let absentCount = 0;
+    const checkedAt = new Date().toISOString();
+
+    try {
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        const res = await fetch("/api/kaltura/presence-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordIds: chunk }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error((data as { error?: string }).error ?? `Presence batch failed (${res.status})`);
+        }
+        const data = await res.json() as {
+          presence: Record<string, { state: KalturaState; entryId?: string; playerUrl?: string; matchedBy?: "referenceId" | "footer"; checkedAt: string }>;
+          missing: string[];
+        };
+
+        const writes: Record<string, KalturaPresence> = {};
+        for (const [id, p] of Object.entries(data.presence)) {
+          writes[id] = { ...p, checkedAt };
+          matched++;
+        }
+        for (const id of data.missing ?? []) {
+          writes[id] = { state: "absent", checkedAt };
+          absentCount++;
+        }
+        setPresenceBulk(writes);
+      }
+      setKalturaTick(t => t + 1);
+      setFillStatus(`Kaltura: ${matched} found · ${absentCount} not on Kaltura`);
+      setTimeout(() => setFillStatus(""), 5000);
+    } catch (err) {
+      setFillStatus(`Kaltura error: ${String(err).slice(0, 120)}`);
+      setTimeout(() => setFillStatus(""), 6000);
+    } finally {
+      setFillingKaltura(false);
+    }
+  }
+
   const totals = summaries.reduce(
     (acc, s) => ({
       target: acc.target + s.target_days,
@@ -240,6 +339,15 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
           title="Check YouTube for privacy status of all published videos in this view (batched, 1 quota unit per 50 videos)"
         >
           {fillingPrivacy ? "Checking…" : "Fill privacy"}
+        </button>
+        <button
+          className="btn btn-sm"
+          style={{ fontSize: "0.7rem" }}
+          onClick={fillKalturaStatus}
+          disabled={fillingKaltura}
+          title="Check Kaltura for presence of all visible videos (ADR-044, batched 50/call, referenceId + provenance-footer match)"
+        >
+          {fillingKaltura ? "Checking…" : "Fill Kaltura status"}
         </button>
         <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
@@ -603,24 +711,47 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
               <span style={{ width: 80 }} />
             )}
 
-            {/* Kaltura lozenge */}
-            {kalHref ? (
-              <a
-                href={kalHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                title="Published to Kaltura"
-                style={{
-                  ...LINK_STYLE,
-                  background: KALTURA_STYLE.bg,
-                  color: KALTURA_STYLE.fg,
-                  border: `1px solid ${KALTURA_STYLE.border}`,
-                }}
-              >
-                Kaltura
-              </a>
-            ) : (
+            {/* Kaltura lozenge — ADR-044: always rendered, five states.
+                Resolves through locations[] → presence cache → unknown. */}
+            {v ? (() => {
+              const { state, href, presence } = resolveKalturaState(v.id, kalHref);
+              const s = KALTURA_STATE_STYLE[state];
+              const tooltip = state === "ready" && presence?.matchedBy === "footer"
+                ? "Matched on Kaltura via ADR-022 provenance footer"
+                : state === "ready" && presence?.matchedBy === "referenceId"
+                  ? "Matched on Kaltura by referenceId"
+                  : state === "absent"
+                    ? "Kaltura was asked and didn't find this video"
+                    : state === "unknown"
+                      ? "Not yet asked — click Fill Kaltura status"
+                      : state === "processing"
+                        ? "Kaltura is still transcoding this entry"
+                        : state === "live"
+                          ? "Live broadcast on Kaltura"
+                          : "Kaltura";
+              const baseStyle: React.CSSProperties = {
+                ...LINK_STYLE,
+                background: s.bg,
+                color: s.fg,
+                border: `1px solid ${s.border}`,
+                textDecoration: s.textDecoration ?? "none",
+                opacity: s.opacity ?? 1,
+              };
+              return href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title={tooltip}
+                  style={baseStyle}
+                >
+                  {s.label}
+                </a>
+              ) : (
+                <span title={tooltip} style={baseStyle}>{s.label}</span>
+              );
+            })() : (
               <span style={{ width: 56 }} />
             )}
 

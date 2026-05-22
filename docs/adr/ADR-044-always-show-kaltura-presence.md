@@ -1,9 +1,28 @@
 # ADR-044: Always Show Kaltura Presence Alongside YouTube
 
-**Status**: Proposed
+**Status**: Accepted (implemented 2026-05-22 — referenceId + provenance-footer match; fuzzy match deferred)
 **Date**: 2026-05-19
 **Deciders**: Architecture Team
 **Related**: ADR-016 (backfill uploader), ADR-022 (compliance audit), ADR-037 (Kaltura publish), ADR-040 (broaden source imports), ADR-039 (Drive artifacts)
+
+---
+
+## Implementation notes (2026-05-22)
+
+Shipped:
+
+- `POST /api/kaltura/presence-batch` — body `{ recordIds: string[] }`, returns `{ presence, missing }`. Two-pass match: `filter[referenceIdIn]` first (one Kaltura call per batch), ADR-022 provenance-footer scan via `freeText: "catalog:<short-id>"` for up to 10 unmatched IDs per batch.
+- `web/src/lib/kalturaPresenceCache.ts` — localStorage `video-sync:kaltura-presence`, 1-hour TTL, same shape as `youtubePrivacyCache`. Bulk-write API for the Fill flow.
+- `/api/kaltura/upload` and `VideoCard.publishToKaltura()` now set `referenceId = video.id` so future presence sweeps find the entry by referenceId alone (no description-footer dependency).
+- `BackfillOverview` renders the five-state Kaltura lozenge per row, resolving through (1) `locations[]` Kaltura destination → `ready`, (2) presence cache → cached state, (3) otherwise → `unknown`. Tooltip explains the match path (referenceId / footer / not asked / asked-and-absent).
+- A **Fill Kaltura status** button sits next to **Fill privacy** in the Overview toolbar, batched 50/call.
+
+Deferred (Open Questions in this ADR):
+
+- Fuzzy title + recorded-at match for legacy entries with no `referenceId` and no parseable footer.
+- VideoCard meta-row Kaltura badge (replaces the side-publish button affordance when the entry is already on Kaltura by referenceId/footer).
+- Filter-chip differentiation by presence state (present / absent / unknown).
+- One-time admin sweep to backfill `referenceId` on historical Kaltura entries.
 
 ---
 
