@@ -14,7 +14,7 @@ Video Bridge is a **unified video indexing and publishing tool**. It solves a co
 
 Video Bridge gives you that single view. It:
 
-1. **Discovers** videos from your source platforms (Zoom, Loom, Fireflies.ai)
+1. **Discovers** videos from your source platforms — Zoom (cloud recordings), Fireflies.ai (transcripts), YouTube (live broadcasts + uploads), Kaltura (entries). Loom and one-off URLs are imported manually via the URL Import tab.
 2. **Indexes** them into a searchable, normalized catalog
 3. Lets curators **review and approve** which videos should be published
 4. **Publishes** approved videos to destination platforms (YouTube, Kaltura)
@@ -84,9 +84,11 @@ Video Bridge connects to your Zoom account via OAuth 2.0. When a new recording c
 
 ### Loom
 
-Video Bridge polls the Loom API every 10 minutes for new videos in your workspace. Loom doesn't support webhooks, so polling is the only option.
+Loom shut down their public API in 2025, so automatic discovery is no longer possible. Loom support is now **manual URL import only**: paste a `loom.com/share/...` URL into the **URL Import** tab and Video Bridge fetches what it can from Loom's public share page (oEmbed for title / description / duration / thumbnail; an Apollo-state scrape for `createdAt`, the auto-generated transcript, owner name + email, language, and chapters).
 
-**What's captured:** Video title, duration, creator, share URL, and thumbnail.
+This works well for content that has been **manually extracted and enhanced** elsewhere — an edited Loom that improves on a raw Zoom recording, for example. Treat Loom as an *intermediate* in the provenance chain: the operator imports the Loom share URL and links it to the original Zoom (or other) source via the sibling-match suggestion, preserving the chain Zoom → Loom (edit) → YouTube/Kaltura.
+
+**What's captured:** Title, description, duration, creator, language, transcript (when Loom auto-generates one), and chapters — all from the public share page; no Loom credentials required.
 
 ### Fireflies.ai
 
@@ -120,7 +122,7 @@ An administrator configures platform connections in the **Settings > Connections
 | Platform | What You Need |
 |----------|--------------|
 | **Zoom** | Create a Server-to-Server OAuth app in the Zoom Marketplace. Provide the account ID, client ID, and client secret. |
-| **Loom** | Generate an API key from the Loom Developer Portal. Paste it into the connection form. |
+| **Loom** | *No credentials needed.* Loom's public API was discontinued in 2025 — Loom support is manual URL import only via the **URL Import** tab. |
 | **Fireflies** | Copy your API key from Fireflies Settings > Integrations. Paste it into the connection form. |
 | **YouTube** | Create OAuth 2.0 credentials in the Google Cloud Console with YouTube Data API v3 enabled. Click Connect to go through the consent flow. |
 | **Kaltura** | Provide your partner ID and admin secret (or app token) from the Kaltura Management Console. |
