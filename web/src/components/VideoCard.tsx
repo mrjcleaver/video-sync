@@ -464,45 +464,61 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   /**
    * Pick the best source URL to feed Kaltura's media-fetch step.
    *
-   * YouTube's anti-bot frequently blocks yt-dlp downloads. If the record
-   * has an upstream link to a non-YouTube source (Fireflies/Zoom/Loom),
-   * prefer it — those have direct API-backed downloads and don't hit
-   * the anti-bot wall. Fireflies in particular returns the mp4 URL
-   * straight from its GraphQL endpoint.
+   * Platforms are tiered by download reliability:
+   *   1. Fireflies  — GraphQL returns mp4 URL directly
+   *   2. Zoom       — S2S OAuth, well-behaved if the recording exists
+   *   3. Loom       — yt-dlp via Apollo state
+   *   4. YouTube    — yt-dlp, anti-bot risk
    *
-   * Priority order (lowest priority number wins):
-   *   1. Fireflies upstream  — GraphQL → mp4
-   *   2. Zoom upstream       — server-to-server OAuth → recording download
-   *   3. Loom upstream       — yt-dlp via Apollo state extraction
-   *   4. Primary download_url if it's NOT a YouTube source
-   *   8. YouTube as primary  — try last (anti-bot risk)
-   *   9. YouTube upstream    — try later than primary
+   * Among candidates of the same tier:
+   *   a. Primary `download_url` beats upstream links (primary's identifier
+   *      is the one of THIS catalog record, not a sibling — most reliable).
+   *   b. Manual-linked upstream beats auto-linked (Auto comes from sibling
+   *      matching and may point to siblings that don't have a recording).
    *
-   * Returns the chosen URL + the platform it came from so the caller
-   * can both forward the right creds and surface the choice in the
-   * upload-phase status message.
+   * Returns the chosen URL + platform + whether the picker overrode the
+   * primary download_url so the caller can surface that in the status line.
    */
   function pickDownloadUrlForKaltura(): { url: string; platform: string; chosenOverPrimary: boolean } {
-    const primary = video.download_url ?? "";
-    const primaryIsYouTube = primary.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(primary);
+    const PLATFORM_TIER: Record<string, number> = { Fireflies: 1, Zoom: 2, Loom: 3, YouTube: 4 };
+    const tierFor = (p: string) => PLATFORM_TIER[p] ?? 5;
 
-    const candidates: Array<{ url: string; platform: string; priority: number; isPrimary: boolean }> = [];
+    type Candidate = { url: string; platform: string; tier: number; isPrimary: boolean; isManualLink: boolean };
+    const candidates: Candidate[] = [];
+
+    const primary = video.download_url ?? "";
+    if (primary) {
+      let platform = video.source_platform;
+      if (primary.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(primary)) platform = "YouTube";
+      else if (primary.startsWith("fireflies://")) platform = "Fireflies";
+      else if (primary.startsWith("zoom://")) platform = "Zoom";
+      else if (/loom\.com/i.test(primary)) platform = "Loom";
+      candidates.push({ url: primary, platform, tier: tierFor(platform), isPrimary: true, isManualLink: false });
+    }
 
     for (const link of video.upstream_links ?? []) {
       const p = link.platform;
       const ext = link.external_id?.trim();
       if (!ext) continue;
-      if (p === "Fireflies") candidates.push({ url: `fireflies://${ext}`, platform: p, priority: 1, isPrimary: false });
-      else if (p === "Zoom")  candidates.push({ url: `zoom://recording/${ext}`, platform: p, priority: 2, isPrimary: false });
-      else if (p === "Loom")  candidates.push({ url: `https://www.loom.com/share/${ext}`, platform: p, priority: 3, isPrimary: false });
-      else if (p === "YouTube") candidates.push({ url: `youtube://${ext}`, platform: p, priority: 9, isPrimary: false });
+      const isManual = link.linked_by === "Manual";
+      let url: string | null = null;
+      // Strip the video-sync "<platform>-" prefix that source_id uses
+      // for catalog uniqueness — Zoom's recordings API expects a bare UUID.
+      if (p === "Fireflies") url = `fireflies://${ext.replace(/^fireflies-/, "")}`;
+      else if (p === "Zoom") url = `zoom://recording/${ext.replace(/^zoom-/, "")}`;
+      else if (p === "Loom") url = `https://www.loom.com/share/${ext.replace(/^loom-/, "")}`;
+      else if (p === "YouTube") url = `youtube://${ext.replace(/^youtube-/, "")}`;
+      if (!url) continue;
+      candidates.push({ url, platform: p, tier: tierFor(p), isPrimary: false, isManualLink: isManual });
     }
 
-    if (primary) {
-      candidates.push({ url: primary, platform: video.source_platform, priority: primaryIsYouTube ? 8 : 4, isPrimary: true });
-    }
+    candidates.sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      if (a.isManualLink !== b.isManualLink) return a.isManualLink ? -1 : 1;
+      return 0;
+    });
 
-    candidates.sort((a, b) => a.priority - b.priority);
     const chosen = candidates[0] ?? { url: primary, platform: video.source_platform, isPrimary: true };
     return { url: chosen.url, platform: chosen.platform, chosenOverPrimary: !chosen.isPrimary };
   }
