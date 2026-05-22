@@ -8,7 +8,7 @@ This guide walks you through every feature of Video Bridge, from initial setup t
 
 ### Opening the Dashboard
 
-Navigate to your Video Bridge URL (e.g. `https://video-sync-HASH.a.run.app`). The app loads a WebAssembly module on first visit — you'll see "Loading WASM module..." briefly.
+Navigate to [`https://video-sync.agentics.org`](https://video-sync.agentics.org). Access is gated by Google Cloud IAP — sign in with your Workspace account; your role (Admin / Publisher / Viewer) is derived from Cloud Identity Groups (ADR-036). The app loads a WebAssembly module on first visit — you'll see "Loading WASM module..." briefly.
 
 Once loaded, the dashboard shows:
 
@@ -28,15 +28,16 @@ Before importing, connect at least one source platform and one destination platf
 | Platform | Credentials needed | How to get them |
 |----------|-------------------|-----------------|
 | **Zoom** | Account ID, Client ID, Client Secret | Zoom Marketplace > Server-to-Server OAuth app |
-| **YouTube** | Client ID, Client Secret | Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 |
+| **YouTube** | Client ID, Client Secret, refresh token | Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 — **per-operator**, brand-account manager identity (ADR-042) |
 | **Fireflies** | API Key | Fireflies.ai > Settings > API |
-| **Loom** | API Key | Loom > Settings > Developer |
+| **Kaltura** | Partner ID, Admin Secret | Kaltura Management Console — **shared default only** (admin secret is too privileged for per-operator entry) |
 | **OpenRouter** | API Key | openrouter.ai > Keys (for AI summaries) |
 | **OpusClip** | API Key | opusclip.pro > API settings (for Shorts) |
+| **Loom** | *(no credentials)* | Loom's public API was discontinued in 2025; manual URL import only via the URL Import tab |
 
-3. For YouTube, after entering Client ID and Client Secret, click **Authorize** to complete the OAuth flow. You'll be redirected to Google's consent screen, then back to Video Bridge with your channel connected.
+3. For YouTube, after entering Client ID and Client Secret, click **Authorize** to complete the OAuth flow. You'll be redirected to Google's consent screen, then back to Video Bridge with your channel connected. YouTube is intentionally per-operator — uploads carry your identity inside the brand account so the Content ID / copyright-dispute audit trail at YouTube's own layer reflects who performed the upload.
 
-4. Credentials are stored in your browser's localStorage. They are never sent to any server other than the Video Bridge backend (same-origin API routes).
+4. Credentials follow a **hybrid model** (ADR-042): shared defaults live in Google Secret Manager and are managed by Admins; operators may override locally in their browser. The status line under each connection card reads `● Shared default · set by …`, `● Override active (your browser)`, or `○ Not configured` so you always know which source a request will use. YouTube is the exception — always per-operator, no shared option.
 
 ---
 
@@ -344,29 +345,29 @@ At the bottom of the dashboard. Two views:
 
 ---
 
-## 10. What Lives Where (Single-Browser Constraint)
+## 10. What Lives Where
 
-Most of Video Bridge's state lives in your **browser's localStorage**, not on the server. This is documented in detail in ADR-035 but the practical consequences for users are:
+Most operationally relevant state is now shared across operators on the server. The practical answer to "if I open the app on a different browser":
 
-| You'll see… | …in a different browser or on a new device |
-|-------------|--------------------------------------------|
-| Your video catalog | **Empty** — re-run imports to populate |
-| Your credentials (Zoom / YouTube / Fireflies / etc.) | **Empty** — re-authorise each platform |
-| Your ingestion / processing / post-processing rules | **Preserved** — these sync from the server |
-| Your backfill profiles | **Empty** |
-| Your "Not a match" rejections | **Empty** — rejected suggestions reappear |
-| YouTube privacy cache + uploads cache | **Empty** — one click on Fill privacy / Auto-lookup re-fills |
+| State | Where it lives | What you see on a fresh browser |
+|---|---|---|
+| Video catalog | `data/catalog.json` on FUSE-mounted GCS (ADR-035 Level 2) | **Same catalog as everyone else** |
+| Transcripts, descriptions, summaries, chat | Workspace Shared Drive — one folder per meeting (ADR-039) | Same artifacts, openable in Drive |
+| Ingestion / processing / post-processing rules | `data/rules.json` (ADR-031) | Same rules |
+| Backfill profiles, queue, exclusions | `data/{backfill-profiles,backfill-queue,exclusions}.json` (ADR-043) | Same profiles + queue, no duplicate "don't re-import" decisions |
+| Shared platform credentials (Zoom / Fireflies / Kaltura / OpenRouter / OpusClip) | Google Secret Manager, managed by Admins (ADR-042) | Same defaults — you can override locally if you want |
+| YouTube credentials | Your browser only — per-operator by design (ADR-042) | **Empty** — re-authorise; YouTube uses your brand-account identity for accountability |
+| Per-browser caches (YouTube privacy, YouTube uploads, sibling-match rejections) | `localStorage` | Empty until you click **Fill privacy** / **Auto-lookup**; rejected suggestions can reappear |
+| Event log | `localStorage` (in-browser action history) | Empty; the server-side audit log (ADR-041) covers cross-operator visibility |
+| UI state (which tab is open, search input) | `localStorage` | Defaults |
 
-**Practical implication**: the app is effectively single-browser, single-operator today. Two people on the same URL do not see each other's catalog. Switching from laptop to phone means an empty app.
-
-This is a known limit, not a permanent design. The roadmap to share catalog + credentials across browsers is tracked as Level 2 / Level 3 / Level 4 in ADR-035. Level 1 (making server-side rule / quota files durable across Cloud Run restarts) is ready but blocked on IAM permissions — see ADR-018 addendum.
+**Practical implication**: two operators on the same URL see the same catalog, same backfill state, same rules. The remaining per-browser items (YouTube auth + caches + UI state) all rebuild quickly.
 
 ### If you accidentally wipe browser data
 
-The catalog is gone. Options:
-- Re-import from Zoom / Fireflies — import is idempotent by `source_id`, so you won't get duplicates
-- Re-authorise YouTube and run **Auto-lookup on YouTube** to re-link already-published videos to their catalog entries once they're re-imported
-- Processing / post-processing / ingestion rules come back automatically on page load because they're server-side
+- **Catalog, rules, profiles, queue, exclusions, transcripts** — preserved on the server; they hydrate back on next page load
+- **YouTube** — re-run the OAuth flow from the Connections panel
+- **Privacy / uploads caches** — one click on **Fill privacy** or **Auto-lookup on YouTube** rebuilds them
 
 ---
 

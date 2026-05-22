@@ -18,7 +18,9 @@ Click "Connections" tab
   +---> Enter Zoom credentials (Account ID, Client ID, Client Secret)
   |       |
   |       v
-  |     Click "Save" --> credentials stored in localStorage
+  |     Click "Save" --> per-operator override saved to localStorage,
+  |     OR Admin clicks "Save as shared default" --> written to Google
+  |     Secret Manager so every operator inherits it (ADR-042).
   |
   +---> Enter YouTube credentials (Client ID, Client Secret)
   |       |
@@ -40,8 +42,9 @@ Click "Connections" tab
   |       v
   |     Channel name displayed on Connections card
   |
-  +---> (Optional) Enter Fireflies API Key, Loom API Key,
-  |     OpenRouter API Key, OpusClip API Key
+  +---> (Optional) Enter Fireflies API Key, OpenRouter API Key,
+  |     OpusClip API Key. Kaltura is shared-only (Admin sets it via
+  |     Secret Manager). Loom needs no credentials — manual URL import.
   |
   v
 Setup complete --> return to Dashboard

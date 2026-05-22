@@ -40,7 +40,7 @@ Manages the external platform accounts (YouTube channel, Zoom account, Fireflies
 **Needs:**
 - Control over which credentials are used and what scopes are granted
 - Visibility into API quota consumption (YouTube daily upload limits, Zoom API rate limits)
-- Assurance that credentials are handled securely (current MVP: browser localStorage per ADR-011; planned migration to server-side Secret Manager)
+- Assurance that credentials are handled securely. Shared platform credentials (Zoom, Fireflies, Kaltura, OpenRouter, OpusClip) live in Google Secret Manager and are managed by Admins (ADR-042). Per-operator YouTube OAuth stays in localStorage by design so brand-account uploads carry the actual operator's identity (ADR-042 §"YouTube brand account"). Every credential write is audited end-to-end via ADR-041.
 - Ability to revoke access without disrupting other integrations
 
 **Touchpoints:** ConnectionsPanel, OAuth consent screens, platform admin consoles
