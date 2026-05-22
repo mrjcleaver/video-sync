@@ -68,8 +68,7 @@ The webhook endpoint must be accessible at `/webhooks/zoom` and the **Secret Tok
 4. Under **Scopes**, add all scopes listed in the "Required Granular Scopes" tables above
 5. Under **Feature** > **Event Subscriptions**, enable and add the webhook events listed above
 6. Copy the `Account ID`, `Client ID`, and `Client Secret`
-7. In Video Bridge **Settings > Connections > Zoom**, paste those three values and click **Connect**
-8. Click **Test Connection** to verify
+7. In Video Bridge **Connections > Zoom**, paste those three values and either **Override locally** (browser only) or, for Admins, **Save as shared default** (Google Secret Manager — ADR-042). To verify the credentials work, open the **Meetings** import tab, set a date range that overlaps a known recording, and click **Fetch from Zoom**.
 
 ## Scope Naming Convention
 

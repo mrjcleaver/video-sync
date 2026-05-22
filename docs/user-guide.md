@@ -12,7 +12,7 @@ Navigate to [`https://video-sync.agentics.org`](https://video-sync.agentics.org)
 
 Once loaded, the dashboard shows:
 
-- **Header**: App name, build version badge, and navigation tabs
+- **Header**: App name, build version badge, plus action buttons — Connections, View Logs, Feedback, Help
 - **Filter bar**: Status filter tabs (Active, All, individual statuses, Done)
 - **Video cards**: One card per indexed video showing title, duration, status, and actions
 - **Burndown summary**: Total videos, excluded count, breakdown by status
@@ -22,7 +22,7 @@ Once loaded, the dashboard shows:
 
 Before importing, connect at least one source platform and one destination platform.
 
-1. Click the **Connections** tab in the header
+1. Click the **Connections** button in the header (the Connections panel expands inline)
 2. For each platform, enter the required credentials:
 
 | Platform | Credentials needed | How to get them |
@@ -43,7 +43,7 @@ Before importing, connect at least one source platform and one destination platf
 
 ## 2. Importing Videos
 
-The **Import** panel sits directly under **Connections** and offers four source tabs, in this order: **Fireflies** (default), **Zoom**, **URL**, **Manual**. Fireflies is the default because most of the catalog's primary signal (transcripts, AI summaries, participant lists with emails) comes through Fireflies.
+The **Import** panel sits directly under **Connections** and offers three source tabs: **Meetings** (default — stacks Fireflies, Zoom, Kaltura, and YouTube Live broadcasts with a shared date range), **URL** (manual paste for Loom share links and one-off YouTube URLs), and **Manual** (free-form entry).
 
 > **What happens after import.** On every successful import the app automatically fetches your authorized YouTube channel's uploads (first call costs a few API quota units; cached for one hour). This populates the YouTube privacy cache and seeds "Possible YouTube match" banners on any newly imported card that looks like it's already on YouTube. See §4.
 
@@ -222,7 +222,7 @@ Found in the **Post-Processing Rules** tab. These fire after a video is publishe
 
 ## 6. Backfill Orchestration
 
-For publishing large batches of approved videos (e.g. 18 months of backlog), use the **Backfill Uploader** panel (positioned directly under Import).
+For publishing large batches of approved videos (e.g. 18 months of backlog), use the **Backfill Uploader** panel. The page layout is: Connections → Import → **Sync Status** (calendar / overview of every video's progress) → **Backfill Uploader** → Rules → Processing Rules → Post-Processing Rules → Shorts.
 
 The panel has four tabs: **Overview** (default), **Profiles**, **Queue**, **Calendar**. The header has a **↻ refresh** button that re-pulls video data from the store — click it after an import if the views look stale.
 

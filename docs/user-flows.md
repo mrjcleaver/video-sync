@@ -88,7 +88,8 @@ For each selected meeting:
   |--> Create WasmVideoRecord via WASM index() command
   |--> VideoIndexed event emitted
   |--> Record added to in-memory store
-  |--> Persisted to localStorage
+  |--> Persisted to data/catalog.json on the FUSE-mounted GCS bucket
+  |    (ADR-035 L2); localStorage holds a fast-boot cache + offline fallback
   |
   v
 Videos appear on Dashboard as "Discovered"
@@ -121,7 +122,8 @@ Configure rule:
 Click "Save Rule"
   |
   v
-Rule saved to localStorage + synced to server (POST /api/rules)
+Rule POSTed to /api/rules → data/rules.json on FUSE bucket (server-authoritative
+per ADR-031); localStorage holds a cache that re-hydrates on boot.
   |
   v
 Automatic runner evaluates every 60 seconds
@@ -204,7 +206,8 @@ Status transitions: Approved --> Publishing
   v
 Client sends POST /api/youtube/upload with:
   - Video source URL (Zoom download link, Loom URL, etc.)
-  - YouTube credentials (refresh token from localStorage)
+  - YouTube credentials (refresh token from localStorage — YouTube is
+    per-operator only by design, ADR-042 §"YouTube brand account")
   - Metadata (title, description, tags, privacy)
   |
   v
@@ -428,12 +431,21 @@ If alerts exist:
   |--> "runtime:memory — memory pressure" (warn) or "memory critical" (error)
   |
   v
+In parallel: EventLog polls /api/audit/recent every 8s (ADR-041)
+  |--> Returns the most recent ~50 audit entries server-side
+  |--> Each entry: { actor_email, route, method, classification, rid, status, latency_ms, ts }
+  |--> classification: "access" (read) or "mutation" (write)
+  |--> Merged into the in-app structured log so any operator's activity
+       is visible to all logged-in operators in near-real-time
+  |
+  v
 Event Log also shows:
   - API request/response logs with correlation IDs
   - Import activity
   - Upload progress and completion
   - Rule engine matches
   - Post-processing webhook/email results
+  - Audit entries from /api/audit/recent (cross-operator visibility)
   |
   v
 Click "Download .jsonl" to export full log for support
@@ -583,6 +595,134 @@ Operator sees suggestions, clicks Accept / Not a match / preview as appropriate
 ```
 
 **Outcome:** For operators with an 18-month backlog already partly on YouTube, one import populates the channel-uploads cache and lights up every auto-associable card at once.
+
+---
+
+## Flow 13a: IAP Sign-In and Role Assignment
+
+Operators reach Video Bridge through Google Cloud IAP — there is no in-app login screen.
+
+```
+User opens https://video-sync.agentics.org
+  |
+  v
+IAP intercepts request before it hits Cloud Run
+  |
+  +--> Not signed in to Google?
+  |       |
+  |       v
+  |     Redirect to accounts.google.com → sign in with Workspace account
+  |
+  +--> Signed in but no IAP grant?
+  |       |
+  |       v
+  |     403 "You don't have access" (admin must add user/group to
+  |     roles/iap.httpsResourceAccessor on the backend service)
+  |
+  v
+IAP forwards the request to Cloud Run with x-goog-iap-jwt-assertion header
+  |
+  v
+Server (web/src/lib/auth.ts) verifies the JWT signature against IAP_AUDIENCE
+  and Google's JWK set → extracts { email, sub }
+  |
+  v
+Resolve role via Cloud Identity Groups (memberships:lookup per group):
+  - video-sync-admins@agentics.org      → ADMIN
+  - video-sync-publishers@agentics.org  → PUBLISHER
+  - video-sync-operators@agentics.org   → VIEWER
+  |
+  v
+Role attached to the request context; routes that require ADMIN
+(e.g., PUT /api/admin/credentials/*) gate on it.
+  |
+  v
+Every request emits an audit entry (ADR-041) so the actor's email is
+recorded against every read/write.
+```
+
+**Outcome:** No in-app login UI; auth is enforced at the IAP edge, roles are derived from Workspace groups, every action is attributable.
+
+---
+
+## Flow 13b: Open / Edit a Drive Artifact (transcript, description, summary, chat)
+
+Human-readable artifacts live on a Workspace Shared Drive so operators and content owners can edit them in Google Docs without touching the app (ADR-039).
+
+```
+Expand a video card → "Artifacts" section shows links:
+  Transcript · Description · Summary · Chat
+  |
+  v
+Click "Transcript"
+  |
+  v
+Client calls GET /api/drive/artifact?recordId=<id>&kind=transcript
+  |
+  v
+Server (Drive lib):
+  |--> Look up the artifact entry in catalog.json (Drive file id + folder name)
+  |--> Resolve folder name via 24h cache
+  |--> Return { driveFileUrl, lastModifiedTime, etag }
+  |
+  v
+Client opens driveFileUrl in a new tab → user edits in Google Docs
+  |
+  v
+On next card expand, server re-fetches lastModifiedTime; the EventLog
+shows a "drive:artifact_modified" entry attributing the change to the
+actor email (post-processing webhook also fires if configured).
+```
+
+For uploads (transcripts arriving from Fireflies/Zoom, descriptions from publishing):
+```
+Ingestion or publishing pipeline calls Drive lib createOrUpdateArtifact()
+  |--> Folder layout: /{Channel}/{YYYY-MM}/{recordId}/{kind}.md
+  |--> drive.file scope — only files we created are visible to the app
+  |--> File id + lastModifiedTime persisted onto VideoRecord.artifacts
+```
+
+**Outcome:** Artifacts are first-class, editable, attributable, and survive Cloud Run cold starts.
+
+---
+
+## Flow 13c: Import from Kaltura / Side-Publish to Kaltura
+
+```
+Click "Import" tab → "Kaltura" sub-tab
+  |
+  v
+Select date range
+  |
+  v
+POST /api/kaltura/entries with admin-secret-derived ks (server-side)
+  |--> Server pulls Kaltura entries (including live broadcasts streamed
+       via OBS / Streamyard / Wirecast) for the window
+  |--> Returns list with title, createdAt, duration, downloadUrl
+  |
+  v
+Operator selects entries → "Import Selected"
+  |--> Each becomes a VideoRecord with source_platform=Kaltura
+  |--> Discovered status; normal triage from here
+```
+
+Side-publish (Kaltura as destination alongside YouTube):
+
+```
+On an Approved card, click "Publish" → choose destinations
+  |
+  +--> YouTube (per-operator brand account)
+  +--> Kaltura  (org-shared admin secret)
+  |
+  v
+Server publishes serially: YouTube first, then Kaltura
+  |--> Kaltura: POST /api/kaltura/upload — uses shared credential from
+       Secret Manager (ADR-042) unless operator override is set
+  |--> Each destination becomes its own Destination Location on the
+       provenance graph
+```
+
+**Outcome:** Kaltura is a peer of YouTube — both as source and as destination — without per-operator credential ceremony.
 
 ---
 

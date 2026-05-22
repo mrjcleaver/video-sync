@@ -30,3 +30,12 @@ In practice this means:
 | **Progressive automation** | Start manual, add rules as patterns emerge. Ingestion rules for scoping, processing rules for metadata templating, post-processing rules for notifications. Each layer is optional. |
 | **Platform agnostic** | Source and destination adapters are pluggable. Adding a new platform means implementing an adapter, not redesigning the pipeline. |
 | **Operator visibility** | Structured logging, memory pressure monitoring, quota tracking, and an in-app event log ensure the operator always knows what happened and why. |
+
+## Where this stands today
+
+Pieces of the vision that have shipped and now shape the system's character:
+
+- **Multi-destination publishing.** YouTube (per-operator brand-account OAuth so uploads carry the actual operator's identity for accountability) **and** Kaltura (org-shared admin credential). Kaltura is also a source — operators can import existing Kaltura entries, including live broadcasts streamed via OBS/Streamyard/Wirecast (ADR-040).
+- **Org-shared state.** Video catalog, transcripts, ingestion / processing / post-processing rules, backfill profiles + queue, and exclusions all live on the server (a FUSE-mounted GCS bucket and a Workspace Shared Drive for human-readable artifacts). Two operators on the same URL see the same view (ADR-035 L1+L2, ADR-039, ADR-043).
+- **Identity and audit.** Google Cloud IAP gates the door; roles (Admin / Publisher / Viewer) come from Cloud Identity Groups (ADR-036). Every API request emits an audit entry tagged `access` or `mutation` with the actor's email, surfaced both to Cloud Logging and to the in-app EventLog within 8 seconds (ADR-041).
+- **Hybrid credentials.** Shared platform credentials (Zoom, Fireflies, Kaltura, OpenRouter, OpusClip) live in Google Secret Manager and are managed by Admins; operators can override locally if they need to use a personal account. YouTube remains per-operator on purpose (ADR-042).

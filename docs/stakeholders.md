@@ -52,12 +52,12 @@ Manages the external platform accounts (YouTube channel, Zoom account, Fireflies
 Deploys and maintains the Video Bridge instance on Google Cloud.
 
 **Needs:**
-- Reproducible deployments via CI/CD (GitHub Actions to Cloud Run)
+- Reproducible deployments via `./deploy.sh` (local Docker → Cloud Run) or Cloud Build (`gcloud builds submit`). The `.github/workflows/deploy.yml` GitHub Actions pipeline is checked in but disabled (push trigger commented out) pending Workload Identity Federation setup.
 - Observable system: structured logs in Cloud Logging, memory pressure alerts (ADR-032), health endpoint
 - Clear resource boundaries: memory limits, instance scaling, quota caps
 - Security: no credentials in code, Secret Manager for server-side keys
 
-**Touchpoints:** `.github/workflows/deploy.yml`, Cloud Run console, Cloud Logging, `/api/health`
+**Touchpoints:** `./deploy.sh`, `scripts/` (gcs-fuse-setup.sh, iap-setup.sh, check-cloud-identity.sh, prune-build-artifacts.sh), Cloud Run console, Cloud Logging (audit + request logs per ADR-041), `/api/health`
 
 ---
 
