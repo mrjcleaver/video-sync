@@ -292,10 +292,10 @@ export default function Dashboard() {
               report against deployed revision and recent commits. */}
           <a
             className="btn btn-sm"
-            href={`https://github.com/mrjcleaver/video-sync/issues/new?title=${encodeURIComponent(`[feedback] ${process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown"}: `)}&labels=feedback`}
+            href={`https://github.com/mrjcleaver/video-sync/issues/new?template=feedback.yml&title=${encodeURIComponent(`[feedback] ${process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown"}: `)}&build=${encodeURIComponent(process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown")}`}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open a GitHub issue with feedback or a bug report"
+            title="Open a GitHub issue using the feedback template"
           >
             Feedback
           </a>
