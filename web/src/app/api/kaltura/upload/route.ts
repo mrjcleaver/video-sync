@@ -162,8 +162,25 @@ async function handler(req: NextRequest): Promise<NextResponse> {
       throw new Error("Kaltura session.start returned no usable KS");
     }
 
-    // 2. Download source media
-    await downloadFromSource(body.downloadUrl, body, tempPath);
+    // 2. Download source media. Per ADR-042, source credentials live in
+    //    Secret Manager (shared) and optionally as a browser local override.
+    //    The client only forwards local overrides; resolve shared creds
+    //    here so a Zoom/Fireflies source download works without requiring
+    //    every operator to paste platform creds locally.
+    const effectiveCreds: typeof body = { ...body };
+    if (sourceScheme === "zoom" && (!effectiveCreds.zoomAccountId || !effectiveCreds.zoomClientId || !effectiveCreds.zoomClientSecret)) {
+      const sharedZoom = (await getSharedCredential("zoom")) as { accountId?: string; clientId?: string; clientSecret?: string } | null;
+      if (sharedZoom) {
+        effectiveCreds.zoomAccountId = effectiveCreds.zoomAccountId || sharedZoom.accountId;
+        effectiveCreds.zoomClientId = effectiveCreds.zoomClientId || sharedZoom.clientId;
+        effectiveCreds.zoomClientSecret = effectiveCreds.zoomClientSecret || sharedZoom.clientSecret;
+      }
+    }
+    if (sourceScheme === "fireflies" && !effectiveCreds.firefliesApiKey) {
+      const sharedFf = (await getSharedCredential("fireflies")) as { apiKey?: string } | null;
+      if (sharedFf?.apiKey) effectiveCreds.firefliesApiKey = sharedFf.apiKey;
+    }
+    await downloadFromSource(body.downloadUrl, effectiveCreds, tempPath);
 
     // 3. Add upload token
     const tokenRes = await kalturaCall("uploadToken", "add", { ks: ksValue });
