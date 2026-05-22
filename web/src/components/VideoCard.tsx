@@ -462,6 +462,52 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   }
 
   /**
+   * Pick the best source URL to feed Kaltura's media-fetch step.
+   *
+   * YouTube's anti-bot frequently blocks yt-dlp downloads. If the record
+   * has an upstream link to a non-YouTube source (Fireflies/Zoom/Loom),
+   * prefer it — those have direct API-backed downloads and don't hit
+   * the anti-bot wall. Fireflies in particular returns the mp4 URL
+   * straight from its GraphQL endpoint.
+   *
+   * Priority order (lowest priority number wins):
+   *   1. Fireflies upstream  — GraphQL → mp4
+   *   2. Zoom upstream       — server-to-server OAuth → recording download
+   *   3. Loom upstream       — yt-dlp via Apollo state extraction
+   *   4. Primary download_url if it's NOT a YouTube source
+   *   8. YouTube as primary  — try last (anti-bot risk)
+   *   9. YouTube upstream    — try later than primary
+   *
+   * Returns the chosen URL + the platform it came from so the caller
+   * can both forward the right creds and surface the choice in the
+   * upload-phase status message.
+   */
+  function pickDownloadUrlForKaltura(): { url: string; platform: string; chosenOverPrimary: boolean } {
+    const primary = video.download_url ?? "";
+    const primaryIsYouTube = primary.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(primary);
+
+    const candidates: Array<{ url: string; platform: string; priority: number; isPrimary: boolean }> = [];
+
+    for (const link of video.upstream_links ?? []) {
+      const p = link.platform;
+      const ext = link.external_id?.trim();
+      if (!ext) continue;
+      if (p === "Fireflies") candidates.push({ url: `fireflies://${ext}`, platform: p, priority: 1, isPrimary: false });
+      else if (p === "Zoom")  candidates.push({ url: `zoom://recording/${ext}`, platform: p, priority: 2, isPrimary: false });
+      else if (p === "Loom")  candidates.push({ url: `https://www.loom.com/share/${ext}`, platform: p, priority: 3, isPrimary: false });
+      else if (p === "YouTube") candidates.push({ url: `youtube://${ext}`, platform: p, priority: 9, isPrimary: false });
+    }
+
+    if (primary) {
+      candidates.push({ url: primary, platform: video.source_platform, priority: primaryIsYouTube ? 8 : 4, isPrimary: true });
+    }
+
+    candidates.sort((a, b) => a.priority - b.priority);
+    const chosen = candidates[0] ?? { url: primary, platform: video.source_platform, isPrimary: true };
+    return { url: chosen.url, platform: chosen.platform, chosenOverPrimary: !chosen.isPrimary };
+  }
+
+  /**
    * Phase 1: single-destination publish. Multi-destination (publish to both
    * YouTube and Kaltura at once) is Phase 2 in ADR-037 — it requires
    * decoupling the upload step from the mark_published transition.
@@ -485,7 +531,14 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
 
     setShowPreview(false);
     setUploading(true);
-    setUploadPhase("Uploading to Kaltura…");
+
+    // Pick the best source for Kaltura's fetch step — prefer non-YouTube
+    // upstreams so we don't trip YouTube's anti-bot every time.
+    const picked = pickDownloadUrlForKaltura();
+    const phaseSuffix = picked.chosenOverPrimary
+      ? ` (via ${picked.platform} upstream)`
+      : "";
+    setUploadPhase(`Uploading to Kaltura${phaseSuffix}…`);
 
     try {
       // ADR-022 provenance footer — mirrors publishToYouTube. The Kaltura
@@ -508,7 +561,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         title: attrs.title ?? video.title,
         description: descriptionWithFooter,
         tags: attrs.tags ?? video.tags ?? [],
-        downloadUrl: video.download_url,
+        downloadUrl: picked.url,
         // ADR-044: stamp the catalog UUID as the Kaltura entry's referenceId
         // so future presence-batch sweeps can find this entry by referenceId
         // alone, without depending on description footers (which operators
@@ -519,14 +572,21 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         body.partnerId = kaltura.partnerId;
         body.adminSecret = localAdminSecret;
       }
-      if (video.download_url?.startsWith("zoom://")) {
+      // Forward credentials matching the PICKED source (not the primary
+      // download_url) so an upstream Fireflies override gets Fireflies
+      // creds even when the catalog record's source is YouTube.
+      if (picked.url.startsWith("zoom://")) {
         const z = connections["Zoom"]?.credentials ?? {};
         body.zoomAccountId = z.accountId;
         body.zoomClientId = z.clientId;
         body.zoomClientSecret = z.clientSecret;
       }
-      if (video.download_url?.startsWith("fireflies://")) {
+      if (picked.url.startsWith("fireflies://")) {
         body.firefliesApiKey = connections["Fireflies"]?.credentials?.apiKey;
+      }
+      if (picked.url.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(picked.url)) {
+        const yt = connections["YouTube"]?.credentials ?? {};
+        if (yt.cookies) body.ytCookies = yt.cookies;
       }
 
       const res = await fetch("/api/kaltura/upload", {
@@ -553,7 +613,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
             role: "Destination",
           })),
         );
-        onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}`, { video_id: video.id });
+        onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
       } else {
         videoStore.mutate(video.id, (r) =>
           r.mark_published(JSON.stringify({
@@ -562,7 +622,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
             destination_platform: "Kaltura",
           })),
         );
-        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}`, { video_id: video.id });
+        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
       }
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
