@@ -488,9 +488,25 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     setUploadPhase("Uploading to Kaltura…");
 
     try {
+      // ADR-022 provenance footer — mirrors publishToYouTube. The Kaltura
+      // entry's own description should self-document its catalog origin so
+      // anyone looking at the entry on Kaltura can trace it back, and so
+      // ADR-044's footer-fallback presence match works when referenceId
+      // gets cleared (operators can edit referenceId in Kaltura's UI).
+      const footerParts = [
+        `catalog:${video.id}`,
+        `source:${video.source_platform}:${video.source_id}`,
+      ];
+      for (const link of video.upstream_links ?? []) {
+        footerParts.push(`upstream:${link.platform}:${link.external_id}`);
+      }
+      const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
+      const rawDescription = attrs.description ?? video.description ?? "";
+      const descriptionWithFooter = `${rawDescription}${provenanceFooter}`.slice(0, 5000);
+
       const body: Record<string, unknown> = {
         title: attrs.title ?? video.title,
-        description: attrs.description ?? video.description ?? "",
+        description: descriptionWithFooter,
         tags: attrs.tags ?? video.tags ?? [],
         downloadUrl: video.download_url,
         // ADR-044: stamp the catalog UUID as the Kaltura entry's referenceId
