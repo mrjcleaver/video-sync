@@ -71,6 +71,21 @@ for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; d
     || echo "  !! Cloud Run Invoker grant for ${group_email} failed"
 done
 
+# 3a-domain. Per ADR-045, also grant Cloud Run Invoker to the whole
+#     Workspace domain. The app does its own role check via Cloud
+#     Identity and redirects any @${DOMAIN} user without a role group
+#     to the project wiki. This means random Workspace members can
+#     reach the HTML shell, but the WASM/API surface still enforces
+#     roles — and the user lands somewhere useful (wiki) instead of
+#     on Google's blocky "You don't have access" page.
+echo "==> Granting Cloud Run Invoker to domain:${DOMAIN} (ADR-045 wider IAP gate)"
+gcloud run services add-iam-policy-binding "${SERVICE}" \
+  --region="${REGION}" \
+  --project="${PROJECT_ID}" \
+  --member="domain:${DOMAIN}" \
+  --role="roles/run.invoker" \
+  || echo "  !! Cloud Run Invoker grant for domain:${DOMAIN} failed"
+
 # 3b. Bind groups to the IAP web resource so IAP itself lets them
 #     through the sign-in wall. WITHOUT this step, IAP denies with
 #     "You don't have access" even though Cloud Run's IAM policy
@@ -109,6 +124,26 @@ for group_email in "${KEY_ADMIN_GROUP}" "${OPERATOR_GROUP}" "${VIEWER_GROUP}"; d
       echo "     command for this member, OR see Option 1 in the script comments."
     }
 done
+
+# Per ADR-045 also bind the whole Workspace domain to
+# iap.httpsResourceAccessor so any @${DOMAIN} user passes the IAP
+# sign-in wall. The app then resolves role server-side, and
+# CurrentActorProvider redirects roleless users to the wiki.
+if echo "${EXISTING_IAP_POLICY}" | grep -q "domain:${DOMAIN}"; then
+  echo "  domain:${DOMAIN} already bound to roles/iap.httpsResourceAccessor"
+else
+  gcloud iap web add-iam-policy-binding \
+    --resource-type=cloud-run \
+    --service="${SERVICE}" \
+    --region="${REGION}" \
+    --project="${PROJECT_ID}" \
+    --member="domain:${DOMAIN}" \
+    --role="roles/iap.httpsResourceAccessor" 2>/dev/null \
+    || {
+      echo "  !! IAP grant for domain:${DOMAIN} failed (need roles/iap.admin)"
+      echo "     This binding is per ADR-045 (wider gate, app-level redirect)."
+    }
+fi
 
 # 4. Enable IAP on the Cloud Run service. This is the step that
 #    actually puts a Google sign-in wall in front of browser requests

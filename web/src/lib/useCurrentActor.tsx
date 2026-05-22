@@ -36,13 +36,27 @@ const CurrentActorContext = createContext<ActorState>({
   error: null,
 });
 
+// Per ADR-045: users who pass IAP (e.g. any @agentics.org Workspace user)
+// but are not in any video-sync role group get bounced to the project
+// wiki rather than left on an unusable HTML shell. Configurable via env;
+// defaults to the GitHub wiki.
+const UNAUTHORIZED_REDIRECT_URL =
+  process.env.NEXT_PUBLIC_UNAUTHORIZED_REDIRECT_URL ??
+  "https://github.com/mrjcleaver/video-sync/wiki";
+
 export function CurrentActorProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ActorState>({ actor: null, loading: true, error: null });
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/me")
-      .then(r => {
+      .then(async r => {
+        if (r.status === 401) {
+          if (typeof window !== "undefined") {
+            window.location.replace(UNAUTHORIZED_REDIRECT_URL);
+          }
+          throw new Error("unauthorized");
+        }
         if (!r.ok) throw new Error(`auth/me ${r.status}`);
         return r.json();
       })

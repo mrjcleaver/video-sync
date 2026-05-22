@@ -613,14 +613,15 @@ IAP intercepts request before it hits Cloud Run
   |       v
   |     Redirect to accounts.google.com → sign in with Workspace account
   |
-  +--> Signed in but no IAP grant?
+  +--> Signed in but outside @agentics.org?
   |       |
   |       v
-  |     403 "You don't have access" (admin must add user/group to
-  |     roles/iap.httpsResourceAccessor on the backend service)
+  |     403 "You don't have access" — IAP only admits the agentics.org
+  |     Workspace domain + the three role groups (ADR-045).
   |
   v
 IAP forwards the request to Cloud Run with x-goog-iap-jwt-assertion header
+(any agentics.org user reaches the app)
   |
   v
 Server (web/src/lib/auth.ts) verifies the JWT signature against IAP_AUDIENCE
@@ -628,9 +629,17 @@ Server (web/src/lib/auth.ts) verifies the JWT signature against IAP_AUDIENCE
   |
   v
 Resolve role via Cloud Identity Groups (memberships:lookup per group):
-  - video-sync-admins@agentics.org      → ADMIN
-  - video-sync-publishers@agentics.org  → PUBLISHER
-  - video-sync-operators@agentics.org   → VIEWER
+  - video-sync-key-admins@agentics.org  → ADMIN
+  - video-sync-operators@agentics.org   → PUBLISHER
+  - video-sync-viewers@agentics.org     → VIEWER
+  |
+  +--> In none of the three groups?
+  |       |
+  |       v
+  |     /api/auth/me returns 401. Client (CurrentActorProvider) sees
+  |     the 401 and runs `window.location.replace(<wiki URL>)` so the
+  |     visitor lands on https://github.com/mrjcleaver/video-sync/wiki
+  |     instead of an unusable HTML shell (ADR-045).
   |
   v
 Role attached to the request context; routes that require ADMIN
@@ -638,7 +647,7 @@ Role attached to the request context; routes that require ADMIN
   |
   v
 Every request emits an audit entry (ADR-041) so the actor's email is
-recorded against every read/write.
+recorded against every read/write — including the roleless-redirect cases.
 ```
 
 **Outcome:** No in-app login UI; auth is enforced at the IAP edge, roles are derived from Workspace groups, every action is attributable.
