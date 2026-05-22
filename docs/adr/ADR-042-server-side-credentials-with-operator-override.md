@@ -1,6 +1,6 @@
 # ADR-042: Server-Side Credentials With Operator Override
 
-**Status**: Proposed
+**Status**: Accepted (Phases 1+2 implemented 2026-05-01; Phase 3 cache-flush + Phase 4 migration helpers deferred)
 **Date**: 2026-05-01
 **Deciders**: Architecture Team + Key Admins
 **Supersedes (in part)**: ADR-035 Level 3 (was deferred indefinitely)

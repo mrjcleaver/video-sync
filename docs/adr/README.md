@@ -44,6 +44,12 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-036](ADR-036-google-workspace-authentication.md) | Google Workspace Authentication and Role-Based Access | Accepted (live as of 2026-04-27, Cloud Run revision `video-sync-00035-lqq`) |
 | [ADR-037](ADR-037-kaltura-publish-integration.md) | Kaltura Publish Integration | Proposed |
 | [ADR-038](ADR-038-build-cache-hygiene.md) | Build Cache Hygiene and Disk Reclamation | Accepted |
+| [ADR-039](ADR-039-drive-based-artifact-storage.md) | Drive-Based Artifact Storage for Transcripts, Descriptions, Summaries, and In-Meeting Chat | Accepted (implemented 2026-04-30 through three slices: storage + artifacts API, webhook payload, Zoom CHAT capture) |
+| [ADR-040](ADR-040-broaden-source-imports.md) | Broaden Source Imports — Kaltura, YouTube Live, Multi-Origin Per Date | Accepted (implemented 2026-04-30) |
+| [ADR-041](ADR-041-app-level-audit-log.md) | App-Level Audit Log of Access and Mutation Attempts | Accepted (implemented 2026-05-01) |
+| [ADR-042](ADR-042-server-side-credentials-with-operator-override.md) | Server-Side Credentials With Operator Override | Accepted (Phases 1+2 implemented 2026-05-01; Phase 3 cache-flush + Phase 4 migration helpers deferred) |
+| [ADR-043](ADR-043-share-backfill-state-and-exclusions.md) | Share Backfill Profiles, Queue, and Exclusions Across Operators | Accepted (implemented 2026-05-02) |
+| [ADR-044](ADR-044-always-show-kaltura-presence.md) | Always Show Kaltura Presence Alongside YouTube | Proposed |
 
 ## ADR Format
 

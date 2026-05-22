@@ -1,6 +1,6 @@
 # ADR-039: Drive-Based Artifact Storage for Transcripts, Descriptions, Summaries, and In-Meeting Chat
 
-**Status**: Proposed
+**Status**: Accepted (implemented 2026-04-30 through three slices: storage + artifacts API, webhook payload, Zoom CHAT capture)
 **Date**: 2026-04-30
 **Deciders**: Architecture Team
 **Supersedes (in part)**: ADR-035 Level 2 transcript storage
