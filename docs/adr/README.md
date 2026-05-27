@@ -50,7 +50,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-042](ADR-042-server-side-credentials-with-operator-override.md) | Server-Side Credentials With Operator Override | Accepted (Phases 1+2 implemented 2026-05-01; Phase 3 cache-flush + Phase 4 migration helpers deferred) |
 | [ADR-043](ADR-043-share-backfill-state-and-exclusions.md) | Share Backfill Profiles, Queue, and Exclusions Across Operators | Accepted (implemented 2026-05-02) |
 | [ADR-044](ADR-044-always-show-kaltura-presence.md) | Always Show Kaltura Presence Alongside YouTube | Accepted (implemented 2026-05-22 — referenceId + provenance-footer match; fuzzy match deferred) |
-| [ADR-045](ADR-045-redirect-unauthorized-to-wiki.md) | Wider IAP Gate + App-Level Redirect for Unauthorized Users | Accepted (implemented 2026-05-22) |
+| [ADR-045](ADR-045-redirect-unauthorized-to-wiki.md) | Wider IAP Gate + App-Level Redirect for Unauthorized Users | Accepted (implemented 2026-05-22; IAP binding applied 2026-05-27 — fully live) |
 
 ## ADR Format
 

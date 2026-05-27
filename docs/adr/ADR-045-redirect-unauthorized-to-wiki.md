@@ -1,6 +1,6 @@
 # ADR-045: Wider IAP Gate + App-Level Redirect for Unauthorized Users
 
-**Status**: Accepted (implemented 2026-05-22)
+**Status**: Accepted (implemented 2026-05-22; IAP binding applied 2026-05-27 — now fully live)
 **Date**: 2026-05-22
 **Deciders**: Architecture Team
 **Extends**: ADR-036 (Google Workspace authentication), ADR-041 (app-level audit log)
@@ -33,6 +33,16 @@ Three places this redirect could live, with very different blast radii:
 2. **App (`web/src/lib/useCurrentActor.tsx`)** — the existing `/api/auth/me` fetch already returns 401 when `getActor` throws ("not a member of any video-sync group"). On `r.status === 401`, the provider now calls `window.location.replace(UNAUTHORIZED_REDIRECT_URL)` *before* setting the error state, so the SPA never finishes booting in an unusable form.
 3. **Configurable target** — the redirect URL reads from `NEXT_PUBLIC_UNAUTHORIZED_REDIRECT_URL`, defaulting to the GitHub wiki. This means we can re-point to an org-specific landing page later without a code change.
 4. **Audit** — every request still emits an audit entry (ADR-041). The redirected user's email, route, and 401 status are all captured, so admins can see who hit the gate.
+
+## Rollout
+
+| Step | When | Applied by | Notes |
+|---|---|---|---|
+| App-level redirect (`useCurrentActor.tsx`) | 2026-05-22 | deploy `video-sync-00069`+ | Dormant until the IAP gate widened — without the binding below, IAP rejected roleless users at the edge so the redirect never ran. |
+| `domain:agentics.org` → `roles/run.invoker` (Cloud Run) | 2026-05-22 | `scripts/iap-setup.sh` (martin) | Cloud Run IAM accepts the domain; this alone is insufficient because IAP has a separate access policy. |
+| `domain:agentics.org` → `roles/iap.httpsResourceAccessor` (IAP web) | 2026-05-27 | project owner (needs `roles/iap.admin`) | The gating step. Applied on `projects/agentics-487016/iap_web/cloud_run-us-central1/services/video-sync` alongside the three existing video-sync groups. After this, any `@agentics.org` user reaches the app shell and roleless users are bounced to the wiki. |
+
+`martin.cleaver@agentics.org` lacks `roles/iap.admin`, so the final binding was applied by a project owner out-of-band (see the deploy log / commit history for the request ticket).
 
 ## Trust boundary still enforced at the app layer
 
