@@ -133,7 +133,9 @@ async function handler(req: NextRequest) {
     const e = o as Record<string, unknown>;
     const id = String(e.id ?? "");
     const createdAtSecs = Number(e.createdAt ?? 0);
-    const duration = Number(e.duration ?? 0);
+    // Kaltura may report fractional seconds; the WASM IndexVideo command
+    // needs an integer (u32). Round here so every consumer gets a clean int.
+    const duration = Math.max(0, Math.round(Number(e.duration ?? 0)));
     const tagsRaw = String(e.tags ?? "");
     const playerUrl = `https://cdnapisec.kaltura.com/p/${partnerId}/sp/${partnerId}00/embedIframeJs/uiconf_id/0/partner_id/${partnerId}?iframeembed=true&entry_id=${id}`;
     return {

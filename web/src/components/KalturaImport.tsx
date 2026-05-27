@@ -119,6 +119,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   function importSelected() {
     let count = 0;
     let skipped = 0;
+    let failed = 0;
     for (const e of entries) {
       if (!selected.has(e.id)) continue;
       if (isExcluded("Kaltura", e.id)) { skipped++; continue; }
@@ -128,7 +129,12 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         source_platform: "Kaltura",
         title: e.name,
         description: e.description ?? undefined,
-        duration_seconds: e.duration_seconds,
+        // WASM IndexVideo.duration_seconds is a u32 — a fractional value
+        // (Kaltura sometimes returns sub-second precision) makes serde
+        // throw "invalid type: floating point …, expected u32" and aborts
+        // the whole import. Coerce to a non-negative integer, matching
+        // URLImport's defensive pattern.
+        duration_seconds: Math.max(0, Math.round(e.duration_seconds || 0)),
         participants: [],
         download_url: `kaltura://entry/${e.id}`,
         thumbnail_url: e.thumbnail_url ?? undefined,
@@ -139,15 +145,23 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
       if (e.is_live) meta.live = "1";
       cmd.metadata_extra = meta;
 
-      const record = new WasmVideoRecord(JSON.stringify(cmd));
-      // Record the existing Kaltura entry as a Destination location too —
-      // this video is already on Kaltura, so the Kaltura lozenge in
-      // Overview should light up immediately.
-      videoStore.add(record);
-      onEvent(`VideoIndexed: "${e.name}" (Kaltura import${e.is_live ? ", live broadcast" : ""})`, { video_id: record.id() });
-      count++;
+      // Wrap per-entry so one bad record doesn't silently abort the whole
+      // batch — surface the failure to the EventLog and keep going.
+      try {
+        const record = new WasmVideoRecord(JSON.stringify(cmd));
+        // Record the existing Kaltura entry as a Destination location too —
+        // this video is already on Kaltura, so the Kaltura lozenge in
+        // Overview should light up immediately.
+        videoStore.add(record);
+        onEvent(`VideoIndexed: "${e.name}" (Kaltura import${e.is_live ? ", live broadcast" : ""})`, { video_id: record.id() });
+        count++;
+      } catch (err) {
+        failed++;
+        onEvent(`Kaltura import failed: "${e.name}" — ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     if (skipped > 0) onEvent(`Kaltura import: ${skipped} excluded entr${skipped === 1 ? "y" : "ies"} skipped`);
+    if (failed > 0) onEvent(`Kaltura import: ${failed} entr${failed === 1 ? "y" : "ies"} failed to index`);
     if (count > 0) {
       onImported();
       setEntries([]);
