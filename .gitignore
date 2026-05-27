@@ -1,6 +1,7 @@
 /target
 Cargo.lock
 /pkg/
+web/pkg/
 web/node_modules/
 web/.next/
 

@@ -27,10 +27,15 @@ ARG BUILD_DATE
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ .
-# WASM pkg comes from stage 0 (wasm-pack build) so the build context
-# doesn't need pkg/ checked in. The relative import in web/src/lib/wasm.ts
-# resolves via ../../pkg from the web/ working dir.
-COPY --from=wasm /build/pkg ../pkg/
+# WASM pkg comes from stage 0 (wasm-pack build from the current Rust src/).
+# web/src/lib/wasm.ts imports "../../pkg/video_sync", which from
+# /app/src/lib resolves to /app/pkg — so the freshly-built pkg MUST land
+# at ./pkg (i.e. /app/pkg). This COPY runs AFTER `COPY web/ .`, so it
+# overwrites any stale web/pkg that rode along in the build context.
+# (Previously this copied to ../pkg = /pkg, which the import never
+# references, so the bundle silently used the stale context web/pkg —
+# that's how a Kaltura-less WASM kept getting deployed.)
+COPY --from=wasm /build/pkg ./pkg/
 # Ensure public/ exists so the COPY in the runner stage doesn't fail
 RUN mkdir -p /app/public
 # Next 15 type-check worker OOMs at the default ~2GB heap once the project
