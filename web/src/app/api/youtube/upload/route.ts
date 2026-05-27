@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 import { execFile } from "child_process";
 import { createWriteStream, createReadStream } from "fs";
 import { promises as fs } from "fs";
@@ -25,6 +26,11 @@ interface UploadRequest {
   zoomClientSecret?: string;
   // Fireflies credentials (needed when downloadUrl is fireflies://...)
   firefliesApiKey?: string;
+  // Kaltura credentials (needed when downloadUrl is kaltura://entry/...).
+  // Usually resolved server-side from Secret Manager; body fields are an
+  // optional operator override.
+  kalturaPartnerId?: string;
+  kalturaAdminSecret?: string;
   // YouTube cookies in Netscape format (needed to bypass bot detection)
   ytCookies?: string;
 }
@@ -226,6 +232,43 @@ async function downloadFirefliesToFile(
   await streamToFile(dlRes, outPath);
 }
 
+async function downloadKalturaToFile(
+  entryId: string,
+  partnerId: string,
+  adminSecret: string,
+  outPath: string,
+): Promise<void> {
+  // 1. Mint an admin Kaltura Session (KS) so the download URL is authorized.
+  const sessForm = new URLSearchParams();
+  sessForm.set("format", "1"); // JSON
+  sessForm.set("partnerId", partnerId);
+  sessForm.set("secret", adminSecret);
+  sessForm.set("type", "2"); // ADMIN
+  sessForm.set("userId", "video-sync");
+  sessForm.set("expiry", "3600");
+  const sessRes = await fetch("https://www.kaltura.com/api_v3/?service=session&action=start", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: sessForm,
+  });
+  if (!sessRes.ok) throw new Error(`Kaltura session.start HTTP ${sessRes.status}`);
+  const sessJson = await sessRes.json();
+  const ks: string = typeof sessJson === "string" ? sessJson : (sessJson?.result ?? "");
+  if (!ks || ks.length < 10) throw new Error(`Kaltura session.start returned no usable KS: ${JSON.stringify(sessJson).slice(0, 120)}`);
+
+  // 2. playManifest "format/download" serves the source/highest flavor as a
+  //    direct file. The KS authorizes access to the entry.
+  const downloadUrl = `https://cdnapisec.kaltura.com/p/${partnerId}/sp/${partnerId}00/playManifest/entryId/${entryId}/format/download/protocol/https/ks/${ks}`;
+  const dlRes = await fetch(downloadUrl, { redirect: "follow" });
+  if (!dlRes.ok) throw new Error(`Kaltura download failed (${dlRes.status}) for entry ${entryId}`);
+  // Guard against Kaltura returning an HTML error page instead of media.
+  const ctype = dlRes.headers.get("content-type") ?? "";
+  if (ctype.includes("text/html") || ctype.includes("application/xml")) {
+    throw new Error(`Kaltura returned ${ctype} instead of media for entry ${entryId} — entry may not be downloadable or KS lacks permission`);
+  }
+  await streamToFile(dlRes, outPath);
+}
+
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
 function sseEvent(type: string, data: Record<string, unknown>): Uint8Array {
@@ -248,10 +291,32 @@ async function handler(req: NextRequest) {
   const refreshToken = body.refreshToken || process.env.YOUTUBE_REFRESH_TOKEN;
   const clientId = body.clientId || process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = body.clientSecret || process.env.YOUTUBE_CLIENT_SECRET;
-  const zoomAccountId = body.zoomAccountId || process.env.ZOOM_ACCOUNT_ID;
-  const zoomClientId = body.zoomClientId || process.env.ZOOM_CLIENT_ID;
-  const zoomClientSecret = body.zoomClientSecret || process.env.ZOOM_CLIENT_SECRET;
-  const firefliesApiKey = body.firefliesApiKey || process.env.FIREFLIES_API_KEY;
+
+  // Source credentials. The client only forwards local overrides; per
+  // ADR-042 Zoom/Fireflies/Kaltura live shared in Secret Manager. Resolve
+  // the shared copy for whichever scheme this download uses so a
+  // cross-platform re-publish (e.g. Kaltura entry → YouTube) works without
+  // the operator pasting platform creds locally.
+  const dl = body.downloadUrl ?? "";
+  let zoomAccountId = body.zoomAccountId || process.env.ZOOM_ACCOUNT_ID;
+  let zoomClientId = body.zoomClientId || process.env.ZOOM_CLIENT_ID;
+  let zoomClientSecret = body.zoomClientSecret || process.env.ZOOM_CLIENT_SECRET;
+  let firefliesApiKey = body.firefliesApiKey || process.env.FIREFLIES_API_KEY;
+  let kalturaPartnerId = body.kalturaPartnerId || process.env.KALTURA_PARTNER_ID;
+  let kalturaAdminSecret = body.kalturaAdminSecret || process.env.KALTURA_ADMIN_SECRET;
+
+  if (dl.startsWith("zoom://") && (!zoomAccountId || !zoomClientId || !zoomClientSecret)) {
+    const s = (await getSharedCredential("zoom")) as { accountId?: string; clientId?: string; clientSecret?: string } | null;
+    if (s) { zoomAccountId ||= s.accountId; zoomClientId ||= s.clientId; zoomClientSecret ||= s.clientSecret; }
+  }
+  if (dl.startsWith("fireflies://") && !firefliesApiKey) {
+    const s = (await getSharedCredential("fireflies")) as { apiKey?: string } | null;
+    if (s?.apiKey) firefliesApiKey = s.apiKey;
+  }
+  if (dl.startsWith("kaltura://") && (!kalturaPartnerId || !kalturaAdminSecret)) {
+    const s = (await getSharedCredential("kaltura")) as { partnerId?: string; adminSecret?: string; apiKey?: string } | null;
+    if (s) { kalturaPartnerId ||= s.partnerId; kalturaAdminSecret ||= s.adminSecret || s.apiKey; }
+  }
 
   if (!refreshToken || !clientId || !clientSecret || !body.title || !body.downloadUrl) {
     return NextResponse.json(
@@ -304,6 +369,9 @@ async function handler(req: NextRequest) {
         } else if (downloadUrl.startsWith("fireflies://")) {
           if (!firefliesApiKey) throw new Error("Fireflies API key required");
           await downloadFirefliesToFile(downloadUrl.replace("fireflies://", ""), firefliesApiKey, tmpPath);
+        } else if (downloadUrl.startsWith("kaltura://entry/")) {
+          if (!kalturaPartnerId || !kalturaAdminSecret) throw new Error("Kaltura credentials required (shared credential not configured)");
+          await downloadKalturaToFile(downloadUrl.replace("kaltura://entry/", ""), kalturaPartnerId, kalturaAdminSecret, tmpPath);
         } else {
           const loomId = extractLoomVideoId(downloadUrl);
           if (loomId) {
