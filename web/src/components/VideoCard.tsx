@@ -103,6 +103,9 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   const [shortsLoading, setShortsLoading] = useState(false);
   const [shortsError, setShortsError] = useState<string | null>(null);
   const [shortsPhase, setShortsPhase] = useState("");
+  // ADR-046 — summary generation state.
+  const [summarising, setSummarising] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [logTick, setLogTick] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
@@ -204,6 +207,63 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     } finally {
       setShortsLoading(false);
       setShortsPhase("");
+    }
+  }
+
+  /**
+   * ADR-046 slice 2 — single-record summary generation.
+   * Calls the server, which fetches transcript+chat from Drive, calls
+   * OpenRouter, writes the Drive Doc, and returns metadata. The result
+   * is then stamped onto the WASM record via set_summary_metadata so
+   * subsequent renders (and Overview lozenge — slice 3) can pick it up.
+   */
+  async function generateSummary() {
+    setSummaryError(null);
+    setSummarising(true);
+    onEvent(`SummaryRequested: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+    try {
+      const res = await fetch("/api/summary/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          record_id: video.id,
+          title: video.title,
+          source_platform: video.source_platform,
+          source_id: video.source_id,
+          recorded_at: video.recorded_at ?? video.indexed_at,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `Summary generation failed (${res.status})`);
+      }
+      const data = await res.json() as {
+        doc_id: string;
+        doc_url?: string;
+        prompt_version: number;
+        counts: { m: number; l: number; t: number; c: number };
+        model: string;
+      };
+
+      // Stamp the result onto the WASM record so the catalog tracks it.
+      videoStore.mutate(video.id, (r) =>
+        r.set_summary_metadata(actorCommand(actorState, {
+          doc_id: data.doc_id,
+          prompt_version: data.prompt_version,
+          counts: data.counts,
+        })),
+      );
+      onEvent(
+        `SummaryGenerated: "${video.title}"${dateTag(video.recorded_at)} — prompt v${data.prompt_version} · M:${data.counts.m} L:${data.counts.l} T:${data.counts.t} C:${data.counts.c}${data.doc_url ? ` → ${data.doc_url}` : ""}`,
+        { video_id: video.id },
+      );
+      onMutated();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSummaryError(msg);
+      onEvent(`SummaryFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+    } finally {
+      setSummarising(false);
     }
   }
 
@@ -2022,6 +2082,24 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           >
             ✂ Shorts
           </button>
+        )}
+        {(video.transcript_text && video.transcript_text.length > 200) && (
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.72rem" }}
+            onClick={generateSummary}
+            disabled={summarising}
+            title={video.summary_doc_id
+              ? `Regenerate summary (current: prompt v${video.summary_prompt_version ?? "?"})`
+              : "Generate a chapter-oriented summary on Drive (ADR-046)"}
+          >
+            {summarising ? "📄 Summarising…" : (video.summary_doc_id ? "📄 Re-summarise" : "📄 Summarise")}
+          </button>
+        )}
+        {summaryError && (
+          <span style={{ fontSize: "0.7rem", color: "var(--red)", marginLeft: 4 }}>
+            Summary error: {summaryError.slice(0, 90)}
+          </span>
         )}
         <button
           className="btn btn-sm"
