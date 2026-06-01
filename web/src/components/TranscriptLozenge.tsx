@@ -48,9 +48,15 @@ interface Props {
   sourceId: string;
   transcriptText: string | null | undefined;
   onEvent?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Called after a successful fetch + store update — parent should
+   *  refresh its videos state so the new transcript_text propagates to
+   *  every dependent prop (Summarise button gating, lozenge state,
+   *  tooltip totals). Without this the store updates but the UI keeps
+   *  showing the pre-fetch values. */
+  onUpdated?: () => void;
 }
 
-export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcriptText, onEvent }: Props) {
+export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcriptText, onEvent, onUpdated }: Props) {
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,6 +95,7 @@ export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcri
       videoStore.setTranscript(recordId, data.text);
       const lineCount = data.text.split("\n").length;
       onEvent?.(`Kaltura captions imported — ${lineCount} lines (${data.format ?? "?"}, ${data.language ?? "?"})`, { video_id: recordId });
+      onUpdated?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);

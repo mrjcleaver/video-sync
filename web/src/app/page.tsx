@@ -94,6 +94,17 @@ export default function Dashboard() {
     setVideos(videoStore.getAll());
   }, []);
 
+  // Subscribe to store mutations so background updates (e.g. Kaltura
+  // caption auto-fetch, fire-and-forget transcript hydration) reflect
+  // in the UI without depending on every caller threading an
+  // onMutated() callback all the way up.
+  useEffect(() => {
+    const unsubscribe = videoStore.subscribe(() => {
+      setVideos(videoStore.getAll());
+    });
+    return () => { unsubscribe(); };
+  }, []);
+
   /**
    * Called after any source import succeeds. Triggers a background YouTube
    * uploads fetch so the cache is populated for auto-association suggestions.

@@ -1358,6 +1358,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           sourceId={video.source_id}
           transcriptText={video.transcript_text}
           onEvent={onEvent}
+          onUpdated={onMutated}
         />
         {/* ADR-046 — summary lozenge: same M:N L:N T:N C:N indicator
             shown in the Overview row, so operators see the current
