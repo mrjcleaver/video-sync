@@ -159,6 +159,63 @@ export async function writeFile(name: string, parentId: string, content: string,
   };
 }
 
+/**
+ * ADR-046 — write a native Google Doc by converting source markdown
+ * at upload time. The resulting file's mimeType is
+ * `application/vnd.google-apps.document` and it opens in Google Docs
+ * (not as plain text). `appProperties` is stored on the file for
+ * machine-readable provenance (e.g. prompt_version, generated_at).
+ *
+ * Idempotent on name: if a file with this name already exists in
+ * parentId, its content is replaced (Drive re-runs the markdown→Doc
+ * conversion) and appProperties is merged.
+ */
+export async function writeGoogleDoc(
+  name: string,
+  parentId: string,
+  markdown: string,
+  appProperties: Record<string, string> = {},
+): Promise<DriveFile> {
+  const drive = getDrive();
+  const existing = await findFile(name, parentId);
+  if (existing) {
+    const res = await drive.files.update({
+      fileId: existing.id,
+      requestBody: { appProperties },
+      media: { mimeType: "text/markdown", body: markdown },
+      fields: "id, name, modifiedTime, size, webViewLink",
+      supportsAllDrives: true,
+    });
+    const f = res.data;
+    return {
+      id: f.id!,
+      name: f.name!,
+      modifiedTime: f.modifiedTime!,
+      size: Number(f.size ?? markdown.length),
+      webViewLink: f.webViewLink ?? existing.webViewLink,
+    };
+  }
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      parents: [parentId],
+      mimeType: "application/vnd.google-apps.document",
+      appProperties,
+    },
+    media: { mimeType: "text/markdown", body: markdown },
+    fields: "id, name, modifiedTime, size, webViewLink",
+    supportsAllDrives: true,
+  });
+  const f = res.data;
+  return {
+    id: f.id!,
+    name: f.name!,
+    modifiedTime: f.modifiedTime!,
+    size: Number(f.size ?? markdown.length),
+    webViewLink: f.webViewLink ?? undefined,
+  };
+}
+
 export async function readFile(fileId: string): Promise<string> {
   const drive = getDrive();
   const res = await drive.files.get(

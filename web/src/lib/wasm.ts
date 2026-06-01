@@ -40,6 +40,19 @@ export interface VideoRecordJSON {
   upstream_links: UpstreamLinkJSON[];
   rejected_links: RejectedLinkJSON[];
   metadata_extra: Record<string, unknown> | null;
+  // ADR-046 — prompt-driven summary metadata.
+  summary_doc_id?: string | null;
+  summary_prompt_version?: number | null;
+  summary_locked?: boolean;
+  summary_counts?: SummaryCountsJSON | null;
+}
+
+/** ADR-046 — counts surfaced as M:NN L:NN T:NN C:NN in the Overview. */
+export interface SummaryCountsJSON {
+  m: number;
+  l: number;
+  t: number;
+  c: number;
 }
 
 export interface NoteJSON {

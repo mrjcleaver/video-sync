@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::catalog::value_objects::{DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform, VideoStatus};
+use crate::catalog::value_objects::{DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform, SummaryCounts, VideoStatus};
 
 /// Domain events emitted by the Catalog bounded context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +24,8 @@ pub enum CatalogEvent {
     VideoMarkedToRetry(VideoMarkedToRetry),
     UpstreamLinked(UpstreamLinked),
     UpstreamUnlinked(UpstreamUnlinked),
+    SummaryGenerated(SummaryGenerated),
+    SummaryLocked(SummaryLocked),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -182,6 +184,30 @@ pub struct UpstreamUnlinked {
     pub platform: Platform,
     pub external_id: String,
     pub rejected: bool,
+}
+
+/// ADR-046 — emitted when a summary Doc is (re)generated and its
+/// metadata is recorded onto the VideoRecord.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummaryGenerated {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub doc_id: String,
+    pub prompt_version: u32,
+    pub counts: SummaryCounts,
+    pub generated_by: Uuid,
+}
+
+/// ADR-046 — emitted when an operator toggles the summary lock. `locked
+/// = false` means the regen-skip flag was just cleared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummaryLocked {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub locked: bool,
+    pub actor: Uuid,
 }
 
 /// Mutable metadata fields that can be edited during approval or update.

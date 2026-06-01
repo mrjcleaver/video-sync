@@ -42,6 +42,19 @@ pub struct VideoRecord {
     pub upstream_links: Vec<UpstreamLink>,
     #[serde(default)]
     pub rejected_links: Vec<RejectedLink>,
+    // ── ADR-046: prompt-driven summary metadata ───────────────────────
+    /// Drive file id of the summary Google Doc, when one exists.
+    #[serde(default)]
+    pub summary_doc_id: Option<String>,
+    /// Monotonic version of the prompt that authored the current summary.
+    #[serde(default)]
+    pub summary_prompt_version: Option<u32>,
+    /// When true, bulk-regen-on-prompt-bump skips this record.
+    #[serde(default)]
+    pub summary_locked: bool,
+    /// Counts surfaced as M:NN L:NN T:NN C:NN in the Overview lozenge.
+    #[serde(default)]
+    pub summary_counts: Option<SummaryCounts>,
     pending_events: Vec<CatalogEvent>,
 }
 
@@ -109,6 +122,10 @@ impl VideoRecord {
             locations: vec![origin_location],
             upstream_links: Vec::new(),
             rejected_links: Vec::new(),
+            summary_doc_id: None,
+            summary_prompt_version: None,
+            summary_locked: false,
+            summary_counts: None,
             pending_events: Vec::new(),
         };
 
@@ -620,6 +637,74 @@ impl VideoRecord {
             platform: cmd.platform,
             external_id: cmd.external_id,
             rejected: cmd.reject,
+        })])
+    }
+
+    // ── ADR-046: prompt-driven summary metadata ──────────────────
+
+    /// Record a freshly generated summary Doc + its counts onto the
+    /// record. Overwrites any previous summary metadata — callers that
+    /// want to preserve the existing one should check `summary_locked`
+    /// before invoking.
+    pub fn set_summary_metadata(
+        &mut self,
+        cmd: SetSummaryMetadata,
+    ) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+
+        self.summary_doc_id = Some(cmd.doc_id.clone());
+        self.summary_prompt_version = Some(cmd.prompt_version);
+        self.summary_counts = Some(cmd.counts);
+
+        Ok(vec![CatalogEvent::SummaryGenerated(SummaryGenerated {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            doc_id: cmd.doc_id,
+            prompt_version: cmd.prompt_version,
+            counts: cmd.counts,
+            generated_by: cmd.actor.user_id,
+        })])
+    }
+
+    /// Set summary_locked = true so bulk-regen-on-prompt-bump skips this
+    /// record. Idempotent: locking an already-locked record is a no-op
+    /// at the field level but still emits an event for audit.
+    pub fn lock_summary(
+        &mut self,
+        cmd: LockSummary,
+    ) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+        self.summary_locked = true;
+        Ok(vec![CatalogEvent::SummaryLocked(SummaryLocked {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            locked: true,
+            actor: cmd.actor.user_id,
+        })])
+    }
+
+    /// Set summary_locked = false. The record returns to the bulk-regen
+    /// pool on the next prompt bump.
+    pub fn unlock_summary(
+        &mut self,
+        cmd: UnlockSummary,
+    ) -> Result<Vec<CatalogEvent>, CatalogError> {
+        if !self.can_curate(&cmd.actor) {
+            return Err(CatalogError::Unauthorized);
+        }
+        self.summary_locked = false;
+        Ok(vec![CatalogEvent::SummaryLocked(SummaryLocked {
+            event_id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            video_record_id: self.id,
+            locked: false,
+            actor: cmd.actor.user_id,
         })])
     }
 

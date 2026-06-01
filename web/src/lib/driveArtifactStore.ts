@@ -17,6 +17,7 @@ import {
   findFile,
   findFolderByAppProperty,
   writeFile,
+  writeGoogleDoc,
   readFile,
   deleteFile,
   getRootFolderId,
@@ -45,6 +46,10 @@ export interface ArtifactEntry {
   size: number;
   modified: string;
   drive_web_url?: string;
+  /** ADR-046 — prompt version that authored this artifact (summary only). */
+  prompt_version?: number;
+  /** ADR-046 — when the summary was generated (ISO timestamp). */
+  generated_at?: string;
 }
 
 export interface MetaJson {
@@ -205,6 +210,60 @@ export async function setArtifact(ctx: RecordContext, kind: ArtifactKind, conten
     drive_web_url: file.webViewLink,
   };
   meta.artifacts[kind] = entry;
+  await writeMeta(folderId, meta);
+
+  metaCache.delete(ctx.record_id);
+  return entry;
+}
+
+/**
+ * ADR-046 — write the summary as a NATIVE Google Doc (not markdown).
+ * Drive converts the source markdown on upload so operators can edit
+ * in Docs natively. Stores `prompt_version` and `generated_at` in the
+ * file's `appProperties` for machine-readable provenance, and mirrors
+ * them onto the meta.json artifact entry so a catalog scan can answer
+ * "which prompt wrote this?" without fetching each file.
+ *
+ * The file is named "Summary" (no extension) so Drive uses its native
+ * Google Doc icon. Idempotent on name — re-writes replace content.
+ */
+export async function setSummaryDoc(
+  ctx: RecordContext,
+  markdown: string,
+  promptVersion: number,
+  generatedAt: string = new Date().toISOString(),
+): Promise<ArtifactEntry> {
+  const folderId = await getOrCreateMeetingFolder(ctx);
+  const file = await writeGoogleDoc("Summary", folderId, markdown, {
+    kind: "summary",
+    prompt_version: String(promptVersion),
+    generated_at: generatedAt,
+    record_id: ctx.record_id,
+  });
+
+  let meta = await readMeta(folderId);
+  if (!meta) {
+    const folderUrl = await getFolderWebUrl(folderId).catch(() => undefined);
+    meta = {
+      record_id: ctx.record_id,
+      title: ctx.title,
+      source_platform: ctx.source_platform,
+      source_id: ctx.source_id,
+      recorded_at: ctx.recorded_at,
+      folder_drive_id: folderId,
+      folder_drive_web_url: folderUrl,
+      artifacts: {},
+    };
+  }
+  const entry: ArtifactEntry = {
+    drive_file_id: file.id,
+    size: file.size,
+    modified: file.modifiedTime,
+    drive_web_url: file.webViewLink,
+    prompt_version: promptVersion,
+    generated_at: generatedAt,
+  };
+  meta.artifacts.summary = entry;
   await writeMeta(folderId, meta);
 
   metaCache.delete(ctx.record_id);

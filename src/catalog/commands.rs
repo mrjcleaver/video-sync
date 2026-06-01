@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::events::MetadataEdits;
-use crate::catalog::value_objects::{Actor, DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform};
+use crate::catalog::value_objects::{Actor, DerivationType, LinkOrigin, LocationRole, Platform, SourcePlatform, SummaryCounts};
 
 /// Commands accepted by the VideoRecord aggregate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,4 +165,34 @@ pub struct UnlinkUpstream {
     /// If true, add to rejected_links to suppress future auto-suggestions.
     #[serde(default)]
     pub reject: bool,
+}
+
+/// ADR-046 — record the metadata of a freshly generated summary Doc on
+/// the VideoRecord. Called by the summary-generate API route after a
+/// successful Drive Doc write. Overwrites previous summary metadata,
+/// matching the bulk-regen-on-prompt-bump intent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetSummaryMetadata {
+    pub actor: Actor,
+    /// Drive file id of the summary Google Doc.
+    pub doc_id: String,
+    /// Prompt version that authored this summary (monotonic).
+    pub prompt_version: u32,
+    /// Counts to surface in the Overview lozenge.
+    pub counts: SummaryCounts,
+}
+
+/// ADR-046 — lock the summary against bulk regeneration. The Drive Doc
+/// itself stays editable; this flag only affects whether the regen-job
+/// rewrites the Doc when the prompt is bumped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LockSummary {
+    pub actor: Actor,
+}
+
+/// ADR-046 — opposite of LockSummary. Returns the record to the
+/// bulk-regen pool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnlockSummary {
+    pub actor: Actor,
 }
