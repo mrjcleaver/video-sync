@@ -56,7 +56,7 @@ const STATUS_COLOR: Record<StageStatus, string> = {
 
 export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) {
   const actorState = useCurrentActor();
-  const [windowDays, setWindowDays] = useState(30);
+  const [maxRecords, setMaxRecords] = useState(1);
   const [costCapUsd, setCostCapUsd] = useState(10);
   const [runState, setRunState] = useState<RunState>("idle");
   const [rows, setRows] = useState<Record<string, RecordRow>>({});
@@ -64,17 +64,14 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   const [summary, setSummary] = useState<{ processed: number; costSpent: number; readyToPublish: number; capHit: boolean } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Eligible records preview: same filter the orchestrator uses, sans
-  // the actual stage checks (cheap, runs on every render).
+  // Eligible records preview: most-recent-first, capped at maxRecords.
+  // Same selection the orchestrator uses, so the est. cost matches what
+  // the run will actually spend.
   const eligible = useMemo(() => {
-    const cutoff = Date.now() - windowDays * 86_400_000;
-    return videos
-      .filter(v => {
-        const t = new Date(v.recorded_at ?? v.indexed_at).getTime();
-        return !Number.isNaN(t) && t >= cutoff;
-      })
-      .sort((a, b) => new Date(b.recorded_at ?? b.indexed_at).getTime() - new Date(a.recorded_at ?? a.indexed_at).getTime());
-  }, [videos, windowDays]);
+    return [...videos]
+      .sort((a, b) => new Date(b.recorded_at ?? b.indexed_at).getTime() - new Date(a.recorded_at ?? a.indexed_at).getTime())
+      .slice(0, Math.max(1, maxRecords));
+  }, [videos, maxRecords]);
 
   const summaryCostEstimate = useMemo(() => {
     // Rough preview: sum est cost over records that *would* need a summary.
@@ -126,7 +123,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     abortRef.current = ac;
     try {
       await runCatchUp({
-        windowDays,
+        maxRecords,
         costCapUsd,
         signal: ac.signal,
         onEvent: applyEvent,
@@ -171,14 +168,15 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
 
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.78rem" }}>
-            Window (days)
+            Records
             <input
               type="number"
               min={1}
-              max={365}
-              value={windowDays}
-              onChange={e => setWindowDays(Number(e.target.value) || 30)}
+              max={1000}
+              value={maxRecords}
+              onChange={e => setMaxRecords(Math.max(1, Number(e.target.value) || 1))}
               disabled={runState === "running"}
+              title="How many most-recent records to walk. Start with 1 for a dry run."
               style={{ width: 80, padding: 4, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)" }}
             />
           </label>
@@ -195,7 +193,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             />
           </label>
           <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            {eligible.length} record{eligible.length === 1 ? "" : "s"} in window · est. summary cost <strong>{formatUsd(summaryCostEstimate)}</strong>
+            Will walk <strong>{eligible.length}</strong> record{eligible.length === 1 ? "" : "s"} (most recent first) · est. summary cost <strong>{formatUsd(summaryCostEstimate)}</strong>
           </div>
           {runState === "running" ? (
             <button className="btn btn-sm btn-red" onClick={cancel}>Cancel</button>

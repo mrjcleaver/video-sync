@@ -64,14 +64,17 @@ export interface RecordEndEvent {
   publishable: boolean;   // Approved + transcript + summary + missing at least one destination
 }
 
-export interface StartedEvent { type: "started"; total: number; window_days: number; }
+export interface StartedEvent { type: "started"; total: number; max_records: number; }
 export interface CompleteEvent { type: "complete"; processed: number; cost_spent_usd: number; ready_to_publish: number; cost_cap_hit: boolean; }
 export interface CancelledEvent { type: "cancelled"; processed: number; }
 
 export type OrchestratorEvent = StartedEvent | RecordStartEvent | StageEvent | RecordEndEvent | CompleteEvent | CancelledEvent;
 
 export interface CatchupOptions {
-  windowDays: number;
+  /** Cap on how many records to walk. Sorted most-recent first; the
+   *  orchestrator processes the top N. Default 5 in the panel; set 1
+   *  for a single-record dry run. */
+  maxRecords: number;
   costCapUsd: number;
   /** Cancellable. */
   signal: AbortSignal;
@@ -79,15 +82,6 @@ export interface CatchupOptions {
   onEvent: (ev: OrchestratorEvent) => void;
   /** EventLog forwarder for human-readable lines. */
   log?: (msg: string, ctx?: Record<string, unknown>) => void;
-}
-
-function inWindow(v: VideoRecordJSON, windowDays: number): boolean {
-  const ts = v.recorded_at ?? v.indexed_at;
-  if (!ts) return false;
-  const t = new Date(ts).getTime();
-  if (Number.isNaN(t)) return false;
-  const cutoff = Date.now() - windowDays * 86_400_000;
-  return t >= cutoff;
 }
 
 /**
@@ -203,20 +197,20 @@ function isPublishable(v: VideoRecordJSON): boolean {
 }
 
 export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<typeof actorCommand>[0]): Promise<void> {
-  const { windowDays, costCapUsd, signal, onEvent, log } = opts;
+  const { maxRecords, costCapUsd, signal, onEvent, log } = opts;
 
-  // Build the work list once: most-recent-backwards in window.
+  // Build the work list: every record, most-recent-backwards, capped at maxRecords.
   const all = videoStore.getAll();
   const sorted = [...all]
-    .filter(v => inWindow(v, windowDays))
     .sort((a, b) => {
       const ta = new Date(a.recorded_at ?? a.indexed_at).getTime();
       const tb = new Date(b.recorded_at ?? b.indexed_at).getTime();
       return tb - ta;
-    });
+    })
+    .slice(0, Math.max(1, maxRecords));
 
-  onEvent({ type: "started", total: sorted.length, window_days: windowDays });
-  log?.(`Catch-up started — ${sorted.length} record${sorted.length === 1 ? "" : "s"} in window (last ${windowDays} days)`);
+  onEvent({ type: "started", total: sorted.length, max_records: maxRecords });
+  log?.(`Catch-up started — ${sorted.length} record${sorted.length === 1 ? "" : "s"} (most recent first, cap ${maxRecords})`);
 
   const currentPromptVersion = await getCurrentPromptVersion();
   let costSpent = 0;
