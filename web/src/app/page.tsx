@@ -11,6 +11,7 @@ import { useRuleRunner } from "../lib/useRuleRunner";
 import { useMemoryHealth } from "../lib/useMemoryHealth";
 import ImportPanel from "../components/ImportPanel";
 import ConnectionsPanel from "../components/ConnectionsPanel";
+import SummaryPromptPanel from "../components/SummaryPromptPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../components/PostProcessingRulesPanel";
@@ -56,6 +57,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
   const [showConnections, setShowConnections] = useState(false);
+  const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
 
@@ -298,6 +300,13 @@ export default function Dashboard() {
           >
             {showLogs ? "Hide Logs" : "View Logs"}
           </button>
+          <button
+            className={`btn btn-sm ${showSummaryPrompt ? "btn-primary" : ""}`}
+            onClick={() => setShowSummaryPrompt(v => !v)}
+            title="Edit the org-shared summary prompt and bulk-regenerate unlocked summaries (ADR-046)"
+          >
+            📄 Summary Prompt
+          </button>
           {/* Feedback: link straight to a new GitHub issue. Pre-fills the
               title with the build SHA so engineering can correlate the
               report against deployed revision and recent commits. */}
@@ -323,6 +332,13 @@ export default function Dashboard() {
       </div>
 
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
+
+      <SummaryPromptPanel
+        open={showSummaryPrompt}
+        videos={videos}
+        onEvent={addEvent}
+        onClose={() => setShowSummaryPrompt(false)}
+      />
 
       <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
 
