@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import {
   type BackfillProfile,
@@ -14,6 +14,7 @@ import { resolveExternalUrl } from "../lib/urlResolver";
 import { getDisplayTitle } from "../lib/processingRules";
 import { getPrivacy, setPrivacy, normalisePrivacy, type PrivacyStatus } from "../lib/youtubePrivacyCache";
 import { getPresence, setPresenceBulk, type KalturaPresence, type KalturaState } from "../lib/kalturaPresenceCache";
+import { SummaryLozenge } from "./SummaryLozenge";
 
 /** Extract YouTube video ID from a watch URL or short URL. */
 function extractYouTubeId(url: string | null | undefined): string | null {
@@ -72,19 +73,7 @@ const DRIVE_STYLE = {
   border: "rgba(56,189,248,0.2)",
 };
 
-// ADR-046 — Summary lozenge. Shows M:NN L:NN T:NN C:NN counts and links
-// to the native Google Doc on Drive. Faded when the record's stored
-// summary_prompt_version is older than the current prompt.
-const SUMMARY_STYLE = {
-  bg: "rgba(168,247,209,0.10)",  // soft green tint
-  fg: "#86efac",
-  border: "rgba(134,239,172,0.35)",
-};
-const SUMMARY_ABSENT_STYLE = {
-  bg: "rgba(148,163,184,0.05)",
-  fg: "#94a3b8",
-  border: "rgba(148,163,184,0.18)",
-};
+// ADR-046 lozenge styles live in SummaryLozenge.tsx (shared with VideoCard).
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -124,16 +113,6 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
   const [fillStatus, setFillStatus] = useState<string>("");
   const [fillingKaltura, setFillingKaltura] = useState(false);
   const [kalturaTick, setKalturaTick] = useState(0);
-  // ADR-046 — fetched once; used by the Summary lozenge to flag stale-prompt rows.
-  const [currentPromptVersion, setCurrentPromptVersion] = useState<number | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/summary/prompt", { cache: "no-store" })
-      .then(r => r.ok ? r.json() as Promise<{ version: number }> : null)
-      .then(p => { if (!cancelled && p) setCurrentPromptVersion(p.version); })
-      .catch(() => { /* prompt route may not exist yet — leave null */ });
-    return () => { cancelled = true; };
-  }, []);
   // ticks force re-render when caches update
   void privacyTick;
   void kalturaTick;
@@ -437,7 +416,7 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
 
               {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} filters={filters} currentPromptVersion={currentPromptVersion} />
+                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} filters={filters} />
               )}
             </div>
           );
@@ -590,7 +569,7 @@ function shortDate(dateStr: string): string {
 }
 
 /** Vertical date list with status, title, and clickable origin/destination links. */
-function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters, currentPromptVersion }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[]; onNavigateToVideo?: (id: string, intent?: "publish") => void; filters: Set<string>; currentPromptVersion: number | null }) {
+function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { slots: CalendarSlot[]; targetOnly: boolean; videos: VideoRecordJSON[]; onNavigateToVideo?: (id: string, intent?: "publish") => void; filters: Set<string> }) {
   const videoMap = new Map(videos.map(v => [v.id, v]));
   const visible = applyFilters(targetOnly ? slots.filter(s => s.is_target) : slots, videoMap, filters);
 
@@ -800,60 +779,19 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters, curre
               <span style={{ width: 48 }} />
             )}
 
-            {/* ADR-046 — Summary lozenge. Shows M:NN L:NN T:NN C:NN
-                counts and links to the Drive Doc. Faded styling when
-                the record's stored prompt version is older than the
-                current prompt (regeneration available). 🔒 prefix
-                when summary_locked is true. */}
+            {/* ADR-046 — Summary lozenge. Renders the M:NN L:NN T:NN
+                C:NN indicator from the WASM record, faded when stale,
+                🔒 prefix when locked. Shared with VideoCard so the
+                two surfaces can't drift. */}
             {v ? (() => {
               const fullV = videoMap.get(v.id);
-              const counts = fullV?.summary_counts;
-              const docId = fullV?.summary_doc_id;
-              const promptVer = fullV?.summary_prompt_version ?? null;
-              const locked = fullV?.summary_locked ?? false;
-
-              if (!counts || !docId) {
-                return (
-                  <span
-                    title="No summary yet — click 📄 Summarise on the card"
-                    style={{
-                      ...LINK_STYLE,
-                      background: SUMMARY_ABSENT_STYLE.bg,
-                      color: SUMMARY_ABSENT_STYLE.fg,
-                      border: `1px solid ${SUMMARY_ABSENT_STYLE.border}`,
-                      opacity: 0.6,
-                    }}
-                  >
-                    📄 —
-                  </span>
-                );
-              }
-              const stale = currentPromptVersion != null && promptVer != null && promptVer < currentPromptVersion;
-              const lockPrefix = locked ? "🔒 " : "";
-              const label = `${lockPrefix}📄 M:${counts.m} L:${counts.l} T:${counts.t} C:${counts.c}`;
-              const tipParts = [
-                `Summary prompt v${promptVer ?? "?"}`,
-                locked ? "🔒 locked — bulk-regen skips this record" : null,
-                stale ? `current prompt is v${currentPromptVersion} — regenerate available` : null,
-              ].filter(Boolean);
               return (
-                <a
-                  href={`https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  title={tipParts.join(" · ")}
-                  style={{
-                    ...LINK_STYLE,
-                    background: SUMMARY_STYLE.bg,
-                    color: SUMMARY_STYLE.fg,
-                    border: `1px solid ${SUMMARY_STYLE.border}`,
-                    opacity: stale ? 0.55 : 1,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {label}
-                </a>
+                <SummaryLozenge
+                  docId={fullV?.summary_doc_id}
+                  promptVersion={fullV?.summary_prompt_version}
+                  locked={fullV?.summary_locked ?? false}
+                  counts={fullV?.summary_counts}
+                />
               );
             })() : (
               <span style={{ width: 120 }} />

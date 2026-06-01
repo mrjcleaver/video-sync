@@ -15,6 +15,7 @@ import {
 } from "../lib/processingRules";
 import type { ShortsStatusResponse } from "../app/api/shorts/status/route";
 import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
+import { SummaryLozenge } from "./SummaryLozenge";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { loadClientLog, type LogRecord } from "../lib/logger";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
@@ -1346,6 +1347,16 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         >
           Drive
         </a>
+        {/* ADR-046 — summary lozenge: same M:N L:N T:N C:N indicator
+            shown in the Overview row, so operators see the current
+            summary state without leaving the card. */}
+        <SummaryLozenge
+          docId={video.summary_doc_id}
+          promptVersion={video.summary_prompt_version}
+          locked={video.summary_locked ?? false}
+          counts={video.summary_counts}
+          stopRowClick={false}
+        />
         {/* Catalog UUID — clickable to copy. Useful when correlating with
             server logs, .meta.json files, or webhook payloads. */}
         <span
