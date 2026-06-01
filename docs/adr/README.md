@@ -52,6 +52,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-044](ADR-044-always-show-kaltura-presence.md) | Always Show Kaltura Presence Alongside YouTube | Accepted (implemented 2026-05-22 — referenceId + provenance-footer match; fuzzy match deferred) |
 | [ADR-045](ADR-045-redirect-unauthorized-to-wiki.md) | Wider IAP Gate + App-Level Redirect for Unauthorized Users | Accepted (implemented 2026-05-22; IAP binding applied 2026-05-27 — fully live) |
 | [ADR-046](ADR-046-prompt-driven-summaries.md) | Prompt-Driven Video Summaries on Drive | Proposed |
+| [ADR-047](ADR-047-automated-catch-up.md) | Automated Catch-Up Action | Proposed |
 
 ## ADR Format
 
