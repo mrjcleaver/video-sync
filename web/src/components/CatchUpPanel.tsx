@@ -9,7 +9,7 @@
  * siblings, ensure summary). Auto-publish is deferred to a follow-up.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import { formatUsd, estimatePerRecordCost } from "../lib/llmCost";
@@ -65,6 +65,9 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   const abortRef = useRef<AbortController | null>(null);
   // Append every event for the downloadable log; stamped with ISO ts.
   const logBufferRef = useRef<Array<{ ts: string; event: OrchestratorEvent }>>([]);
+  // Rendered log lines streamed live into the panel.
+  const [logLines, setLogLines] = useState<Array<{ ts: string; level: "info" | "warn" | "error"; text: string }>>([]);
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Eligible records preview: most-recent-first, capped at maxRecords.
   // Same selection the orchestrator uses, so the est. cost matches what
@@ -82,10 +85,61 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       .reduce((s, v) => s + estimatePerRecordCost(v.transcript_text?.length ?? 0, "google/gemini-2.5-pro"), 0);
   }, [eligible]);
 
+  // Keep the log pinned to the latest line as it streams.
+  useEffect(() => {
+    if (logScrollRef.current) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
+  }, [logLines]);
+
   if (!open) return null;
+
+  /** Format an orchestrator event into a single human-readable log line.
+   *  Returns null to suppress noisy events (record_start/end already
+   *  visible in the per-record table above the log). */
+  function formatLogLine(ev: OrchestratorEvent, title: string | undefined): { level: "info" | "warn" | "error"; text: string } | null {
+    if (ev.type === "started") {
+      return { level: "info", text: `Started — ${ev.total} record${ev.total === 1 ? "" : "s"}, tag ${ev.job_tag}` };
+    }
+    if (ev.type === "record_start") {
+      return { level: "info", text: `▶ (${ev.index + 1}/${ev.total}) ${ev.title}` };
+    }
+    if (ev.type === "stage") {
+      const stageName = ev.stage === "hydrate_transcript" ? "transcript" : ev.stage === "link_siblings" ? "siblings" : "summary";
+      const prefix = ev.status === "done" ? "✓"
+        : ev.status === "failed" ? "✗"
+        : ev.status === "needs_review" ? "?"
+        : "·";
+      const level: "info" | "warn" | "error" = ev.status === "failed" ? "error" : ev.status === "needs_review" ? "warn" : "info";
+      const titlePart = title ? `${title} · ` : "";
+      return { level, text: `  ${prefix} ${titlePart}${stageName}: ${ev.status}${ev.note ? ` — ${ev.note}` : ""}` };
+    }
+    if (ev.type === "record_end") return null;  // covered by stage lines + per-record table
+    if (ev.type === "complete") {
+      const capPart = ev.cost_cap_hit ? " · stopped at cost cap" : "";
+      return { level: "info", text: `✓ Complete — ${ev.processed} processed, ${ev.tagged_count} tagged with ${ev.job_tag}, $${ev.cost_spent_usd.toFixed(2)} spent, ${ev.ready_to_publish} ready to publish${capPart}` };
+    }
+    if (ev.type === "cancelled") {
+      return { level: "warn", text: `✗ Cancelled — ${ev.processed} processed, ${ev.tagged_count} tagged with ${ev.job_tag}` };
+    }
+    return null;
+  }
 
   function applyEvent(ev: OrchestratorEvent) {
     logBufferRef.current.push({ ts: new Date().toISOString(), event: ev });
+    // Resolve the title for stage events so the log line reads
+    // naturally. record_start carries title; everything else doesn't,
+    // so we look it up from the row map populated by the prior
+    // record_start.
+    let title: string | undefined;
+    if ("record_id" in ev) {
+      title = rows[ev.record_id]?.title;
+    }
+    const line = formatLogLine(ev, title);
+    if (line) {
+      const ts = new Date().toLocaleTimeString();
+      setLogLines(prev => [...prev, { ts, level: line.level, text: line.text }]);
+    }
     setRows(prev => {
       const next = { ...prev };
       if (ev.type === "record_start") {
@@ -123,6 +177,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     setOrderedIds([]);
     setSummary(null);
     logBufferRef.current = [];
+    setLogLines([]);
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -267,6 +322,54 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
           </div>
         )}
 
+        {/* Live event log — shows every stage transition with timestamps.
+            Streamed in real time; auto-scrolls to the latest line. */}
+        {logLines.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)" }}>
+                Log · {logLines.length} event{logLines.length === 1 ? "" : "s"}
+              </span>
+              <button
+                className="btn btn-sm"
+                style={{ fontSize: "0.7rem" }}
+                onClick={downloadLog}
+                disabled={logBufferRef.current.length === 0}
+                title="Download the full event log as JSONL (one JSON object per line) for archival or audit"
+              >
+                Download .jsonl
+              </button>
+            </div>
+            <div
+              ref={logScrollRef}
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                padding: "6px 8px",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: "0.72rem",
+                lineHeight: 1.4,
+                maxHeight: "30vh",
+                overflowY: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {logLines.map((line, i) => (
+                <div
+                  key={i}
+                  style={{
+                    color: line.level === "error" ? "var(--red)" : line.level === "warn" ? "#fbbf24" : "var(--text)",
+                  }}
+                >
+                  <span style={{ color: "var(--text-muted)" }}>{line.ts}</span> {line.text}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {summary && (
           <div style={{ marginTop: 12, padding: 10, background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4, fontSize: "0.85rem" }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -287,20 +390,12 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
                   <button className="btn btn-sm" onClick={copyJobTag} title="Copy the catchup tag to clipboard so you can paste it into the search box">
                     Copy tag
                   </button>
-                  <button className="btn btn-sm" onClick={downloadLog} disabled={logBufferRef.current.length === 0} title="Download the full per-stage event log as JSONL">
-                    Download log ({logBufferRef.current.length} events)
-                  </button>
                 </div>
               </div>
             )}
             {summary.taggedCount === 0 && (
               <div style={{ marginTop: 4, color: "var(--text-muted)", fontStyle: "italic" }}>
                 Nothing changed — every record was already current. No tag applied.
-                <div style={{ marginTop: 6 }}>
-                  <button className="btn btn-sm" onClick={downloadLog} disabled={logBufferRef.current.length === 0}>
-                    Download log ({logBufferRef.current.length} events)
-                  </button>
-                </div>
               </div>
             )}
             {summary.readyToPublish > 0 && (
