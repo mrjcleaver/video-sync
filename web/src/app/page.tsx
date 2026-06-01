@@ -12,6 +12,7 @@ import { useMemoryHealth } from "../lib/useMemoryHealth";
 import ImportPanel from "../components/ImportPanel";
 import ConnectionsPanel from "../components/ConnectionsPanel";
 import SummaryPromptPanel from "../components/SummaryPromptPanel";
+import CatchUpPanel from "../components/CatchUpPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../components/PostProcessingRulesPanel";
@@ -58,6 +59,7 @@ export default function Dashboard() {
   const [showLogs, setShowLogs] = useState(false);
   const [showConnections, setShowConnections] = useState(false);
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
+  const [showCatchUp, setShowCatchUp] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
 
@@ -307,6 +309,13 @@ export default function Dashboard() {
           >
             📄 Summary Prompt
           </button>
+          <button
+            className={`btn btn-sm ${showCatchUp ? "btn-primary" : ""}`}
+            onClick={() => setShowCatchUp(v => !v)}
+            title="Walk recent records and run captions / sibling-link / summary stages automatically (ADR-047)"
+          >
+            🏃 Catch Up
+          </button>
           {/* Feedback: link straight to a new GitHub issue. Pre-fills the
               title with the build SHA so engineering can correlate the
               report against deployed revision and recent commits. */}
@@ -338,6 +347,13 @@ export default function Dashboard() {
         videos={videos}
         onEvent={addEvent}
         onClose={() => setShowSummaryPrompt(false)}
+      />
+
+      <CatchUpPanel
+        open={showCatchUp}
+        videos={videos}
+        onEvent={addEvent}
+        onClose={() => setShowCatchUp(false)}
       />
 
       <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
