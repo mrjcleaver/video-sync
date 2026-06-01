@@ -16,6 +16,7 @@ import {
 import type { ShortsStatusResponse } from "../app/api/shorts/status/route";
 import { derivationLabel, linkOriginLabel } from "../lib/provenanceLinker";
 import { SummaryLozenge } from "./SummaryLozenge";
+import { TranscriptLozenge } from "./TranscriptLozenge";
 import { resolveExternalUrl } from "../lib/urlResolver";
 import { loadClientLog, type LogRecord } from "../lib/logger";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
@@ -1347,6 +1348,17 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         >
           Drive
         </a>
+        {/* Transcript indicator — present/missing badge. For Kaltura-
+            sourced records without a transcript, doubles as a "Fetch
+            from Kaltura" button that pulls captions and persists them
+            via videoStore (which PUTs to Drive). */}
+        <TranscriptLozenge
+          recordId={video.id}
+          sourcePlatform={video.source_platform}
+          sourceId={video.source_id}
+          transcriptText={video.transcript_text}
+          onEvent={onEvent}
+        />
         {/* ADR-046 — summary lozenge: same M:N L:N T:N C:N indicator
             shown in the Overview row, so operators see the current
             summary state without leaving the card. */}

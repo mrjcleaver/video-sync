@@ -153,8 +153,40 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         // this video is already on Kaltura, so the Kaltura lozenge in
         // Overview should light up immediately.
         videoStore.add(record);
-        onEvent(`VideoIndexed: "${e.name}" (Kaltura import${e.is_live ? ", live broadcast" : ""})`, { video_id: record.id() });
+        const recordId = record.id();
+        onEvent(`VideoIndexed: "${e.name}" (Kaltura import${e.is_live ? ", live broadcast" : ""})`, { video_id: recordId });
         count++;
+
+        // Fire-and-forget: pull captions from Kaltura if the entry has
+        // them, convert to plain-text transcript with [HH:MM:SS] markers,
+        // and hydrate the record. videoStore.setTranscript schedules a
+        // push to Drive (PUT /api/artifacts/<id>/transcript) so the
+        // transcript artifact lands next to the description.
+        const title = e.name;
+        const entryId = e.id;
+        fetch(`/api/kaltura/captions?entryId=${encodeURIComponent(entryId)}`)
+          .then(async r => {
+            if (r.status === 404 || r.status === 409 || r.status === 415 || r.status === 422) {
+              // Expected misses: no captions / not ready / format unsupported / empty.
+              // Don't spam the EventLog for these — operators don't need a line per record.
+              return null;
+            }
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              onEvent(`Kaltura captions failed: "${title}" — ${(j as { error?: string }).error ?? r.status}`, { video_id: recordId });
+              return null;
+            }
+            const data = await r.json() as { text: string; language?: string; format?: string };
+            return data.text ? data : null;
+          })
+          .then(data => {
+            if (!data) return;
+            videoStore.setTranscript(recordId, data.text);
+            onEvent(`Kaltura captions imported: "${title}" — ${data.text.split("\n").length} lines (${data.format ?? "?"}, ${data.language ?? "?"})`, { video_id: recordId });
+          })
+          .catch(err => {
+            onEvent(`Kaltura captions error: "${title}" — ${String(err).slice(0, 120)}`, { video_id: recordId });
+          });
       } catch (err) {
         failed++;
         onEvent(`Kaltura import failed: "${e.name}" — ${err instanceof Error ? err.message : String(err)}`);
