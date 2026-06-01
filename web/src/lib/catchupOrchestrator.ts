@@ -31,6 +31,7 @@ import { actorCommand } from "./useCurrentActor";
 import { rankSiblingCandidates } from "./siblingMatcher";
 import { getCurrentPromptVersion } from "./summaryPromptClient";
 import { estimatePerRecordCost } from "./llmCost";
+import { getDisplayTitle } from "./processingRules";
 
 export const AUTO_LINK_THRESHOLD = 0.85;        // silent auto-link ≥ this score
 export const STAGE_FOR_REVIEW_THRESHOLD = 0.6;  // surfaced via existing banner; orchestrator notes only
@@ -122,7 +123,7 @@ function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkA
   if (top.score < threshold) {
     // Above review threshold but below auto-link bar — banner already
     // shows it in the card; orchestrator notes it as `needs_review`.
-    return { linked: false, score: top.score, siblingId: top.video.id, siblingTitle: top.video.title, reviewNeeded: true };
+    return { linked: false, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video), reviewNeeded: true };
   }
   // Auto-link.
   try {
@@ -134,7 +135,7 @@ function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkA
         linked_by: "Auto",
       })),
     );
-    return { linked: true, score: top.score, siblingId: top.video.id, siblingTitle: top.video.title };
+    return { linked: true, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video) };
   } catch {
     return { linked: false };
   }
@@ -266,7 +267,12 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
     if (!fresh) continue;
     let anyStageDone = false;
 
-    onEvent({ type: "record_start", record_id: fresh.id, title: fresh.title, index: i, total: sorted.length });
+    // Many records share the same raw title (e.g. recurring meetings);
+    // operators disambiguate via processing rules that prefix dates.
+    // Surface the processed title in the log so each line is unique.
+    const displayTitle = getDisplayTitle(fresh);
+
+    onEvent({ type: "record_start", record_id: fresh.id, title: displayTitle, index: i, total: sorted.length });
 
     // Stage: hydrate_transcript ─────────────────────────────────
     try {
@@ -276,7 +282,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
           videoStore.setTranscript(fresh.id, text);
           anyStageDone = true;
           onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "done", note: `${text.split("\n").length} lines from Kaltura captions` });
-          log?.(`Catch-up · hydrated transcript: "${fresh.title}"`, { video_id: fresh.id });
+          log?.(`Catch-up · hydrated transcript: "${displayTitle}"`, { video_id: fresh.id });
         } else {
           onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "n/a", note: "no captions available" });
         }
@@ -286,7 +292,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
     } catch (err) {
       if (signal.aborted) { onEvent({ type: "cancelled", processed, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount }); return; }
       onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "failed", note: err instanceof Error ? err.message : String(err) });
-      log?.(`Catch-up · transcript fetch failed: "${fresh.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
+      log?.(`Catch-up · transcript fetch failed: "${displayTitle}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
       processed++;
       onEvent({ type: "record_end", record_id: fresh.id, publishable: false });
       continue;
@@ -303,7 +309,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
     if (linkResult.linked) {
       anyStageDone = true;
       onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "done", note: `linked → "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})` });
-      log?.(`Catch-up · sibling linked: "${fresh.title}" ↔ "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})`, { video_id: fresh.id });
+      log?.(`Catch-up · sibling linked: "${displayTitle}" ↔ "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})`, { video_id: fresh.id });
     } else if (linkResult.reviewNeeded) {
       onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "needs_review", note: `"${linkResult.siblingTitle}" at ${linkResult.score?.toFixed(2)} — below auto-link bar (${AUTO_LINK_THRESHOLD})` });
     } else {
@@ -331,14 +337,14 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
         costSpent += estCost;
         anyStageDone = true;
         onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: "done", note: `est. cost $${estCost.toFixed(2)}` });
-        log?.(`Catch-up · summarised: "${fresh.title}" (est. $${estCost.toFixed(2)})`, { video_id: fresh.id });
+        log?.(`Catch-up · summarised: "${displayTitle}" (est. $${estCost.toFixed(2)})`, { video_id: fresh.id });
       } else {
         onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: result.reason === "current" ? "skipped" : "n/a", note: result.reason });
       }
     } catch (err) {
       if (signal.aborted) { onEvent({ type: "cancelled", processed, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount }); return; }
       onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: "failed", note: err instanceof Error ? err.message : String(err) });
-      log?.(`Catch-up · summary failed: "${fresh.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
+      log?.(`Catch-up · summary failed: "${displayTitle}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
     }
 
     // End-of-record
