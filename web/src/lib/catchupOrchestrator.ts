@@ -64,9 +64,9 @@ export interface RecordEndEvent {
   publishable: boolean;   // Approved + transcript + summary + missing at least one destination
 }
 
-export interface StartedEvent { type: "started"; total: number; max_records: number; }
-export interface CompleteEvent { type: "complete"; processed: number; cost_spent_usd: number; ready_to_publish: number; cost_cap_hit: boolean; }
-export interface CancelledEvent { type: "cancelled"; processed: number; }
+export interface StartedEvent { type: "started"; total: number; max_records: number; job_id: string; job_tag: string; }
+export interface CompleteEvent { type: "complete"; processed: number; cost_spent_usd: number; ready_to_publish: number; cost_cap_hit: boolean; job_id: string; job_tag: string; tagged_count: number; }
+export interface CancelledEvent { type: "cancelled"; processed: number; job_id: string; job_tag: string; tagged_count: number; }
 
 export type OrchestratorEvent = StartedEvent | RecordStartEvent | StageEvent | RecordEndEvent | CompleteEvent | CancelledEvent;
 
@@ -196,8 +196,24 @@ function isPublishable(v: VideoRecordJSON): boolean {
   return !hasYouTube || !hasKaltura;
 }
 
+/**
+ * Make a short, human-readable job id that doubles as the tag. Format
+ * `YYYYMMDD-HHmm-XXXX` — sortable, distinguishable across same-minute
+ * runs via a random 4-char suffix.
+ */
+function makeJobId(): string {
+  const d = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const datePart = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${datePart}-${rand}`;
+}
+
 export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<typeof actorCommand>[0]): Promise<void> {
   const { maxRecords, costCapUsd, signal, onEvent, log } = opts;
+
+  const jobId = makeJobId();
+  const jobTag = `catchup:${jobId}`;
 
   // Build the work list: every record, most-recent-backwards, capped at maxRecords.
   const all = videoStore.getAll();
@@ -209,23 +225,46 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
     })
     .slice(0, Math.max(1, maxRecords));
 
-  onEvent({ type: "started", total: sorted.length, max_records: maxRecords });
-  log?.(`Catch-up started — ${sorted.length} record${sorted.length === 1 ? "" : "s"} (most recent first, cap ${maxRecords})`);
+  onEvent({ type: "started", total: sorted.length, max_records: maxRecords, job_id: jobId, job_tag: jobTag });
+  log?.(`Catch-up ${jobId} started — ${sorted.length} record${sorted.length === 1 ? "" : "s"} (most recent first, cap ${maxRecords}). Records changed will be tagged "${jobTag}".`);
 
   const currentPromptVersion = await getCurrentPromptVersion();
   let costSpent = 0;
   let costCapHit = false;
   let processed = 0;
   let readyToPublish = 0;
+  let taggedCount = 0;
+
+  /**
+   * Apply the catch-up tag to a record. Idempotent: re-adding an
+   * existing tag is a no-op at the field level. Called after each
+   * record that had at least one stage do something — pure
+   * inspections (everything skipped/n-a) don't tag.
+   */
+  function tagRecord(recordId: string, currentTags: string[]): boolean {
+    if (currentTags.includes(jobTag)) return false;
+    const newTags = [...currentTags, jobTag];
+    try {
+      videoStore.mutate(recordId, (r) =>
+        r.update_metadata(actorCommand(actorState, { edits: { tags: newTags } })),
+      );
+      taggedCount++;
+      return true;
+    } catch (err) {
+      log?.(`Catch-up · tag failed for ${recordId}: ${err instanceof Error ? err.message : String(err)}`, { video_id: recordId });
+      return false;
+    }
+  }
 
   for (let i = 0; i < sorted.length; i++) {
     if (signal.aborted) {
-      onEvent({ type: "cancelled", processed });
+      onEvent({ type: "cancelled", processed, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount });
       return;
     }
     // Re-read from store so updates from prior records are visible.
     const fresh = videoStore.getAll().find(v => v.id === sorted[i].id);
     if (!fresh) continue;
+    let anyStageDone = false;
 
     onEvent({ type: "record_start", record_id: fresh.id, title: fresh.title, index: i, total: sorted.length });
 
@@ -235,6 +274,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
         const text = await tryHydrateKalturaTranscript(fresh, signal);
         if (text) {
           videoStore.setTranscript(fresh.id, text);
+          anyStageDone = true;
           onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "done", note: `${text.split("\n").length} lines from Kaltura captions` });
           log?.(`Catch-up · hydrated transcript: "${fresh.title}"`, { video_id: fresh.id });
         } else {
@@ -244,7 +284,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
         onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "skipped", note: (fresh.transcript_text?.length ?? 0) >= 200 ? "already present" : "not a Kaltura source" });
       }
     } catch (err) {
-      if (signal.aborted) { onEvent({ type: "cancelled", processed }); return; }
+      if (signal.aborted) { onEvent({ type: "cancelled", processed, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount }); return; }
       onEvent({ type: "stage", record_id: fresh.id, stage: "hydrate_transcript", status: "failed", note: err instanceof Error ? err.message : String(err) });
       log?.(`Catch-up · transcript fetch failed: "${fresh.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
       processed++;
@@ -261,6 +301,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
       threshold: AUTO_LINK_THRESHOLD,
     });
     if (linkResult.linked) {
+      anyStageDone = true;
       onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "done", note: `linked → "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})` });
       log?.(`Catch-up · sibling linked: "${fresh.title}" ↔ "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})`, { video_id: fresh.id });
     } else if (linkResult.reviewNeeded) {
@@ -276,36 +317,41 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
       onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: "skipped", note: `would exceed cost cap (est. ${estCost.toFixed(2)}, spent ${costSpent.toFixed(2)}, cap ${costCapUsd.toFixed(2)})` });
       costCapHit = true;
       processed++;
+      if (anyStageDone) tagRecord(afterLink.id, afterLink.tags ?? []);
       onEvent({ type: "record_end", record_id: fresh.id, publishable: isPublishable(afterLink) });
       if (isPublishable(afterLink)) readyToPublish++;
       // Stop processing further records once cap is hit.
-      onEvent({ type: "complete", processed, cost_spent_usd: costSpent, ready_to_publish: readyToPublish, cost_cap_hit: true });
-      log?.(`Catch-up stopped at cost cap — ${processed}/${sorted.length} processed, $${costSpent.toFixed(2)} spent`);
+      onEvent({ type: "complete", processed, cost_spent_usd: costSpent, ready_to_publish: readyToPublish, cost_cap_hit: true, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount });
+      log?.(`Catch-up ${jobId} stopped at cost cap — ${processed}/${sorted.length} processed, ${taggedCount} tagged with "${jobTag}", $${costSpent.toFixed(2)} spent`);
       return;
     }
     try {
       const result = await tryEnsureSummary({ record: afterLink, currentPromptVersion, actorState, signal });
       if (result.generated) {
         costSpent += estCost;
+        anyStageDone = true;
         onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: "done", note: `est. cost $${estCost.toFixed(2)}` });
         log?.(`Catch-up · summarised: "${fresh.title}" (est. $${estCost.toFixed(2)})`, { video_id: fresh.id });
       } else {
         onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: result.reason === "current" ? "skipped" : "n/a", note: result.reason });
       }
     } catch (err) {
-      if (signal.aborted) { onEvent({ type: "cancelled", processed }); return; }
+      if (signal.aborted) { onEvent({ type: "cancelled", processed, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount }); return; }
       onEvent({ type: "stage", record_id: fresh.id, stage: "ensure_summary", status: "failed", note: err instanceof Error ? err.message : String(err) });
       log?.(`Catch-up · summary failed: "${fresh.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: fresh.id });
     }
 
     // End-of-record
     const final = videoStore.getAll().find(v => v.id === sorted[i].id) ?? fresh;
+    if (anyStageDone) {
+      tagRecord(final.id, final.tags ?? []);
+    }
     const publishable = isPublishable(final);
     if (publishable) readyToPublish++;
     processed++;
     onEvent({ type: "record_end", record_id: fresh.id, publishable });
   }
 
-  onEvent({ type: "complete", processed, cost_spent_usd: costSpent, ready_to_publish: readyToPublish, cost_cap_hit: costCapHit });
-  log?.(`Catch-up complete — ${processed} record${processed === 1 ? "" : "s"} processed, $${costSpent.toFixed(2)} spent, ${readyToPublish} ready to publish`);
+  onEvent({ type: "complete", processed, cost_spent_usd: costSpent, ready_to_publish: readyToPublish, cost_cap_hit: costCapHit, job_id: jobId, job_tag: jobTag, tagged_count: taggedCount });
+  log?.(`Catch-up ${jobId} complete — ${processed} processed, ${taggedCount} tagged with "${jobTag}", $${costSpent.toFixed(2)} spent, ${readyToPublish} ready to publish`);
 }

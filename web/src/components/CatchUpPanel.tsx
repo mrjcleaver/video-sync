@@ -61,8 +61,10 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   const [runState, setRunState] = useState<RunState>("idle");
   const [rows, setRows] = useState<Record<string, RecordRow>>({});
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
-  const [summary, setSummary] = useState<{ processed: number; costSpent: number; readyToPublish: number; capHit: boolean } | null>(null);
+  const [summary, setSummary] = useState<{ processed: number; costSpent: number; readyToPublish: number; capHit: boolean; jobTag: string; taggedCount: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Append every event for the downloadable log; stamped with ISO ts.
+  const logBufferRef = useRef<Array<{ ts: string; event: OrchestratorEvent }>>([]);
 
   // Eligible records preview: most-recent-first, capped at maxRecords.
   // Same selection the orchestrator uses, so the est. cost matches what
@@ -83,6 +85,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   if (!open) return null;
 
   function applyEvent(ev: OrchestratorEvent) {
+    logBufferRef.current.push({ ts: new Date().toISOString(), event: ev });
     setRows(prev => {
       const next = { ...prev };
       if (ev.type === "record_start") {
@@ -107,10 +110,10 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       setOrderedIds(prev => prev.includes(ev.record_id) ? prev : [...prev, ev.record_id]);
     } else if (ev.type === "complete") {
       setRunState("complete");
-      setSummary({ processed: ev.processed, costSpent: ev.cost_spent_usd, readyToPublish: ev.ready_to_publish, capHit: ev.cost_cap_hit });
+      setSummary({ processed: ev.processed, costSpent: ev.cost_spent_usd, readyToPublish: ev.ready_to_publish, capHit: ev.cost_cap_hit, jobTag: ev.job_tag, taggedCount: ev.tagged_count });
     } else if (ev.type === "cancelled") {
       setRunState("cancelled");
-      setSummary({ processed: ev.processed, costSpent: 0, readyToPublish: 0, capHit: false });
+      setSummary({ processed: ev.processed, costSpent: 0, readyToPublish: 0, capHit: false, jobTag: ev.job_tag, taggedCount: ev.tagged_count });
     }
   }
 
@@ -119,6 +122,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     setRows({});
     setOrderedIds([]);
     setSummary(null);
+    logBufferRef.current = [];
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -139,6 +143,28 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
 
   function cancel() {
     abortRef.current?.abort();
+  }
+
+  function downloadLog() {
+    if (logBufferRef.current.length === 0) return;
+    const jobTag = summary?.jobTag ?? "catchup";
+    const lines = logBufferRef.current
+      .map(entry => JSON.stringify({ ts: entry.ts, ...entry.event }))
+      .join("\n");
+    const blob = new Blob([lines + "\n"], { type: "application/x-ndjson" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${jobTag.replace(":", "-")}.jsonl`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function copyJobTag() {
+    if (!summary) return;
+    navigator.clipboard?.writeText(summary.jobTag).catch(() => {});
   }
 
   return (
@@ -250,8 +276,35 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
               {summary.processed} record{summary.processed === 1 ? "" : "s"} processed · spent {formatUsd(summary.costSpent)}
               {summary.capHit && <> · <strong>stopped at cost cap</strong></>}
             </div>
+            {summary.taggedCount > 0 && (
+              <div style={{ marginTop: 6, padding: 8, background: "rgba(168,85,247,0.08)", border: "1px dashed rgba(168,85,247,0.4)", borderRadius: 4 }}>
+                <div style={{ marginBottom: 6 }}>
+                  Tagged <strong>{summary.taggedCount}</strong> record{summary.taggedCount === 1 ? "" : "s"} with{" "}
+                  <code style={{ background: "var(--bg)", padding: "1px 5px", borderRadius: 3, fontSize: "0.8rem" }}>{summary.jobTag}</code>.
+                  Paste the tag into the dashboard search box to filter to just these records for manual inspection.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button className="btn btn-sm" onClick={copyJobTag} title="Copy the catchup tag to clipboard so you can paste it into the search box">
+                    Copy tag
+                  </button>
+                  <button className="btn btn-sm" onClick={downloadLog} disabled={logBufferRef.current.length === 0} title="Download the full per-stage event log as JSONL">
+                    Download log ({logBufferRef.current.length} events)
+                  </button>
+                </div>
+              </div>
+            )}
+            {summary.taggedCount === 0 && (
+              <div style={{ marginTop: 4, color: "var(--text-muted)", fontStyle: "italic" }}>
+                Nothing changed — every record was already current. No tag applied.
+                <div style={{ marginTop: 6 }}>
+                  <button className="btn btn-sm" onClick={downloadLog} disabled={logBufferRef.current.length === 0}>
+                    Download log ({logBufferRef.current.length} events)
+                  </button>
+                </div>
+              </div>
+            )}
             {summary.readyToPublish > 0 && (
-              <div style={{ marginTop: 4 }}>
+              <div style={{ marginTop: 6 }}>
                 <strong>{summary.readyToPublish} record{summary.readyToPublish === 1 ? "" : "s"} ready to publish</strong> — open each card and click Publish.
               </div>
             )}
