@@ -45,6 +45,8 @@ export interface VideoRecordJSON {
   summary_prompt_version?: number | null;
   summary_locked?: boolean;
   summary_counts?: SummaryCountsJSON | null;
+  /** ISO timestamp when the current summary was generated. */
+  summary_generated_at?: string | null;
 }
 
 /** ADR-046 — counts surfaced as M:NN L:NN T:NN C:NN in the Overview. */

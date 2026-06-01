@@ -39,6 +39,7 @@ interface SseRecordDone {
   doc_url?: string;
   counts: { m: number; l: number; t: number; c: number };
   prompt_version: number;
+  generated_at: string;
   cost_so_far_usd: number;
   index: number;
 }
@@ -187,6 +188,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
                   doc_id: d.doc_id,
                   prompt_version: d.prompt_version,
                   counts: d.counts,
+                  generated_at: d.generated_at,
                 })),
               );
             } catch (e) {

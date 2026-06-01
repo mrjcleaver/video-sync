@@ -245,6 +245,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         prompt_version: number;
         counts: { m: number; l: number; t: number; c: number };
         model: string;
+        generated_at: string;
       };
 
       // Stamp the result onto the WASM record so the catalog tracks it.
@@ -253,6 +254,7 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           doc_id: data.doc_id,
           prompt_version: data.prompt_version,
           counts: data.counts,
+          generated_at: data.generated_at,
         })),
       );
       onEvent(
@@ -266,6 +268,33 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       onEvent(`SummaryFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
     } finally {
       setSummarising(false);
+    }
+  }
+
+  /**
+   * ADR-046 slice 5 — toggle summary_locked. Locked records are skipped
+   * by the bulk-regen flow so an operator's hand edits in the Drive
+   * Doc survive subsequent prompt bumps. Emits SummaryLocked events
+   * via the WASM aggregate (visible in catalog history; surfaced to
+   * the EventLog via the onEvent string below).
+   */
+  function toggleSummaryLock() {
+    const willLock = !video.summary_locked;
+    try {
+      videoStore.mutate(video.id, (r) =>
+        willLock
+          ? r.lock_summary(actorCommand(actorState))
+          : r.unlock_summary(actorCommand(actorState)),
+      );
+      onEvent(
+        willLock
+          ? `SummaryLocked: "${video.title}"${dateTag(video.recorded_at)} — bulk-regen will skip this record`
+          : `SummaryUnlocked: "${video.title}"${dateTag(video.recorded_at)} — bulk-regen will rewrite on next prompt bump`,
+        { video_id: video.id },
+      );
+      onMutated();
+    } catch (err) {
+      onEvent(`Summary lock toggle failed: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
     }
   }
 
@@ -1389,6 +1418,23 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         </span>
       </div>
 
+      {/* ADR-046 slice 5 — "last regenerated" detail. Shown whenever a
+          summary exists; the lozenge already encodes the counts + stale
+          state, this line adds the human-readable timestamp + lock
+          state so the operator can scan their bulk-regen results
+          without hovering on the lozenge. */}
+      {video.summary_doc_id && (
+        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 8 }}>
+          {video.summary_locked ? "🔒 " : ""}Summary: prompt v{video.summary_prompt_version ?? "?"}
+          {video.summary_generated_at && (
+            <> · last regenerated {new Date(video.summary_generated_at).toLocaleString(undefined, {
+              year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+            })}</>
+          )}
+          {video.summary_locked && <> · locked — bulk-regen skipped</>}
+        </div>
+      )}
+
       {showParticipants && video.participants.length > 0 && (
         <div style={{
           marginBottom: 8, padding: "6px 10px",
@@ -2118,6 +2164,21 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
               : "Generate a chapter-oriented summary on Drive (ADR-046)"}
           >
             {summarising ? "📄 Summarising…" : (video.summary_doc_id ? "📄 Re-summarise" : "📄 Summarise")}
+          </button>
+        )}
+        {/* ADR-046 slice 5 — Lock toggle. Only relevant once a summary
+            exists; before that, locking a non-existent summary does
+            nothing useful. */}
+        {video.summary_doc_id && (
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.72rem" }}
+            onClick={toggleSummaryLock}
+            title={video.summary_locked
+              ? "Locked — bulk regen skips this record. Click to unlock so the next prompt bump rewrites it."
+              : "Lock the summary so the next prompt-bump bulk regen doesn't overwrite hand edits."}
+          >
+            {video.summary_locked ? "🔒 Unlock summary" : "🔓 Lock summary"}
           </button>
         )}
         {summaryError && (

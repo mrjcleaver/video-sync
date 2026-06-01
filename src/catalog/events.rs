@@ -197,6 +197,9 @@ pub struct SummaryGenerated {
     pub prompt_version: u32,
     pub counts: SummaryCounts,
     pub generated_by: Uuid,
+    /// When the model finished writing the Doc — may differ from
+    /// `timestamp` if the command was retried.
+    pub generated_at: DateTime<Utc>,
 }
 
 /// ADR-046 — emitted when an operator toggles the summary lock. `locked

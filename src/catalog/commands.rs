@@ -180,6 +180,10 @@ pub struct SetSummaryMetadata {
     pub prompt_version: u32,
     /// Counts to surface in the Overview lozenge.
     pub counts: SummaryCounts,
+    /// ISO timestamp from the generation flow. Surfaced as
+    /// "Summary: prompt v3 · MMM DD" on the card detail.
+    #[serde(default)]
+    pub generated_at: Option<String>,
 }
 
 /// ADR-046 — lock the summary against bulk regeneration. The Drive Doc

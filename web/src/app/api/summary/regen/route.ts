@@ -183,6 +183,7 @@ async function handler(req: NextRequest) {
             doc_url: result.doc_url,
             counts: result.counts,
             prompt_version: result.prompt_version,
+            generated_at: result.generated_at,
             cost_so_far_usd: state.cost_so_far_usd,
             index: i,
           });

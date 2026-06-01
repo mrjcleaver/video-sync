@@ -55,6 +55,11 @@ pub struct VideoRecord {
     /// Counts surfaced as M:NN L:NN T:NN C:NN in the Overview lozenge.
     #[serde(default)]
     pub summary_counts: Option<SummaryCounts>,
+    /// When the current summary was generated. Surfaced as
+    /// "Summary: prompt v3 · MMM DD" on the card. Cleared if a future
+    /// flow removes the summary.
+    #[serde(default)]
+    pub summary_generated_at: Option<DateTime<Utc>>,
     pending_events: Vec<CatalogEvent>,
 }
 
@@ -126,6 +131,7 @@ impl VideoRecord {
             summary_prompt_version: None,
             summary_locked: false,
             summary_counts: None,
+            summary_generated_at: None,
             pending_events: Vec::new(),
         };
 
@@ -654,18 +660,27 @@ impl VideoRecord {
             return Err(CatalogError::Unauthorized);
         }
 
+        let now = Utc::now();
+        // Parse the client-supplied timestamp if present; fall back to
+        // server-side now() so the field is always populated.
+        let generated_at = cmd.generated_at.as_ref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc)))
+            .unwrap_or(now);
+
         self.summary_doc_id = Some(cmd.doc_id.clone());
         self.summary_prompt_version = Some(cmd.prompt_version);
         self.summary_counts = Some(cmd.counts);
+        self.summary_generated_at = Some(generated_at);
 
         Ok(vec![CatalogEvent::SummaryGenerated(SummaryGenerated {
             event_id: Uuid::new_v4(),
-            timestamp: Utc::now(),
+            timestamp: now,
             video_record_id: self.id,
             doc_id: cmd.doc_id,
             prompt_version: cmd.prompt_version,
             counts: cmd.counts,
             generated_by: cmd.actor.user_id,
+            generated_at,
         })])
     }
 
