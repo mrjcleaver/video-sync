@@ -88,6 +88,8 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
+  const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const [showAttrsPreview, setShowAttrsPreview] = useState(false);
   const [attrsPreview, setAttrsPreview] = useState<PublishAttributes | null>(null);
   const [showProvenance, setShowProvenance] = useState(false);
@@ -985,6 +987,37 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     }
   }
 
+  /**
+   * Generate a short prose description from the transcript via the
+   * legacy /api/process/summarize endpoint (3-5 sentence summary,
+   * suitable for the YouTube/Kaltura description field). Distinct
+   * from ADR-046's chapter-oriented Drive Doc — this is the
+   * one-paragraph blurb that populates VideoRecord.description.
+   * Surfaces when the record has a transcript but no description.
+   */
+  async function generateDescriptionFromTranscript() {
+    if (!video.transcript_text || video.transcript_text.length < 200) {
+      setDescriptionError("Transcript is too short or missing.");
+      return;
+    }
+    setGeneratingDescription(true);
+    setDescriptionError(null);
+    try {
+      const result = await requestLlmSummary(video.transcript_text);
+      const description = result.summary?.trim();
+      if (!description) throw new Error("LLM returned no summary text");
+      videoStore.mutate(video.id, (r) =>
+        r.update_metadata(cmd({ edits: { description } })),
+      );
+      onEvent(`DescriptionGenerated: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars)`, { video_id: video.id });
+      onMutated();
+    } catch (err) {
+      setDescriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGeneratingDescription(false);
+    }
+  }
+
   async function checkYouTubeStatus(loc: PlatformLocationJSON) {
     let connections: Record<string, { credentials?: Record<string, string> }> = {};
     try {
@@ -1492,11 +1525,27 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
         </div>
       )}
 
-      {video.description && (
+      {video.description ? (
         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 8 }}>
           {video.description}
         </p>
-      )}
+      ) : (video.transcript_text && video.transcript_text.length >= 200) ? (
+        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8, fontStyle: "italic", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>No description yet.</span>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: "0.72rem" }}
+            onClick={generateDescriptionFromTranscript}
+            disabled={generatingDescription}
+            title="Generate a short paragraph description from the transcript via OpenRouter. Distinct from the chapter-oriented Summary doc (ADR-046)."
+          >
+            {generatingDescription ? "Generating…" : "✨ Generate from transcript"}
+          </button>
+          {descriptionError && (
+            <span style={{ color: "var(--red)" }}>Error: {descriptionError.slice(0, 100)}</span>
+          )}
+        </div>
+      ) : null}
 
       {video.tags.length > 0 && (
         <div className="video-card-tags">
