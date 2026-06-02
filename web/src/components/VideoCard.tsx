@@ -906,17 +906,18 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
       }
     }
 
-    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    // Pick up any operator override from localStorage, but don't gate
+    // on it — per ADR-042 Zoom is shared-default with operator-override.
+    // The server route (/api/zoom/transcript) already resolves shared
+    // creds via getSharedCredential("zoom") when the body is empty, so
+    // operators without a local override (e.g. agent@agentics.org) can
+    // still load transcripts as long as the shared creds are configured.
+    let zoomCreds: { accountId?: string; clientId?: string; clientSecret?: string } = {};
     try {
       const raw = localStorage.getItem("video-sync:connections");
-      if (raw) connections = JSON.parse(raw);
+      const connections: Record<string, { credentials?: Record<string, string> }> = raw ? JSON.parse(raw) : {};
+      zoomCreds = connections["Zoom"]?.credentials ?? {};
     } catch { /* ignore */ }
-
-    const zoomCreds = connections["Zoom"]?.credentials;
-    if (!zoomCreds?.accountId || !zoomCreds?.clientId || !zoomCreds?.clientSecret) {
-      setTranscriptError("Zoom credentials not configured. Go to Connections first.");
-      return;
-    }
 
     // Extract the Zoom meeting UUID from source_id (format: "zoom-<uuid>")
     const meetingUuid = video.source_id.replace(/^zoom-/, "");
@@ -924,15 +925,16 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     setLoadingTranscript(true);
     setTranscriptError(null);
     try {
+      const body: Record<string, unknown> = { meetingUuid };
+      if (zoomCreds.accountId && zoomCreds.clientId && zoomCreds.clientSecret) {
+        body.accountId = zoomCreds.accountId;
+        body.clientId = zoomCreds.clientId;
+        body.clientSecret = zoomCreds.clientSecret;
+      }
       const res = await fetch("/api/zoom/transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId: zoomCreds.accountId,
-          clientId: zoomCreds.clientId,
-          clientSecret: zoomCreds.clientSecret,
-          meetingUuid,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         let errMsg = `Transcript fetch failed (${res.status})`;
