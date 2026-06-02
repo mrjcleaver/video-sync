@@ -240,18 +240,26 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
   const modelKnown = isKnownModel(model.trim());
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-      zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      padding: 16,
-    }} onClick={onClose}>
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8,
-          padding: 16, width: "min(960px, 100%)", maxHeight: "90vh", overflowY: "auto",
-        }}
-      >
+    // Non-blocking side drawer (mirrors CatchUpPanel) — fixed to the
+    // right, doesn't intercept clicks on the rest of the dashboard so
+    // long bulk-regen runs can stay open while the operator inspects
+    // cards in parallel.
+    <div
+      style={{
+        position: "fixed",
+        top: 16,
+        right: 16,
+        bottom: 16,
+        width: "min(640px, calc(100vw - 32px))",
+        background: "var(--bg-card)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: 16,
+        zIndex: 100,
+        overflowY: "auto",
+        boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+      }}
+    >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Summary Prompt (ADR-046)</h2>
           <button className="btn btn-sm" onClick={onClose}>Close</button>
@@ -377,7 +385,6 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
             </div>
           </>
         )}
-      </div>
     </div>
   );
 }
