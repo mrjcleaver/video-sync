@@ -755,6 +755,37 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
     }
   }
 
+  /**
+   * Approved + already has a YouTube destination location (e.g. attached
+   * via the auto-association banner or the Recover flow without the
+   * status chain finishing) → transition through Publishing → Published
+   * using the existing location data. Moves the record out of Active so
+   * the dashboard's "Approved" bucket only holds work that still needs
+   * an upload.
+   */
+  function markAsAlreadyPublished() {
+    const ytLoc = (video.locations ?? []).find(
+      (l) => l.role === "Destination" && l.platform === "YouTube",
+    );
+    if (!ytLoc) return;
+    const destUrl = ytLoc.external_url
+      ?? (ytLoc.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
+    try {
+      videoStore.mutate(video.id, (r) => r.request_publish(cmd()));
+      videoStore.mutate(video.id, (r) =>
+        r.mark_published(cmd({
+          destination_id: ytLoc.external_id,
+          destination_url: destUrl,
+          destination_platform: "YouTube",
+        })),
+      );
+      onEvent(`VideoMarkedPublished: "${video.title}"${dateTag(video.recorded_at)} — already on YouTube`, { video_id: video.id });
+      onMutated();
+    } catch (err) {
+      onEvent(`Mark Published failed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+    }
+  }
+
   function abandonVideo() {
     videoStore.mutate(video.id, (r) =>
       r.abandon(cmd({ reason: "Abandoned from dashboard" }))
@@ -2095,9 +2126,13 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           </button>
         )}
         {canPublish && alreadyPublished && (
-          <span style={{ fontSize: "0.8rem", color: "var(--green)", padding: "4px 10px" }}>
-            Already on YouTube
-          </span>
+          <button
+            className="btn btn-sm btn-green"
+            onClick={markAsAlreadyPublished}
+            title="This record is Approved and already has a YouTube destination. Mark it Published so it leaves the Active list."
+          >
+            Already on YouTube — mark Published
+          </button>
         )}
         {canSidePublishKaltura && (
           <button
