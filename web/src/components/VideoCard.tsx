@@ -2060,9 +2060,20 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
                     alignItems: "center",
                   }}
                 >
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.78rem" }}>
-                    {c.upload.title}
-                  </div>
+                  <a
+                    href={`https://www.youtube.com/watch?v=${c.upload.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open this YouTube video in a new tab to verify before linking"
+                    style={{
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.78rem",
+                      color: "var(--text)", textDecoration: "none",
+                      display: "flex", alignItems: "center", gap: 4,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.upload.title}</span>
+                    <span style={{ color: "var(--text-muted)", fontSize: "0.7rem", flexShrink: 0 }}>↗</span>
+                  </a>
                   <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
                     {c.upload.publishedAt ? c.upload.publishedAt.slice(0, 10) : ""}
                     {c.dateDeltaDays != null && c.dateDeltaDays <= 31 && <span style={{ color: "var(--green)", marginLeft: 4 }}>✓</span>}
