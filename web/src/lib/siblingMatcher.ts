@@ -95,6 +95,20 @@ function sameCalendarDay(a: string | null, b: string | null): boolean {
  * Live broadcast's actualStartTime vs. a Fireflies meeting's
  * end-of-call timestamp on the same day).
  */
+/**
+ * The maximum gap in minutes that's still plausibly explainable by a
+ * timezone offset. UTC+14 to UTC-12 = 26h of real-world span; we add
+ * a small slack for DST transitions and Zoom-vs-Fireflies start/end
+ * timestamp drift on long sessions, then round to a clean 30h.
+ *
+ * Beyond this, two recordings are on genuinely different days — even
+ * perfect participant + title overlap shouldn't link them, because
+ * recurring meetings (same hosts, same agenda template) would
+ * false-positive every week. rankSiblingCandidates drops candidates
+ * whose delta exceeds this gate before scoring.
+ */
+export const MAX_PLAUSIBLE_TIME_DELTA_MIN = 30 * 60;
+
 function timeScore(target: string | null, candidate: string | null, deltaMin: number | null): number {
   if (deltaMin == null) return 0;
   if (deltaMin <= 10) return 1;            // near-simultaneous
@@ -102,7 +116,11 @@ function timeScore(target: string | null, candidate: string | null, deltaMin: nu
   if (deltaMin <= 4 * 60) return 0.7;      // four hours
   if (sameCalendarDay(target, candidate)) return 0.6;  // same UTC day
   if (deltaMin <= 24 * 60) return 0.4;     // 24 h delta but cross-day in UTC (timezone shift)
-  if (deltaMin <= 48 * 60) return 0.2;
+  // Beyond 24h is reachable only when the caller bypasses the hard
+  // MAX_PLAUSIBLE_TIME_DELTA_MIN gate; we keep a residual tier so
+  // diagnostic uses of timeScore() outside rankSiblingCandidates
+  // still degrade gracefully rather than dropping to 0.
+  if (deltaMin <= MAX_PLAUSIBLE_TIME_DELTA_MIN) return 0.2;
   return 0;
 }
 
@@ -123,6 +141,16 @@ export function rankSiblingCandidates(
     const candidateRecorded = v.recorded_at ?? v.indexed_at;
     const participant_overlap = participantJaccard(target.participants ?? [], v.participants ?? []);
     const time_delta_minutes = timeDeltaMinutes(targetRecorded, candidateRecorded);
+
+    // Hard gate: a date gap exceeding the max plausible timezone
+    // difference is a strong NOT-match signal that should override
+    // participant + title overlap. Recurring meetings (same hosts,
+    // same agenda template, same Zoom room) would otherwise
+    // false-positive against every other instance of themselves.
+    if (time_delta_minutes !== null && time_delta_minutes > MAX_PLAUSIBLE_TIME_DELTA_MIN) {
+      continue;
+    }
+
     const title_overlap = tokenOverlap(target.title, v.title);
     const t = timeScore(targetRecorded, candidateRecorded, time_delta_minutes);
 
