@@ -126,6 +126,46 @@ export interface MatchCandidate {
 }
 
 /**
+ * Hard upper bound on plausible "recorded → published" lag. Operators
+ * routinely upload weeks after recording (backfill orchestrator alone
+ * can stretch this to a month), but beyond 90 days the YouTube upload
+ * almost certainly belongs to a *different* instance of the same
+ * recurring meeting. Candidates past this threshold are dropped before
+ * scoring so a perfect-title match can't false-positive against
+ * historical uploads.
+ *
+ * Parallel to MAX_PLAUSIBLE_TIME_DELTA_MIN in siblingMatcher.ts —
+ * different semantic (record-vs-record there, record-vs-publish here)
+ * so the value differs, but the principle is identical: a date gap
+ * past plausibility is a strong NOT-match signal that should override
+ * other features.
+ */
+export const MAX_PLAUSIBLE_PUBLISH_LAG_DAYS = 90;
+
+/**
+ * Date-boost tier table. A close upload is a strong corroborating
+ * signal; a distant one (within the plausibility window) is a weak
+ * negative signal that pushes the total below the auto-suggest
+ * threshold even on a perfect title overlap.
+ *
+ * With titleScore ∈ [0, 1] weighted at 0.7, a perfect title contributes
+ * 0.7. The auto-suggest banner threshold is 0.7. So a >30-day delta
+ * needs to subtract at least 0.01 to keep recurring-meeting false
+ * positives out of the auto-suggest banner; -0.15 leaves comfortable
+ * headroom and still allows an operator-set bar below to surface the
+ * candidate in manual recovery.
+ */
+function dateBoost(deltaDays: number): number {
+  if (deltaDays <= 1) return 0.30;
+  if (deltaDays <= 7) return 0.20;
+  if (deltaDays <= 30) return 0.10;
+  // 30-90 days: negative — within plausibility but past the typical
+  // publish-lag of the operators' workflow. Suppresses auto-suggest;
+  // remains discoverable in manual "Recover from YouTube" lookups.
+  return -0.15;
+}
+
+/**
  * Rank a channel's uploads against a candidate title (+ optional recorded date).
  * Returns top N candidates sorted by score descending.
  */
@@ -136,21 +176,25 @@ export function rankCandidates(
   limit = 5,
 ): MatchCandidate[] {
   const recDate = recordedAt ? new Date(recordedAt).getTime() : null;
-  const scored: MatchCandidate[] = uploads.map(upload => {
+  const scored: MatchCandidate[] = [];
+  for (const upload of uploads) {
     const titleScore = tokenScore(title, upload.title);
     let dateDeltaDays: number | null = null;
-    let dateBoost = 0;
+    let boost = 0;
     if (recDate && upload.publishedAt) {
       const pub = new Date(upload.publishedAt).getTime();
       dateDeltaDays = Math.abs(pub - recDate) / 86400000;
-      // Boost for close dates: 1.0x at 0 days, 0.5x at 30 days, 0 beyond 180
-      if (dateDeltaDays <= 180) {
-        dateBoost = Math.max(0, 1 - dateDeltaDays / 180) * 0.3;
-      }
+      // Hard gate: past the plausibility window, the upload is
+      // almost certainly a different recording — drop entirely so
+      // it can't surface as a high-confidence match.
+      if (dateDeltaDays > MAX_PLAUSIBLE_PUBLISH_LAG_DAYS) continue;
+      boost = dateBoost(dateDeltaDays);
     }
-    const score = titleScore * 0.7 + dateBoost;
-    return { upload, score, titleScore, dateDeltaDays };
-  });
+    // Clamp to [0, 1] so a strongly-penalised candidate doesn't go
+    // negative and break downstream "score > 0" filters.
+    const score = Math.max(0, Math.min(1, titleScore * 0.7 + boost));
+    scored.push({ upload, score, titleScore, dateDeltaDays });
+  }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).filter(c => c.score > 0);
 }
