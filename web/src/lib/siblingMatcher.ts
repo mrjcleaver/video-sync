@@ -21,22 +21,32 @@
 import type { VideoRecordJSON } from "./wasm";
 
 /** ADR-049 — relation the matcher recommends when auto-linking this pair. */
-export type RecommendedRelation = "SameEvent" | "BroadcastedFrom";
+export type RecommendedRelation = "SameEvent" | "BroadcastedFrom" | "TranscribedFrom";
 
 /**
- * Platforms that can broadcast into YouTube Live (RTMP source side).
- * Adding Streamyard / OBS / Wirecast / Restream / Riverside etc. here
- * widens the BroadcastedFrom detection without touching scoring code.
- * Google Meet is not yet a broadcaster source — added when/if Meet
- * support lands.
+ * Source-meeting platforms — these are the *upstream* side in both
+ * BroadcastedFrom (RTMP relay → YouTube Live) and TranscribedFrom
+ * (transcription bot like Fireflies joined the meeting). Adding
+ * Streamyard / OBS / Wirecast / Restream / Riverside / Google Meet
+ * here widens the directional auto-classification without touching
+ * scoring code.
  */
-const BROADCASTER_PLATFORMS: ReadonlySet<string> = new Set(["Zoom", "Streamyard", "OBS", "Wirecast"]);
+const MEETING_SOURCE_PLATFORMS: ReadonlySet<string> = new Set(["Zoom", "Streamyard", "OBS", "Wirecast"]);
+
+/** Platforms that are transcription bots — downstream of a meeting,
+ *  produce transcript artifacts. */
+const TRANSCRIPT_BOT_PLATFORMS: ReadonlySet<string> = new Set(["Fireflies"]);
 
 /** ADR-049 — tighter time gate for BroadcastedFrom auto-classification.
  *  RTMP relay delay is seconds, plus operators start broadcasts at the
  *  top of the hour (per operator note 2026-06-07), so 60 minutes is a
  *  comfortable bound. Beyond 60 min the pair stays SameEvent. */
 const BROADCAST_MAX_DELTA_MIN = 60;
+
+/** Fireflies bots typically join within a few minutes of the meeting
+ *  starting; the recording start times are very close. Same 60-min
+ *  bound as BroadcastedFrom — both are "downstream of the same call". */
+const TRANSCRIBED_MAX_DELTA_MIN = 60;
 
 export interface SiblingCandidate {
   video: VideoRecordJSON;
@@ -73,13 +83,37 @@ function isBroadcastFromPair(
       && ((rec.tags ?? []).includes("youtube-live")
           || (rec.metadata_extra as { live_broadcast?: string } | null)?.live_broadcast === "1");
 
-  const broadcaster = (rec: VideoRecordJSON) => BROADCASTER_PLATFORMS.has(rec.source_platform);
+  const meetingSource = (rec: VideoRecordJSON) => MEETING_SOURCE_PLATFORMS.has(rec.source_platform);
 
   const youtubeSide = youtubeLive(target) ? target : youtubeLive(candidate) ? candidate : null;
-  const broadcasterSide = broadcaster(target) ? target : broadcaster(candidate) ? candidate : null;
+  const broadcasterSide = meetingSource(target) ? target : meetingSource(candidate) ? candidate : null;
   if (!youtubeSide || !broadcasterSide || youtubeSide === broadcasterSide) return false;
 
   if (timeDeltaMin === null || timeDeltaMin > BROADCAST_MAX_DELTA_MIN) return false;
+  return true;
+}
+
+/**
+ * ADR-049 extension — does this pair look like a transcription bot
+ * (Fireflies) joining the upstream meeting (Zoom/Streamyard/etc.)?
+ *
+ * Directional: the bot is downstream. Catch-up only adds the
+ * TranscribedFrom upstream_link on the bot's side. Same time bound
+ * as BroadcastedFrom — bot joins the call near simultaneously.
+ */
+function isTranscribedFromPair(
+  target: VideoRecordJSON,
+  candidate: VideoRecordJSON,
+  timeDeltaMin: number | null,
+): boolean {
+  const isBot = (rec: VideoRecordJSON) => TRANSCRIPT_BOT_PLATFORMS.has(rec.source_platform);
+  const isMeeting = (rec: VideoRecordJSON) => MEETING_SOURCE_PLATFORMS.has(rec.source_platform);
+
+  const botSide = isBot(target) ? target : isBot(candidate) ? candidate : null;
+  const meetingSide = isMeeting(target) ? target : isMeeting(candidate) ? candidate : null;
+  if (!botSide || !meetingSide || botSide === meetingSide) return false;
+
+  if (timeDeltaMin === null || timeDeltaMin > TRANSCRIBED_MAX_DELTA_MIN) return false;
   return true;
 }
 
@@ -231,7 +265,9 @@ export function rankSiblingCandidates(
     if (score <= 0) continue;
 
     const recommendedRelation: RecommendedRelation =
-      isBroadcastFromPair(target, v, time_delta_minutes) ? "BroadcastedFrom" : "SameEvent";
+      isBroadcastFromPair(target, v, time_delta_minutes) ? "BroadcastedFrom"
+        : isTranscribedFromPair(target, v, time_delta_minutes) ? "TranscribedFrom"
+        : "SameEvent";
     candidates.push({
       video: v,
       score,

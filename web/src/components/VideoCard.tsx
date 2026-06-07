@@ -802,10 +802,13 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       destUrl = ytLoc.external_url
         ?? (ytLoc.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
     } else {
-      const paired = broadcastPairs?.destinationsFor.get(video.id)?.[0];
+      // Only a broadcast destination counts as "already on YouTube" —
+      // transcript pairs don't make the record published.
+      const paired = (broadcastPairs?.destinationsFor.get(video.id) ?? [])
+        .find(p => p.kind === "broadcast");
       if (!paired) return;
-      destinationId = paired.youtube_id;
-      destUrl = `https://www.youtube.com/watch?v=${paired.youtube_id}`;
+      destinationId = paired.external_id;
+      destUrl = `https://www.youtube.com/watch?v=${paired.external_id}`;
     }
     if (!destinationId) return;
     try {
@@ -1313,7 +1316,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // YouTube" if a paired YouTube-Live broadcast destination points at
   // it — even though no YouTube Destination location lives on THIS
   // record. The publish flow short-circuits the same way.
-  const pairedBroadcasts = broadcastPairs?.destinationsFor.get(video.id) ?? [];
+  const pairedDownstreams = broadcastPairs?.destinationsFor.get(video.id) ?? [];
+  const pairedBroadcasts = pairedDownstreams.filter(p => p.kind === "broadcast");
+  const pairedTranscripts = pairedDownstreams.filter(p => p.kind === "transcript");
+  // Only BroadcastedFrom counts as "already on YouTube" — TranscribedFrom
+  // pairs are transcription bots (Fireflies), they don't make the canonical
+  // record published anywhere.
   const hasPairedBroadcast = pairedBroadcasts.length > 0;
   const alreadyPublished = alreadyPublishedLocation || hasPairedBroadcast;
   const alreadyOnKaltura = (video.locations ?? []).some(
@@ -1508,15 +1516,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           counts={video.summary_counts}
           stopRowClick={false}
         />
-        {/* ADR-049 slice 3: when a YouTube-Live broadcast destination
-            points at this record via BroadcastedFrom, surface the
-            link inline. The broadcast destination is hidden by
-            default; this badge IS its representation on the canonical
-            card. */}
+        {/* ADR-049 slice 3: paired downstream destinations
+            (BroadcastedFrom → YouTube Live; TranscribedFrom →
+            Fireflies). Hidden as separate cards by default; these
+            badges are their representation on the canonical
+            (upstream meeting source) card. */}
         {pairedBroadcasts.map(p => (
           <a
             key={p.destination_record_id}
-            href={`https://www.youtube.com/watch?v=${p.youtube_id}`}
+            href={`https://www.youtube.com/watch?v=${p.external_id}`}
             target="_blank"
             rel="noopener noreferrer"
             title={`Broadcast destination on YouTube Live (paired record ${p.destination_record_id.slice(0, 8)}…). Click to open.`}
@@ -1531,7 +1539,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               whiteSpace: "nowrap",
             }}
           >
-            📺 YouTube Live · {p.youtube_id}
+            📺 YouTube Live · {p.external_id}
+          </a>
+        ))}
+        {pairedTranscripts.map(p => (
+          <a
+            key={p.destination_record_id}
+            href={`https://app.fireflies.ai/view/${encodeURIComponent(p.external_id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Transcript captured by ${p.destination_platform} (paired record ${p.destination_record_id.slice(0, 8)}…). Click to open in Fireflies.`}
+            style={{
+              fontSize: "0.7rem",
+              padding: "1px 6px",
+              borderRadius: 10,
+              background: "rgba(245,158,11,0.10)",
+              color: "#f59e0b",
+              border: "1px solid rgba(245,158,11,0.35)",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            📝 {p.destination_platform} · {p.external_id.slice(0, 12)}…
           </a>
         ))}
         {/* Catalog UUID — clickable to copy. Useful when correlating with

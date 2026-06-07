@@ -118,12 +118,17 @@ export async function runBroadcastPairMigration(
       }
     }
 
-    // 2) SameEvent → BroadcastedFrom reclassification when the pair is
-    //    YouTube-Live + broadcaster platform.
+    // 2) SameEvent → directional reclassification.
+    //    - YouTube-Live + meeting-source → BroadcastedFrom (ADR-049 slice 2)
+    //    - Fireflies   + meeting-source → TranscribedFrom (extension shipped 2026-06-07)
     const isYtLive = fresh.source_platform === "YouTube"
       && ((fresh.tags ?? []).includes("youtube-live")
           || (fresh.metadata_extra as { live_broadcast?: string } | null)?.live_broadcast === "1");
-    if (isYtLive) {
+    const isFireflies = fresh.source_platform === "Fireflies";
+    let targetRelation: "BroadcastedFrom" | "TranscribedFrom" | null = null;
+    if (isYtLive) targetRelation = "BroadcastedFrom";
+    else if (isFireflies) targetRelation = "TranscribedFrom";
+    if (targetRelation) {
       for (const link of fresh.upstream_links ?? []) {
         if (link.relation !== "SameEvent") continue;
         if (!BROADCASTER_PLATFORMS_MIGRATION.has(link.platform)) continue;
@@ -135,7 +140,7 @@ export async function runBroadcastPairMigration(
             rec.link_upstream(actorCommand(actorState, {
               platform: link.platform,
               external_id: link.external_id,
-              relation: "BroadcastedFrom",
+              relation: targetRelation,
               linked_by: link.linked_by,
             })),
           );
@@ -267,14 +272,15 @@ function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkA
     // shows it in the card; orchestrator notes it as `needs_review`.
     return { linked: false, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video), reviewNeeded: true };
   }
-  // ADR-049: BroadcastedFrom is DIRECTIONAL — only the YouTube-side
-  // record gets the upstream link pointing at the broadcaster. If
-  // this iteration's target is the broadcaster side (e.g. Zoom), skip
-  // the auto-link here and let the iteration where target=YouTube
-  // handle it. The YouTube record's pass through this function will
-  // see the same candidate and emit the correct directional link.
+  // ADR-049: directional relations only get the upstream link on the
+  // downstream side. BroadcastedFrom → YouTube-side; TranscribedFrom
+  // → Fireflies-side. Wrong-side iterations skip and let the right-
+  // side pass handle it.
   if (top.recommendedRelation === "BroadcastedFrom" && target.source_platform !== "YouTube") {
-    return { linked: false };  // wrong side; YouTube iteration will handle
+    return { linked: false };
+  }
+  if (top.recommendedRelation === "TranscribedFrom" && target.source_platform !== "Fireflies") {
+    return { linked: false };
   }
   try {
     videoStore.mutate(target.id, (r) =>

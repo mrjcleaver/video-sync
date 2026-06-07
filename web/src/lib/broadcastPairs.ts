@@ -16,13 +16,27 @@
 
 import type { VideoRecordJSON } from "./wasm";
 
+/** ADR-049 — kind of downstream pair. "broadcast" = YouTube-Live via
+ *  RTMP relay (BroadcastedFrom); "transcript" = transcription bot
+ *  like Fireflies (TranscribedFrom). Drives which badge the canonical
+ *  card renders + whether the pair counts as "already on YouTube". */
+export type DownstreamKind = "broadcast" | "transcript";
+
 export interface BroadcastDestinationInfo {
-  /** Catalog id of the YouTube-Live broadcast destination record. */
+  /** Catalog id of the downstream record (YouTube-Live or Fireflies etc.). */
   destination_record_id: string;
-  /** The YouTube video id (bare, no prefix). */
-  youtube_id: string;
-  /** Display title of the broadcast destination — used for tooltips. */
+  /** Platform-native external id of the downstream record
+   *  (bare YouTube video id for broadcasts; Fireflies transcript id
+   *  for transcripts). */
+  external_id: string;
+  /** Display title of the destination — used for tooltips. */
   destination_title: string;
+  /** What kind of downstream this is — drives badge style + the
+   *  "already published" check. */
+  kind: DownstreamKind;
+  /** Source platform of the destination record — e.g. "YouTube"
+   *  or "Fireflies". Lets the UI label the badge accurately. */
+  destination_platform: string;
 }
 
 export interface BroadcastPairsIndex {
@@ -68,9 +82,12 @@ export function buildBroadcastPairs(records: VideoRecordJSON[]): BroadcastPairsI
 
   for (const r of records) {
     for (const link of r.upstream_links ?? []) {
-      if (link.relation !== "BroadcastedFrom") continue;
+      let kind: DownstreamKind | null = null;
+      if (link.relation === "BroadcastedFrom") kind = "broadcast";
+      else if (link.relation === "TranscribedFrom") kind = "transcript";
+      if (kind === null) continue;
 
-      // This record has an outgoing BroadcastedFrom — it's a destination.
+      // This record has an outgoing downstream link — it's a destination.
       destinationRecordIds.add(r.id);
 
       // Resolve the canonical record. Prefer the link's video_id,
@@ -82,15 +99,21 @@ export function buildBroadcastPairs(records: VideoRecordJSON[]): BroadcastPairsI
       }
       if (!canonicalId) continue;  // canonical not in this catalog
 
-      // Extract the YouTube video id from the destination record's
-      // source_id (format: "youtube-<11-char id>"). Fallback to the
-      // bare source_id if the prefix is missing.
-      const ytId = r.source_id.replace(/^youtube-/, "");
+      // Strip the "<platform>-" prefix to surface the platform-native
+      // identifier (YouTube video id for broadcasts, Fireflies transcript
+      // id for transcripts). Fallback to the bare source_id if the
+      // prefix isn't present.
+      const platformPrefix = r.source_platform.toLowerCase() + "-";
+      const externalId = r.source_id.startsWith(platformPrefix)
+        ? r.source_id.slice(platformPrefix.length)
+        : r.source_id;
 
       const info: BroadcastDestinationInfo = {
         destination_record_id: r.id,
-        youtube_id: ytId,
+        external_id: externalId,
         destination_title: r.title,
+        kind,
+        destination_platform: r.source_platform,
       };
       const existing = destinationsFor.get(canonicalId);
       if (existing) existing.push(info);
