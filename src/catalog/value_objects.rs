@@ -163,6 +163,12 @@ pub enum DerivationType {
     ScreenRecordingOf,
     /// Time-bounded clip extracted from the upstream.
     ClipOf,
+    /// ADR-049: this record is a live-broadcast destination of the
+    /// upstream (e.g. a YouTube Live record whose RTMP source was a
+    /// Zoom call, often via Restream/StreamYard). Directional — the
+    /// upstream is the producing source, this record is where it was
+    /// broadcast. Distinct from `SameEvent` which is peer-to-peer.
+    BroadcastedFrom,
 }
 
 /// Whether a provenance link was established automatically or by a curator.

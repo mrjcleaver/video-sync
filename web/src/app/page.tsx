@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { loadExclusions, syncRulesFromServer, syncExclusionsFromServer } from "../lib/rules";
@@ -19,6 +19,7 @@ import PostProcessingRulesPanel from "../components/PostProcessingRulesPanel";
 import BackfillPanel from "../components/BackfillPanel";
 import SyncStatusPanel from "../components/SyncStatusPanel";
 import VideoCard from "../components/VideoCard";
+import { buildBroadcastPairs } from "../lib/broadcastPairs";
 import ProvenanceGraph from "../components/ProvenanceGraph";
 import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -60,6 +61,11 @@ export default function Dashboard() {
   const [showConnections, setShowConnections] = useState(false);
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [showCatchUp, setShowCatchUp] = useState(false);
+  // ADR-049 slice 3: broadcast destinations (e.g. YouTube-Live records
+  // paired BroadcastedFrom with a Zoom record) hide by default and the
+  // canonical (upstream) record carries a "📺 Broadcast to …" badge.
+  // Show paired toggle reveals the collapsed entries for debugging.
+  const [showPaired, setShowPaired] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
 
@@ -223,12 +229,24 @@ export default function Dashboard() {
     );
   }
 
+  // ADR-049 slice 3: index every BroadcastedFrom upstream link in the
+  // catalog so consumers (Overview, VideoCard) can collapse paired
+  // records into one canonical row + a "📺 broadcast" badge.
+  const broadcastPairs = useMemo(() => buildBroadcastPairs(videos), [videos]);
+
+  // Videos visible in the dashboard — hides broadcast destinations
+  // unless "Show paired records" is toggled on. The canonical
+  // (upstream) record stays visible and carries the badge.
+  const visibleVideos = useMemo(() =>
+    showPaired ? videos : videos.filter(v => !broadcastPairs.destinationRecordIds.has(v.id)),
+  [videos, broadcastPairs, showPaired]);
+
   const filtered = (() => {
     const base =
-      filter === "All" ? videos
-      : filter === "Active" ? videos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
-      : filter === "Done" ? videos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
-      : videos.filter((v) => v.status === filter);
+      filter === "All" ? visibleVideos
+      : filter === "Active" ? visibleVideos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
+      : filter === "Done" ? visibleVideos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
+      : visibleVideos.filter((v) => v.status === filter);
 
     // Search across title, source_platform, source_id, recorded_at,
     // catalog id, and tags. Multiple whitespace-separated terms are
@@ -358,9 +376,9 @@ export default function Dashboard() {
 
       <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
 
-      <SyncStatusPanel videos={videos} onNavigateToVideo={ensureVideoVisible} />
+      <SyncStatusPanel videos={visibleVideos} onNavigateToVideo={ensureVideoVisible} />
 
-      <BackfillPanel videos={videos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
+      <BackfillPanel videos={visibleVideos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
 
       <RulesPanel
         isRunnerRunning={isRunnerRunning}
@@ -499,6 +517,18 @@ export default function Dashboard() {
                 {s === "recorded" ? "Date recorded" : "Last change"}
               </button>
             ))}
+            {broadcastPairs.destinationRecordIds.size > 0 && (
+              <button
+                className={`btn btn-sm ${showPaired ? "btn-primary" : ""}`}
+                style={{ padding: "1px 8px", fontSize: "0.72rem", marginLeft: 8 }}
+                onClick={() => setShowPaired(v => !v)}
+                title={`Toggle visibility of ${broadcastPairs.destinationRecordIds.size} broadcast-destination record(s) collapsed under their upstream canonical (ADR-049)`}
+              >
+                {showPaired
+                  ? `📺 Hide ${broadcastPairs.destinationRecordIds.size} paired`
+                  : `📺 Show ${broadcastPairs.destinationRecordIds.size} paired`}
+              </button>
+            )}
           </div>
 
           <div className="video-list">
@@ -516,6 +546,7 @@ export default function Dashboard() {
                 key={v.id}
                 video={v}
                 allVideos={videos}
+                broadcastPairs={broadcastPairs}
                 onMutated={refresh}
                 onEvent={addEvent}
                 onNavigateToVideo={ensureVideoVisible}

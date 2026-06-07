@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import { formatUsd, estimatePerRecordCost } from "../lib/llmCost";
-import { runCatchUp, type OrchestratorEvent, type StageId, type StageStatus, AUTO_LINK_THRESHOLD } from "../lib/catchupOrchestrator";
+import { runCatchUp, runBroadcastPairMigration, type OrchestratorEvent, type StageId, type StageStatus, AUTO_LINK_THRESHOLD, type MigrationProgressEvent } from "../lib/catchupOrchestrator";
 
 interface Props {
   open: boolean;
@@ -84,6 +84,30 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       .filter(v => (v.transcript_text?.length ?? 0) >= 200 && !v.summary_locked && !v.summary_doc_id)
       .reduce((s, v) => s + estimatePerRecordCost(v.transcript_text?.length ?? 0, "google/gemini-2.5-pro"), 0);
   }, [eligible]);
+
+  // ADR-049 slice 5 — migration state. Distinct from the catch-up
+  // RunState since this is a one-shot maintenance pass with different
+  // semantics; surfaced inline at the bottom of the panel.
+  const [migrating, setMigrating] = useState(false);
+  const [migrationSummary, setMigrationSummary] = useState<{ records_changed: number; locations_removed: number; relations_reclassified: number } | null>(null);
+
+  async function runMigration() {
+    setMigrating(true);
+    setMigrationSummary(null);
+    try {
+      await runBroadcastPairMigration(
+        actorState,
+        (ev: MigrationProgressEvent) => {
+          if (ev.type === "complete" && ev.totals) setMigrationSummary(ev.totals);
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Migration errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setMigrating(false);
+    }
+  }
 
   // Keep the log pinned to the latest line as it streams.
   useEffect(() => {
@@ -412,6 +436,39 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             )}
           </div>
         )}
+
+        {/* ADR-049 slice 5 — one-shot migration that cleans up
+            pre-existing duplicate locations and reclassifies SameEvent
+            upstream-links into BroadcastedFrom for YouTube-Live ↔
+            broadcaster-platform pairs. Idempotent; safe to re-run. */}
+        <div style={{
+          marginTop: 16, padding: 10,
+          background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>🔧 Broadcast-pair migration (ADR-049 slice 5)</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            One-time cleanup: removes duplicate same-video location entries (Origin + Destination of the same id)
+            and reclassifies <code>SameEvent</code> upstream links into <code>BroadcastedFrom</code> for
+            YouTube-Live ↔ Zoom/Streamyard/OBS/Wirecast pairs. Idempotent; safe to run multiple times.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={runMigration}
+              disabled={migrating}
+            >
+              {migrating ? "Migrating…" : "Run migration"}
+            </button>
+            {migrationSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {migrationSummary.records_changed} record(s) changed ·{" "}
+                {migrationSummary.locations_removed} duplicate location(s) removed ·{" "}
+                {migrationSummary.relations_reclassified} relation(s) reclassified.
+              </span>
+            )}
+          </div>
+        </div>
     </div>
   );
 }

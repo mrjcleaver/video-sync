@@ -79,7 +79,7 @@ export interface UpstreamLinkJSON {
   platform: string;
   external_id: string;
   account_hint: string | null;
-  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf" | "BroadcastedFrom";
   linked_by: "Auto" | "Manual";
   linked_at: string;
 }
@@ -96,7 +96,7 @@ export interface LinkUpstreamCmd {
   platform: string;
   external_id: string;
   account_hint?: string;
-  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf" | "BroadcastedFrom";
   linked_by?: "Auto" | "Manual";
 }
 

@@ -33,6 +33,148 @@ import { getCurrentPromptVersion } from "./summaryPromptClient";
 import { estimatePerRecordCost } from "./llmCost";
 import { getDisplayTitle } from "./processingRules";
 
+/** ADR-049 — broadcaster source platforms (must match siblingMatcher's set). */
+const BROADCASTER_PLATFORMS_MIGRATION: ReadonlySet<string> = new Set(["Zoom", "Streamyard", "OBS", "Wirecast"]);
+
+/** Strip the platform prefix from an external_id for cross-role dedupe. */
+function stripPlatformPrefix(platform: string, id: string): string {
+  const prefix = platform.toLowerCase() + "-";
+  return id.startsWith(prefix) ? id.slice(prefix.length) : id;
+}
+
+export interface MigrationProgressEvent {
+  type: "started" | "record_done" | "complete";
+  recordIdx?: number;
+  totalRecords?: number;
+  recordTitle?: string;
+  locationsRemoved?: number;
+  relationsReclassified?: number;
+  errors?: string[];
+  /** Cumulative totals on `complete`. */
+  totals?: { locations_removed: number; relations_reclassified: number; records_changed: number };
+}
+
+/**
+ * ADR-049 slice 5 — operator-invoked migration that fixes pre-existing
+ * data the slice-1/2 prevention can't reach:
+ *
+ * 1. Removes redundant Destination locations whose normalised
+ *    (platform, external_id) duplicates the record's Origin. The
+ *    canonical 779fabe6 case has Origin "youtube-X" and Destination
+ *    "X" pointing at the same YouTube video — the Destination goes.
+ *
+ * 2. Re-classifies SameEvent upstream_links into BroadcastedFrom when
+ *    the pair matches the YouTube-Live + broadcaster-platform shape.
+ *    Implemented via unlink_upstream + link_upstream since the
+ *    WASM aggregate has no in-place relation edit.
+ *
+ * Idempotent: re-running on a clean catalog is a no-op. Each per-
+ * record mutation goes through the regular videoStore.mutate so the
+ * standard persistence + subscribe-driven UI refresh apply.
+ */
+export async function runBroadcastPairMigration(
+  actorState: Parameters<typeof actorCommand>[0],
+  onEvent: (ev: MigrationProgressEvent) => void,
+  log?: (msg: string, ctx?: Record<string, unknown>) => void,
+): Promise<void> {
+  const all = videoStore.getAll();
+  onEvent({ type: "started", totalRecords: all.length });
+  log?.(`Broadcast-pair migration started — ${all.length} record${all.length === 1 ? "" : "s"} to scan`);
+
+  let totalLocations = 0;
+  let totalRelations = 0;
+  let recordsChanged = 0;
+
+  for (let i = 0; i < all.length; i++) {
+    const fresh = videoStore.getAll().find(v => v.id === all[i].id);
+    if (!fresh) continue;
+    const displayTitle = getDisplayTitle(fresh);
+    let locationsRemoved = 0;
+    let relationsReclassified = 0;
+    const errors: string[] = [];
+
+    // 1) Location dedupe — keep the Origin entry, drop later duplicates
+    //    that resolve to the same (platform, normalised id).
+    const seen = new Set<string>();
+    const toRemove: Array<{ platform: string; external_id: string }> = [];
+    const sortedLocations = [...(fresh.locations ?? [])].sort((a, b) => {
+      if (a.role === "Origin" && b.role !== "Origin") return -1;
+      if (b.role === "Origin" && a.role !== "Origin") return 1;
+      return 0;
+    });
+    for (const loc of sortedLocations) {
+      const key = `${loc.platform}::${stripPlatformPrefix(loc.platform, loc.external_id)}`;
+      if (seen.has(key)) toRemove.push({ platform: loc.platform, external_id: loc.external_id });
+      else seen.add(key);
+    }
+    for (const r of toRemove) {
+      try {
+        videoStore.mutate(fresh.id, (rec) =>
+          rec.remove_location(actorCommand(actorState, { platform: r.platform, external_id: r.external_id })),
+        );
+        locationsRemoved++;
+      } catch (err) {
+        errors.push(`remove ${r.platform}/${r.external_id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2) SameEvent → BroadcastedFrom reclassification when the pair is
+    //    YouTube-Live + broadcaster platform.
+    const isYtLive = fresh.source_platform === "YouTube"
+      && ((fresh.tags ?? []).includes("youtube-live")
+          || (fresh.metadata_extra as { live_broadcast?: string } | null)?.live_broadcast === "1");
+    if (isYtLive) {
+      for (const link of fresh.upstream_links ?? []) {
+        if (link.relation !== "SameEvent") continue;
+        if (!BROADCASTER_PLATFORMS_MIGRATION.has(link.platform)) continue;
+        try {
+          videoStore.mutate(fresh.id, (rec) =>
+            rec.unlink_upstream(actorCommand(actorState, { platform: link.platform, external_id: link.external_id })),
+          );
+          videoStore.mutate(fresh.id, (rec) =>
+            rec.link_upstream(actorCommand(actorState, {
+              platform: link.platform,
+              external_id: link.external_id,
+              relation: "BroadcastedFrom",
+              linked_by: link.linked_by,
+            })),
+          );
+          relationsReclassified++;
+        } catch (err) {
+          errors.push(`reclassify ${link.platform}/${link.external_id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    totalLocations += locationsRemoved;
+    totalRelations += relationsReclassified;
+    if (locationsRemoved > 0 || relationsReclassified > 0) recordsChanged++;
+
+    onEvent({
+      type: "record_done",
+      recordIdx: i,
+      totalRecords: all.length,
+      recordTitle: displayTitle,
+      locationsRemoved,
+      relationsReclassified,
+      errors,
+    });
+
+    if (locationsRemoved > 0 || relationsReclassified > 0) {
+      log?.(`Migrated "${displayTitle}" — removed ${locationsRemoved} dup location(s), reclassified ${relationsReclassified} relation(s)`, { video_id: fresh.id });
+    }
+    if (errors.length > 0) {
+      log?.(`Migration errors on "${displayTitle}": ${errors.join("; ")}`, { video_id: fresh.id });
+    }
+  }
+
+  onEvent({
+    type: "complete",
+    totals: { locations_removed: totalLocations, relations_reclassified: totalRelations, records_changed: recordsChanged },
+  });
+  log?.(`Broadcast-pair migration complete — ${recordsChanged} record${recordsChanged === 1 ? "" : "s"} changed, ${totalLocations} dup location(s) removed, ${totalRelations} relation(s) reclassified`);
+}
+
 export const AUTO_LINK_THRESHOLD = 0.85;        // silent auto-link ≥ this score
 export const STAGE_FOR_REVIEW_THRESHOLD = 0.6;  // surfaced via existing banner; orchestrator notes only
 
@@ -113,7 +255,7 @@ interface LinkArgs {
   threshold: number;
 }
 
-function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkArgs): { linked: boolean; score?: number; siblingId?: string; siblingTitle?: string; reviewNeeded?: boolean } {
+function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkArgs): { linked: boolean; score?: number; siblingId?: string; siblingTitle?: string; reviewNeeded?: boolean; relation?: string } {
   // Skip if already has any upstream link — the operator has made a decision.
   if ((target.upstream_links?.length ?? 0) > 0) return { linked: false };
   const ranked = rankSiblingCandidates(target, candidates, 3);
@@ -125,17 +267,25 @@ function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkA
     // shows it in the card; orchestrator notes it as `needs_review`.
     return { linked: false, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video), reviewNeeded: true };
   }
-  // Auto-link.
+  // ADR-049: BroadcastedFrom is DIRECTIONAL — only the YouTube-side
+  // record gets the upstream link pointing at the broadcaster. If
+  // this iteration's target is the broadcaster side (e.g. Zoom), skip
+  // the auto-link here and let the iteration where target=YouTube
+  // handle it. The YouTube record's pass through this function will
+  // see the same candidate and emit the correct directional link.
+  if (top.recommendedRelation === "BroadcastedFrom" && target.source_platform !== "YouTube") {
+    return { linked: false };  // wrong side; YouTube iteration will handle
+  }
   try {
     videoStore.mutate(target.id, (r) =>
       r.link_upstream(actorCommand(actorState, {
         platform: top.video.source_platform,
         external_id: top.video.source_id,
-        relation: "SameEvent",
+        relation: top.recommendedRelation,
         linked_by: "Auto",
       })),
     );
-    return { linked: true, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video) };
+    return { linked: true, score: top.score, siblingId: top.video.id, siblingTitle: getDisplayTitle(top.video), relation: top.recommendedRelation };
   } catch {
     return { linked: false };
   }
@@ -308,8 +458,10 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
     });
     if (linkResult.linked) {
       anyStageDone = true;
-      onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "done", note: `linked → "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})` });
-      log?.(`Catch-up · sibling linked: "${displayTitle}" ↔ "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})`, { video_id: fresh.id });
+      const rel = linkResult.relation ?? "SameEvent";
+      const arrow = rel === "BroadcastedFrom" ? "←" : "↔";  // ← signals directional broadcast-source
+      onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "done", note: `linked (${rel}) ${arrow} "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})` });
+      log?.(`Catch-up · sibling linked (${rel}): "${displayTitle}" ${arrow} "${linkResult.siblingTitle}" (score ${linkResult.score?.toFixed(2)})`, { video_id: fresh.id });
     } else if (linkResult.reviewNeeded) {
       onEvent({ type: "stage", record_id: fresh.id, stage: "link_siblings", status: "needs_review", note: `"${linkResult.siblingTitle}" at ${linkResult.score?.toFixed(2)} — below auto-link bar (${AUTO_LINK_THRESHOLD})` });
     } else {

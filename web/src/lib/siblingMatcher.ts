@@ -20,6 +20,24 @@
 
 import type { VideoRecordJSON } from "./wasm";
 
+/** ADR-049 — relation the matcher recommends when auto-linking this pair. */
+export type RecommendedRelation = "SameEvent" | "BroadcastedFrom";
+
+/**
+ * Platforms that can broadcast into YouTube Live (RTMP source side).
+ * Adding Streamyard / OBS / Wirecast / Restream / Riverside etc. here
+ * widens the BroadcastedFrom detection without touching scoring code.
+ * Google Meet is not yet a broadcaster source — added when/if Meet
+ * support lands.
+ */
+const BROADCASTER_PLATFORMS: ReadonlySet<string> = new Set(["Zoom", "Streamyard", "OBS", "Wirecast"]);
+
+/** ADR-049 — tighter time gate for BroadcastedFrom auto-classification.
+ *  RTMP relay delay is seconds, plus operators start broadcasts at the
+ *  top of the hour (per operator note 2026-06-07), so 60 minutes is a
+ *  comfortable bound. Beyond 60 min the pair stays SameEvent. */
+const BROADCAST_MAX_DELTA_MIN = 60;
+
 export interface SiblingCandidate {
   video: VideoRecordJSON;
   score: number;
@@ -28,6 +46,41 @@ export interface SiblingCandidate {
     time_delta_minutes: number | null;
     title_overlap: number;         // 0..1 token-set
   };
+  /** ADR-049: recommended relation when auto-linking. */
+  recommendedRelation: RecommendedRelation;
+}
+
+/**
+ * ADR-049 — does this (target, candidate) pair look like a YouTube-Live
+ * broadcast whose RTMP source was the candidate?
+ *
+ * Triggered when:
+ *  - target is a YouTube-Live record (source_platform=YouTube + tag or
+ *    metadata_extra.live_broadcast === "1")
+ *  - candidate is on a known broadcaster platform
+ *  - time delta within BROADCAST_MAX_DELTA_MIN (broadcasts start
+ *    near-simultaneously with the source recording)
+ *
+ * Either direction can trigger — sibling matching runs from both sides.
+ */
+function isBroadcastFromPair(
+  target: VideoRecordJSON,
+  candidate: VideoRecordJSON,
+  timeDeltaMin: number | null,
+): boolean {
+  const youtubeLive = (rec: VideoRecordJSON) =>
+    rec.source_platform === "YouTube"
+      && ((rec.tags ?? []).includes("youtube-live")
+          || (rec.metadata_extra as { live_broadcast?: string } | null)?.live_broadcast === "1");
+
+  const broadcaster = (rec: VideoRecordJSON) => BROADCASTER_PLATFORMS.has(rec.source_platform);
+
+  const youtubeSide = youtubeLive(target) ? target : youtubeLive(candidate) ? candidate : null;
+  const broadcasterSide = broadcaster(target) ? target : broadcaster(candidate) ? candidate : null;
+  if (!youtubeSide || !broadcasterSide || youtubeSide === broadcasterSide) return false;
+
+  if (timeDeltaMin === null || timeDeltaMin > BROADCAST_MAX_DELTA_MIN) return false;
+  return true;
 }
 
 function normalise(s: string): string {
@@ -177,10 +230,13 @@ export function rankSiblingCandidates(
     const score = participant_overlap * pW + t * tW + title_overlap * titleW;
     if (score <= 0) continue;
 
+    const recommendedRelation: RecommendedRelation =
+      isBroadcastFromPair(target, v, time_delta_minutes) ? "BroadcastedFrom" : "SameEvent";
     candidates.push({
       video: v,
       score,
       reasons: { participant_overlap, time_delta_minutes, title_overlap },
+      recommendedRelation,
     });
   }
 

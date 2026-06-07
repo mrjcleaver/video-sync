@@ -60,13 +60,17 @@ interface Props {
   video: VideoRecordJSON;
   /** Full catalog — used for cross-source sibling suggestions (ADR-033). */
   allVideos?: VideoRecordJSON[];
+  /** ADR-049 — index of BroadcastedFrom upstream links. Tells the card
+   *  whether it's the canonical (upstream) of a hidden broadcast
+   *  destination, and what that destination is (YouTube video id, etc.). */
+  broadcastPairs?: import("../lib/broadcastPairs").BroadcastPairsIndex;
   onMutated: () => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   /** Switch filter (if needed) and scroll the card into view. Used on publish transitions. */
   onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
-export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavigateToVideo }: Props) {
+export default function VideoCard({ video, allVideos, broadcastPairs, onMutated, onEvent, onNavigateToVideo }: Props) {
   // ADR-036: derive actor from IAP JWT via /api/auth/me. Falls back to the
   // synthetic admin during boot or in dev mode (ALLOW_NO_IAP=1) so single-
   // user behaviour is preserved until IAP is configured. Throws on auth
@@ -766,22 +770,36 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
    * an upload.
    */
   function markAsAlreadyPublished() {
+    // First-choice source: an existing YouTube Destination on this
+    // record. Fallback (ADR-049 slice 4): a paired BroadcastedFrom
+    // broadcast destination — the YouTube id lives on the paired
+    // record, not this one, but the catalog effect is the same.
     const ytLoc = (video.locations ?? []).find(
       (l) => l.role === "Destination" && l.platform === "YouTube",
     );
-    if (!ytLoc) return;
-    const destUrl = ytLoc.external_url
-      ?? (ytLoc.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
+    let destinationId: string | undefined;
+    let destUrl: string | undefined;
+    if (ytLoc) {
+      destinationId = ytLoc.external_id;
+      destUrl = ytLoc.external_url
+        ?? (ytLoc.external_id ? `https://www.youtube.com/watch?v=${ytLoc.external_id}` : undefined);
+    } else {
+      const paired = broadcastPairs?.destinationsFor.get(video.id)?.[0];
+      if (!paired) return;
+      destinationId = paired.youtube_id;
+      destUrl = `https://www.youtube.com/watch?v=${paired.youtube_id}`;
+    }
+    if (!destinationId) return;
     try {
       videoStore.mutate(video.id, (r) => r.request_publish(cmd()));
       videoStore.mutate(video.id, (r) =>
         r.mark_published(cmd({
-          destination_id: ytLoc.external_id,
+          destination_id: destinationId,
           destination_url: destUrl,
           destination_platform: "YouTube",
         })),
       );
-      onEvent(`VideoMarkedPublished: "${video.title}"${dateTag(video.recorded_at)} — already on YouTube`, { video_id: video.id });
+      onEvent(`VideoMarkedPublished: "${video.title}"${dateTag(video.recorded_at)} — already on YouTube${ytLoc ? "" : " (via broadcast pair)"}`, { video_id: video.id });
       onMutated();
     } catch (err) {
       onEvent(`Mark Published failed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
@@ -1270,9 +1288,16 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
   const canPublish = status === "Approved";
   const isPublishing = status === "Publishing";
   const canGenerateShorts = (status === "Published" || status === "Approved") && video.source_platform !== "OpusClip";
-  const alreadyPublished = (video.locations ?? []).some(
+  const alreadyPublishedLocation = (video.locations ?? []).some(
     (l) => l.role === "Destination" && l.platform === "YouTube"
   );
+  // ADR-049 slice 4: a canonical record (Zoom etc.) is "already on
+  // YouTube" if a paired YouTube-Live broadcast destination points at
+  // it — even though no YouTube Destination location lives on THIS
+  // record. The publish flow short-circuits the same way.
+  const pairedBroadcasts = broadcastPairs?.destinationsFor.get(video.id) ?? [];
+  const hasPairedBroadcast = pairedBroadcasts.length > 0;
+  const alreadyPublished = alreadyPublishedLocation || hasPairedBroadcast;
   const alreadyOnKaltura = (video.locations ?? []).some(
     (l) => l.role === "Destination" && l.platform === "Kaltura"
   );
@@ -1465,6 +1490,32 @@ export default function VideoCard({ video, allVideos, onMutated, onEvent, onNavi
           counts={video.summary_counts}
           stopRowClick={false}
         />
+        {/* ADR-049 slice 3: when a YouTube-Live broadcast destination
+            points at this record via BroadcastedFrom, surface the
+            link inline. The broadcast destination is hidden by
+            default; this badge IS its representation on the canonical
+            card. */}
+        {pairedBroadcasts.map(p => (
+          <a
+            key={p.destination_record_id}
+            href={`https://www.youtube.com/watch?v=${p.youtube_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Broadcast destination on YouTube Live (paired record ${p.destination_record_id.slice(0, 8)}…). Click to open.`}
+            style={{
+              fontSize: "0.7rem",
+              padding: "1px 6px",
+              borderRadius: 10,
+              background: "rgba(248,113,113,0.10)",
+              color: "#fb7185",
+              border: "1px solid rgba(248,113,113,0.35)",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            📺 YouTube Live · {p.youtube_id}
+          </a>
+        ))}
         {/* Catalog UUID — clickable to copy. Useful when correlating with
             server logs, .meta.json files, or webhook payloads. */}
         <span
