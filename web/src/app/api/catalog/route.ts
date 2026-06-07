@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import { join } from "path";
-import { withRequestLogging } from "../../../lib/serverLogger";
+import { withRequestLogging, serverLog } from "../../../lib/serverLogger";
 
 // ADR-035 Level 2 — server-side catalog. Records persisted as
 // WASM-serialised JSON strings, keyed by record id, with a sidecar
@@ -36,14 +36,33 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 async function readCatalog(): Promise<CatalogStore> {
   try {
     const raw = await fs.readFile(CATALOG_FILE, "utf-8");
     const parsed = JSON.parse(raw) as Partial<CatalogStore>;
-    return {
-      records: parsed.records ?? {},
-      lastModified: parsed.lastModified ?? {},
-    };
+    // Defensive: an out-of-band script could clobber these fields to
+    // the wrong type and every subsequent write would TypeError on
+    // property assignment. Coerce wrong-type values to {} and warn —
+    // the route then self-heals on the next successful write.
+    // See ADR-035; incident 2026-06-07 (`lastModified` clobbered to
+    // a string by a Python migration → all POSTs 500'd silently).
+    let records: Record<string, string> = {};
+    if (isPlainObject(parsed.records)) {
+      records = parsed.records as Record<string, string>;
+    } else if (parsed.records !== undefined) {
+      serverLog("warn", "api:catalog", "records-shape-corrupt", { actualType: typeof parsed.records, coercedTo: "{}" });
+    }
+    let lastModified: Record<string, string> = {};
+    if (isPlainObject(parsed.lastModified)) {
+      lastModified = parsed.lastModified as Record<string, string>;
+    } else if (parsed.lastModified !== undefined) {
+      serverLog("warn", "api:catalog", "lastModified-shape-corrupt", { actualType: typeof parsed.lastModified, coercedTo: "{}" });
+    }
+    return { records, lastModified };
   } catch {
     return { records: {}, lastModified: {} };
   }
