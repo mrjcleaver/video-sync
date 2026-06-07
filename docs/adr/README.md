@@ -54,6 +54,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-046](ADR-046-prompt-driven-summaries.md) | Prompt-Driven Video Summaries on Drive | Proposed |
 | [ADR-047](ADR-047-automated-catch-up.md) | Automated Catch-Up Action | Proposed |
 | [ADR-048](ADR-048-date-distance-gates-in-matchers.md) | Date-Distance Gates in Cross-Source Matchers | Accepted (implemented 2026-06-03) |
+| [ADR-049](ADR-049-livestream-provenance-zoom-to-youtube.md) | Live-stream Provenance — Zoom-to-YouTube Broadcasts | Proposed |
 
 ## ADR Format
 
