@@ -503,6 +503,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       const decoder = new TextDecoder();
       let buffer = "";
       let eventType = "";
+      // Track the last `progress` phase so we can name it in the
+      // error message when the stream ends mid-flight (typically a
+      // Cloud Run SIGKILL/OOM that cuts the SSE connection without
+      // emitting an `error` event).
+      let lastPhase = "(none)";
 
       outer: while (true) {
         const { done, value } = await reader.read();
@@ -516,6 +521,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           } else if (line.startsWith("data: ")) {
             const payload = JSON.parse(line.slice(6)) as Record<string, string>;
             if (eventType === "progress" && payload.phase) {
+              lastPhase = payload.phase;
               setUploadPhase(payload.phase);
             } else if (eventType === "complete") {
               result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
@@ -528,7 +534,19 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         }
       }
 
-      if (!result) throw new Error("Upload stream ended without a result. Check YouTube Studio.");
+      if (!result) {
+        // Stream closed cleanly but never delivered `complete` —
+        // server-side process died mid-flight. Most common cause is
+        // Cloud Run OOM-killing the container during an ffmpeg trim
+        // of a multi-GB recording (the source MP4 + trimmed output
+        // both live in /tmp which is RAM-backed). Surface the last
+        // phase + a targeted hint when we recognise the pattern.
+        const trimmed = /^Trimming /i.test(lastPhase);
+        const hint = trimmed
+          ? ` Likely Cloud Run OOM during ffmpeg trim — the recording is too large for the 4 GiB tmpfs + working set. Try publishing with trim=0 (no trim) or ask Ops to bump Cloud Run memory.`
+          : ` Server-side process exited before completing — check Cloud Run logs (filter component="ext:youtube-upload") around this time.`;
+        throw new Error(`Upload stream ended without a result. Last phase: "${lastPhase}".${hint}`);
+      }
 
       videoStore.mutate(video.id, (r) =>
         r.mark_published(
