@@ -36,6 +36,9 @@ Extend ADR-049's directional-pair model to cover transcription bots:
 
 ### When Fireflies is the earliest catalog row (no Zoom upstream available)
 
+> Symmetric to [ADR-049's YouTube-Live-as-canonical case](ADR-049-livestream-provenance-zoom-to-youtube.md#when-youtube-live-is-the-earliest-catalog-row-no-meeting-source-available) — same rule, different downstream platform.
+
+
 Semantically Fireflies is downstream of the Zoom (or other meeting source) it joined, but the catalog only contains records the operator can *import*. Two operational realities make this break in practice:
 
 - The meeting may be hosted on a Zoom account the operator doesn't own / isn't credentialed against. The host's recording is unreachable; only the Fireflies bot's capture is.

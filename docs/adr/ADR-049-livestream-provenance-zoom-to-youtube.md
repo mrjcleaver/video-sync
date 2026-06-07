@@ -95,6 +95,24 @@ isBroadcastedFrom(youtube_record, candidate_record):
 
 Description-scan for "Restream" / "StreamYard" / "RTMP" signatures is *not* part of the trigger — easy to do but fragile (operators edit descriptions freely). The sibling-match-plus-platform-pair is the durable signal.
 
+### When YouTube Live is the earliest catalog row (no meeting source available)
+
+Symmetric to [ADR-050's Fireflies-as-fallback-canonical case](ADR-050-fireflies-transcribed-from-zoom.md#when-fireflies-is-the-earliest-catalog-row-no-zoom-upstream-available). Two operational realities make a YouTube Live record arrive with no upstream meeting source in our catalog:
+
+- **OBS / Streamyard / Wirecast streamed directly to YouTube Live without a Zoom session in the loop.** No upstream meeting source ever existed.
+- **A Zoom session DID host the meeting, but on an account the operator doesn't own / can't import.** The Zoom record exists in the world; it just doesn't exist for us. The YouTube Live broadcast is then the earliest catalog row we have for that event.
+
+Audit on 2026-06-07 found this is the **majority case** for YouTube Live rows in the current catalog (6 of 9; 2 of the remaining 3 are correctly `BroadcastedFrom → Zoom`, and 1 is `SameEvent → Fireflies` — both downstreams of an absent Zoom). The matcher must not invent a Zoom record that isn't there.
+
+Operating rule for the matcher / migrations:
+
+- `BroadcastedFrom` is emitted *only* when both sides exist in the catalog. If no meeting-source record matches the YouTube Live record within the 60-min gate, the YouTube Live row stays standalone — it has no upstream link, and it is its own canonical for any downstream pair purposes (e.g. a Kaltura side-publish from this row pairs against it directly).
+- If both a YouTube Live row and a Fireflies row exist *without* a meeting-source upstream (the `b8ebdf87` shape), they remain peers under `SameEvent`. No directional collapse, both shown — this is correct, because neither is causally upstream of the other; they are both peer captures of an absent meeting.
+- An existing standalone YouTube Live record does **not** become an orphan when a Zoom record is later imported. The next sibling-matcher / catch-up pass picks up the new pair and writes the `BroadcastedFrom` link forward.
+- Downstream pair-aware UI (badges, "already published" gating, broadcastPairs index) is canonical-agnostic on the platform — keyed off "any record with incoming `BroadcastedFrom` / `TranscribedFrom` upstream links", not off Zoom specifically.
+
+This rule and ADR-050's Fireflies counterpart together establish the general invariant: **the canonical for collapse purposes is whichever record is earliest in the upstream chain that exists in our catalog**, regardless of whether that's the semantic origin. The semantic origin (an inaccessible Zoom call) is honoured by its absence — no fictitious node is created.
+
 ## Implementation slices
 
 | Slice | Scope |
@@ -135,7 +153,7 @@ Description-scan for "Restream" / "StreamYard" / "RTMP" signatures is *not* part
 
 1. **Should `BroadcastedFrom` time-delta be tighter than the 30-hour sibling gate?** Broadcasts and their source recordings start near-simultaneously (RTMP relay delay is seconds, not hours). A tighter gate (say ≤ 60 minutes) would reduce false `BroadcastedFrom` classifications while preserving `SameEvent` for genuine cross-source captures. Suggested default in the implementation sketch above.
 2. **Migration policy for existing data.** The catalog already contains records like `779fabe6-…` with duplicate locations and `SameEvent` (instead of `BroadcastedFrom`) auto-links. A backfill script can dedupe locations and re-classify links. Should it run automatically on next deploy, or be operator-invoked? Suggest operator-invoked with a Catch-Up panel stage so the result is visible and reversible.
-3. **What about pre-Zoom broadcasters?** OBS streaming directly to YouTube Live (no Zoom upstream) doesn't have a "Zoom record" to pair with. That YouTube Live record is genuinely Origin-only — should it have a special tag, or just rely on absence of paired upstream? Suggest: no special tag; the absence IS the signal.
+3. ~~**What about pre-Zoom broadcasters?**~~ **Resolved 2026-06-07** — promoted to a documented rule. See [Decision § When YouTube Live is the earliest catalog row](#when-youtube-live-is-the-earliest-catalog-row-no-meeting-source-available) below.
 4. **Restream-mediated broadcasts** sometimes appear in the YouTube description as "Streamed live via Restream"; useful signal for confidence but not load-bearing. Document for a possible future enhancement.
 
 ## References
