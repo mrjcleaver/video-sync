@@ -55,6 +55,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-047](ADR-047-automated-catch-up.md) | Automated Catch-Up Action | Proposed |
 | [ADR-048](ADR-048-date-distance-gates-in-matchers.md) | Date-Distance Gates in Cross-Source Matchers | Accepted (implemented 2026-06-03) |
 | [ADR-049](ADR-049-livestream-provenance-zoom-to-youtube.md) | Live-stream Provenance — Zoom-to-YouTube Broadcasts | Proposed |
+| [ADR-050](ADR-050-fireflies-transcribed-from-zoom.md) | Fireflies as Downstream of the Meeting Source | Accepted (implemented 2026-06-07) |
 
 ## ADR Format
 
