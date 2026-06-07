@@ -40,6 +40,33 @@ impl From<SourcePlatform> for Platform {
     }
 }
 
+impl Platform {
+    /// Lowercase prefix that import flows prepend to external IDs to
+    /// guarantee catalog-wide uniqueness of `source_id`. Used by
+    /// `normalize_external_id` for cross-role duplicate detection
+    /// (ADR-049 slice 1) so an Origin location with `youtube-WQov…`
+    /// and a Destination location with `WQov…` are recognised as the
+    /// same YouTube video, not two distinct entries.
+    pub fn id_prefix(self) -> &'static str {
+        match self {
+            Platform::Zoom => "zoom-",
+            Platform::Loom => "loom-",
+            Platform::Fireflies => "fireflies-",
+            Platform::YouTube => "youtube-",
+            Platform::Kaltura => "kaltura-",
+            Platform::Veedio => "veedio-",
+        }
+    }
+
+    /// Strip the `<platform>-` prefix from an external_id so the
+    /// underlying platform-native ID can be compared regardless of
+    /// which import path produced the entry. ADR-049 slice 1.
+    pub fn normalize_external_id<'a>(self, id: &'a str) -> &'a str {
+        let prefix = self.id_prefix();
+        id.strip_prefix(prefix).unwrap_or(id)
+    }
+}
+
 /// Role of a platform location in the video lifecycle.
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -982,3 +982,65 @@ fn test_add_location_with_ordinal() {
     assert_eq!(record.locations.len(), 2);
     assert_eq!(record.locations[1].ordinal, 3);
 }
+
+/// ADR-049 slice 1: a YouTube Live record's Origin location uses the
+/// prefixed source_id ("youtube-X"); a later add_location attempt
+/// using the bare YouTube ID ("X") points to the same video and must
+/// be rejected as a duplicate across roles.
+#[test]
+fn test_add_location_dedupes_across_roles_normalizing_prefix() {
+    let mut cmd = make_index_cmd();
+    cmd.source_platform = SourcePlatform::YouTube;
+    cmd.source_id = "youtube-WQov-UkWpoA".to_string();
+    let (mut record, _) = VideoRecord::index(cmd);
+
+    // Sanity: the Origin location was created with the prefixed id.
+    assert_eq!(record.locations.len(), 1);
+    assert_eq!(record.locations[0].external_id, "youtube-WQov-UkWpoA");
+    assert_eq!(record.locations[0].role, LocationRole::Origin);
+
+    // Add Destination with the bare YouTube id — should be rejected
+    // because (YouTube, "youtube-WQov-UkWpoA") normalises to the
+    // same video as (YouTube, "WQov-UkWpoA").
+    let result = record.add_location(AddLocation {
+        actor: admin_actor(),
+        platform: Platform::YouTube,
+        external_id: "WQov-UkWpoA".to_string(),
+        external_url: Some("https://www.youtube.com/watch?v=WQov-UkWpoA".to_string()),
+        role: LocationRole::Destination,
+        ordinal: None,
+    });
+
+    assert!(matches!(result, Err(CatalogError::DuplicateLocation { .. })));
+    assert_eq!(record.locations.len(), 1, "no second entry should be added");
+}
+
+/// ADR-049 slice 1: mark_published on a YouTube-source record where
+/// the Origin already covers the same video silently skips the
+/// Destination push (matches its pre-existing dedupe contract) once
+/// the normalised id is considered.
+#[test]
+fn test_mark_published_skips_redundant_destination_for_same_video() {
+    let mut cmd = make_index_cmd();
+    cmd.source_platform = SourcePlatform::YouTube;
+    cmd.source_id = "youtube-WQov-UkWpoA".to_string();
+    let (mut record, _) = VideoRecord::index(cmd);
+
+    // Walk through approve → request_publish so mark_published is callable.
+    record.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    record.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+
+    let before = record.locations.len();
+    record
+        .mark_published(MarkPublished {
+            destination_id: "WQov-UkWpoA".to_string(),  // bare YouTube id
+            destination_url: "https://www.youtube.com/watch?v=WQov-UkWpoA".to_string(),
+            destination_platform: Some(Platform::YouTube),
+        })
+        .unwrap();
+
+    assert_eq!(record.locations.len(), before, "no redundant Destination entry");
+    // The single existing location is still the Origin — destination
+    // role does NOT get added because the same-video check matched.
+    assert_eq!(record.locations[0].role, LocationRole::Origin);
+}

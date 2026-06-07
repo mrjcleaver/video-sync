@@ -304,8 +304,17 @@ impl VideoRecord {
             synced_at: now,
             status: None,
         };
-        // Only add if not already present
-        if !self.locations.iter().any(|l| l.platform == dest_location.platform && l.external_id == dest_location.external_id) {
+        // ADR-049 slice 1: dedupe across roles by normalising the
+        // external_id (strip the platform prefix). For born-on-platform
+        // records (YouTube Live broadcast → YouTube record), the Origin
+        // location at import time already represents this video; the
+        // Destination push here is a no-op rather than a redundant
+        // entry like (Origin, "youtube-X") + (Destination, "X").
+        let dest_norm = dest_platform.normalize_external_id(&dest_location.external_id);
+        if !self.locations.iter().any(|l|
+            l.platform == dest_location.platform
+                && l.platform.normalize_external_id(&l.external_id) == dest_norm
+        ) {
             self.locations.push(dest_location);
         }
 
@@ -324,7 +333,16 @@ impl VideoRecord {
             return Err(CatalogError::Unauthorized);
         }
 
-        if self.locations.iter().any(|l| l.platform == cmd.platform && l.external_id == cmd.external_id) {
+        // ADR-049 slice 1: dedupe across roles by normalising the
+        // external_id (strip the platform prefix). An Origin entry of
+        // "youtube-X" and a proposed Destination entry of "X" point
+        // to the same YouTube video; reject the duplicate before it
+        // produces the redundant-location mess on YouTube Live records.
+        let new_norm = cmd.platform.normalize_external_id(&cmd.external_id);
+        if self.locations.iter().any(|l|
+            l.platform == cmd.platform
+                && l.platform.normalize_external_id(&l.external_id) == new_norm
+        ) {
             return Err(CatalogError::DuplicateLocation {
                 platform: cmd.platform,
                 external_id: cmd.external_id,
