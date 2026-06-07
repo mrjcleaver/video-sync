@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveYouTubeCanonical } from "../src/lib/youtubeIngest";
-import type { VideoRecordJSON, UpstreamLinkJSON } from "../src/lib/wasm";
+import { resolveYouTubeCanonical, findMissingYouTubeRows } from "../src/lib/youtubeIngest";
+import type { VideoRecordJSON, UpstreamLinkJSON, PlatformLocationJSON } from "../src/lib/wasm";
 
 function makeRecord(overrides: Partial<VideoRecordJSON>): VideoRecordJSON {
   return {
@@ -184,3 +184,103 @@ describe("resolveYouTubeCanonical — ADR-049/050 directional rules", () => {
     expect(result!.canonical.id).toBe(fireflies.id);
   });
 });
+
+function makeLocation(overrides: Partial<PlatformLocationJSON>): PlatformLocationJSON {
+  return {
+    platform: "YouTube",
+    external_id: "vJKe77EUCBY",
+    external_url: "https://www.youtube.com/watch?v=vJKe77EUCBY",
+    role: "Destination",
+    ordinal: 0,
+    synced_at: "2026-06-07T00:00:00Z",
+    status: null,
+    ...overrides,
+  };
+}
+
+describe("findMissingYouTubeRows — C1-A work-list", () => {
+  it("returns Destination YouTube locations with no matching source row", () => {
+    const fireflies = makeRecord({
+      source_platform: "Fireflies",
+      source_id: "fireflies-xyz",
+      locations: [makeLocation({ external_id: "vJKe77EUCBY" })],
+    });
+    const result = findMissingYouTubeRows([fireflies]);
+    expect(result).toHaveLength(1);
+    expect(result[0].youtubeVideoId).toBe("vJKe77EUCBY");
+    expect(result[0].host.id).toBe(fireflies.id);
+  });
+
+  it("excludes Destinations whose YouTube id already has a source row", () => {
+    const fireflies = makeRecord({
+      source_platform: "Fireflies",
+      source_id: "fireflies-xyz",
+      locations: [makeLocation({ external_id: "vJKe77EUCBY" })],
+    });
+    const youtube = makeRecord({
+      source_platform: "YouTube",
+      source_id: "youtube-vJKe77EUCBY",
+    });
+    const result = findMissingYouTubeRows([fireflies, youtube]);
+    expect(result).toHaveLength(0);
+  });
+
+  it("tolerates a `youtube-` prefixed external_id (operator-entered) and matches via the bare id", () => {
+    const host = makeRecord({
+      source_platform: "Zoom",
+      source_id: "zoom-stub",
+      locations: [makeLocation({ external_id: "youtube-vJKe77EUCBY" })],
+    });
+    const youtube = makeRecord({
+      source_platform: "YouTube",
+      source_id: "youtube-vJKe77EUCBY",
+    });
+    expect(findMissingYouTubeRows([host, youtube])).toHaveLength(0);
+    expect(findMissingYouTubeRows([host])).toEqual([
+      expect.objectContaining({ youtubeVideoId: "vJKe77EUCBY" }),
+    ]);
+  });
+
+  it("dedupes by (youtubeVideoId, host.id) but keeps the same id seen across different hosts", () => {
+    const hostA = makeRecord({
+      id: "host-a",
+      source_platform: "Fireflies",
+      source_id: "fireflies-a",
+      locations: [makeLocation({ external_id: "hJhlPPxbcG4" })],
+    });
+    const hostB = makeRecord({
+      id: "host-b",
+      source_platform: "Fireflies",
+      source_id: "fireflies-b",
+      locations: [makeLocation({ external_id: "hJhlPPxbcG4" })],
+    });
+    const result = findMissingYouTubeRows([hostA, hostB]);
+    expect(result).toHaveLength(2);
+    expect(new Set(result.map((r) => r.host.id))).toEqual(new Set(["host-a", "host-b"]));
+  });
+
+  it("ignores Origin / Intermediate YouTube locations (only Destinations count as a publish target)", () => {
+    const fireflies = makeRecord({
+      source_platform: "Fireflies",
+      source_id: "fireflies-xyz",
+      locations: [
+        makeLocation({ external_id: "vJKe77EUCBY", role: "Origin" }),
+        makeLocation({ external_id: "ANotheRid_X", role: "Intermediate" }),
+      ],
+    });
+    expect(findMissingYouTubeRows([fireflies])).toHaveLength(0);
+  });
+
+  it("skips malformed external_ids (not 11-char YouTube format)", () => {
+    const host = makeRecord({
+      source_platform: "Fireflies",
+      source_id: "fireflies-xyz",
+      locations: [
+        makeLocation({ external_id: "not_a_youtube_id" }),
+        makeLocation({ external_id: "" }),
+      ],
+    });
+    expect(findMissingYouTubeRows([host])).toHaveLength(0);
+  });
+});
+

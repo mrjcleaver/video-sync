@@ -14,6 +14,7 @@ import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import { formatUsd, estimatePerRecordCost } from "../lib/llmCost";
 import { runCatchUp, runBroadcastPairMigration, type OrchestratorEvent, type StageId, type StageStatus, AUTO_LINK_THRESHOLD, type MigrationProgressEvent } from "../lib/catchupOrchestrator";
+import { runYouTubeRowBackfill, findMissingYouTubeRows, type BackfillProgressEvent } from "../lib/youtubeIngest";
 
 interface Props {
   open: boolean;
@@ -106,6 +107,38 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       onEvent?.(`Migration errored: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setMigrating(false);
+    }
+  }
+
+  // ADR-049/050 C1-A — backfill the missing YouTube source rows so the
+  // pair-aware UI starts working for historical publishes. Driven off
+  // the same actor + event log as the broadcast-pair migration above.
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ index: number; total: number } | null>(null);
+  const [backfillSummary, setBackfillSummary] = useState<{ created: number; skipped: number; errors: number } | null>(null);
+  const missingYouTubeCount = useMemo(() => findMissingYouTubeRows(videos).length, [videos]);
+
+  async function runBackfill() {
+    setBackfilling(true);
+    setBackfillProgress(null);
+    setBackfillSummary(null);
+    try {
+      await runYouTubeRowBackfill(
+        (ev: BackfillProgressEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setBackfillProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setBackfillSummary(ev.totals);
+            setBackfillProgress(null);
+          }
+        },
+        onEvent,
+        { actorUserId: actorState.actor?.user_id },
+      );
+    } catch (err) {
+      onEvent?.(`Backfill errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBackfilling(false);
     }
   }
 
@@ -465,6 +498,48 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
                 Last run: {migrationSummary.records_changed} record(s) changed ·{" "}
                 {migrationSummary.locations_removed} duplicate location(s) removed ·{" "}
                 {migrationSummary.relations_reclassified} relation(s) reclassified.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ADR-049/050 C1-A — backfill the YouTube source rows for past
+            publishes. Without this, every Destination YouTube location
+            on the catalog has no corresponding source row, so ADR-049's
+            pair-aware UI (📺 badges, "already published" gating) stays
+            a no-op for historical publishes. Forward publishes are now
+            auto-ingested via ADR-049/050 C3. */}
+        <div style={{
+          marginTop: 12, padding: 10,
+          background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>📺 YouTube row backfill (ADR-049/050 C1-A)</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            One-time backfill: for each Destination YouTube location on a host record that has no
+            matching YouTube source row, fetch metadata via the YouTube Data API, create the source
+            row, and write the right <code>BroadcastedFrom</code> upstream link per ADR-049/050.
+            Idempotent — already-ingested rows are skipped automatically.
+            {missingYouTubeCount > 0 && (
+              <> <strong>{missingYouTubeCount}</strong> missing row{missingYouTubeCount === 1 ? "" : "s"} detected.</>
+            )}
+            {missingYouTubeCount === 0 && <> No missing rows detected.</>}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={runBackfill}
+              disabled={backfilling || missingYouTubeCount === 0}
+            >
+              {backfilling
+                ? backfillProgress ? `Backfilling ${backfillProgress.index}/${backfillProgress.total}…` : "Backfilling…"
+                : `Run backfill${missingYouTubeCount ? ` (${missingYouTubeCount})` : ""}`}
+            </button>
+            {backfillSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {backfillSummary.created} created ·{" "}
+                {backfillSummary.skipped} skipped (already present) ·{" "}
+                {backfillSummary.errors} error{backfillSummary.errors === 1 ? "" : "s"}.
               </span>
             )}
           </div>

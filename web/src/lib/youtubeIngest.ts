@@ -220,3 +220,143 @@ export async function ingestYouTubeSourceRow(
     },
   };
 }
+
+// ── C1-A backfill driver ─────────────────────────────────────────
+
+/** A YouTube Destination location whose YouTube video id has no
+ *  corresponding source row in the catalog. The host is whichever
+ *  record's `locations` carries the Destination entry. */
+export interface MissingYouTubeRow {
+  youtubeVideoId: string;
+  host: VideoRecordJSON;
+}
+
+/**
+ * Walk the catalog and return every YouTube Destination location whose
+ * `external_id` doesn't have a matching `source_platform: "YouTube"`
+ * row. This is what C1-A iterates. Idempotent — if a YouTube source
+ * row has been ingested since last call, it drops out of the list.
+ *
+ * Dedupe by (youtubeVideoId, host.id) so the same YouTube video
+ * published on multiple host records produces multiple work items —
+ * the helper handles each (the first creates the row, the rest are
+ * idempotent no-ops + may still write upstream links if the host
+ * carries different provenance from previously-seen hosts).
+ */
+export function findMissingYouTubeRows(allRecords: VideoRecordJSON[]): MissingYouTubeRow[] {
+  const existingYouTubeIds = new Set<string>();
+  for (const rec of allRecords) {
+    if (rec.source_platform !== "YouTube") continue;
+    const bare = rec.source_id.startsWith("youtube-") ? rec.source_id.slice("youtube-".length) : rec.source_id;
+    existingYouTubeIds.add(bare);
+  }
+
+  const out: MissingYouTubeRow[] = [];
+  const seenPairs = new Set<string>();
+  for (const host of allRecords) {
+    for (const loc of host.locations ?? []) {
+      if (loc.platform !== "YouTube" || loc.role !== "Destination") continue;
+      const extId = loc.external_id;
+      if (!extId) continue;
+      const bare = extId.startsWith("youtube-") ? extId.slice("youtube-".length) : extId;
+      if (!/^[A-Za-z0-9_-]{11}$/.test(bare)) continue;  // skip malformed
+      if (existingYouTubeIds.has(bare)) continue;
+      const pairKey = `${bare}::${host.id}`;
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
+      out.push({ youtubeVideoId: bare, host });
+    }
+  }
+  return out;
+}
+
+export interface BackfillProgressEvent {
+  type: "started" | "item_done" | "complete";
+  /** 1-indexed; only present on "item_done". */
+  index?: number;
+  total: number;
+  youtubeVideoId?: string;
+  hostTitle?: string;
+  /** Outcome of this item — only present on "item_done". */
+  outcome?:
+    | { kind: "created"; recordId: string; linkedTo: string | null }
+    | { kind: "skipped_existed" }
+    | { kind: "error"; error: string };
+  /** Summary counts — only present on "complete". */
+  totals?: { created: number; skipped: number; errors: number };
+}
+
+/**
+ * Iterate `findMissingYouTubeRows`, call `ingestYouTubeSourceRow` for
+ * each, emit progress events. Sequential (not concurrent) — keeps
+ * YouTube Data API politeness simple and avoids racing the
+ * idempotency check across same-host duplicates.
+ *
+ * Returns final totals; also delivers them via the final `complete`
+ * event.
+ */
+export async function runYouTubeRowBackfill(
+  onEvent: (ev: BackfillProgressEvent) => void,
+  log?: (msg: string, ctx?: Record<string, unknown>) => void,
+  opts?: { delayMs?: number; actorUserId?: string },
+): Promise<{ created: number; skipped: number; errors: number }> {
+  const allRecords = videoStore.getAll();
+  const work = findMissingYouTubeRows(allRecords);
+  onEvent({ type: "started", total: work.length });
+  log?.(`YouTube row backfill started — ${work.length} missing row${work.length === 1 ? "" : "s"} to ingest`);
+
+  let created = 0;
+  let skipped = 0;
+  let errors = 0;
+  const delayMs = opts?.delayMs ?? 200;
+
+  for (let i = 0; i < work.length; i++) {
+    const { youtubeVideoId, host } = work[i];
+    const hostTitle = host.title || host.source_id;
+    let outcome: BackfillProgressEvent["outcome"];
+    try {
+      const result = await ingestYouTubeSourceRow(youtubeVideoId, host, { actorUserId: opts?.actorUserId });
+      if (!result.ok) {
+        errors++;
+        outcome = { kind: "error", error: result.error };
+        log?.(`Backfill error on ${youtubeVideoId} (host "${hostTitle}"): ${result.error}`, { video_id: host.id });
+      } else if (!result.created) {
+        skipped++;
+        outcome = { kind: "skipped_existed" };
+      } else {
+        created++;
+        const linkedTo = result.upstreamLinked
+          ? `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`
+          : null;
+        outcome = { kind: "created", recordId: result.recordId, linkedTo };
+        log?.(
+          `Backfilled YouTube row ${youtubeVideoId}${linkedTo ? ` — linked BroadcastedFrom → ${linkedTo}` : " (standalone)"}`,
+          { video_id: result.recordId },
+        );
+      }
+    } catch (err) {
+      errors++;
+      const msg = err instanceof Error ? err.message : String(err);
+      outcome = { kind: "error", error: msg };
+      log?.(`Backfill threw on ${youtubeVideoId} (host "${hostTitle}"): ${msg}`, { video_id: host.id });
+    }
+
+    onEvent({
+      type: "item_done",
+      index: i + 1,
+      total: work.length,
+      youtubeVideoId,
+      hostTitle,
+      outcome,
+    });
+
+    if (i < work.length - 1 && delayMs > 0) {
+      await new Promise((res) => setTimeout(res, delayMs));
+    }
+  }
+
+  const totals = { created, skipped, errors };
+  onEvent({ type: "complete", total: work.length, totals });
+  log?.(`YouTube row backfill complete — ${created} created, ${skipped} skipped, ${errors} error(s)`);
+  return totals;
+}
