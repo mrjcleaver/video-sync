@@ -10,13 +10,17 @@
 #
 # ─── First-time setup (per machine / per devcontainer) ───────────────────
 #   1. gcloud auth login                     # interactive browser login
-#   2. gcloud auth configure-docker us-central1-docker.pkg.dev
-#   3. gcloud config set project agentics-487016
+#   2. gcloud config set project agentics-487016
 #
 # Your user account must have these roles on the project:
 #   - roles/run.admin
-#   - roles/artifactregistry.writer
+#   - roles/cloudbuild.builds.editor          # since image build is remote
 #   - roles/iam.serviceAccountUser
+#
+# Note: `gcloud auth configure-docker` is no longer required — the
+# image build runs remotely via Cloud Build (cloudbuild-image.yaml),
+# not locally via `docker build`/`docker push`. The devcontainer
+# doesn't need Docker daemon access.
 #
 # ─── Auth (ADR-036) ──────────────────────────────────────────────────────
 # This deploy expects IAP to be in front of the service. Two role-
@@ -83,16 +87,29 @@ echo "==> Pre-flight type check (tsc --noEmit)"
 
 SHA=$(git rev-parse --short HEAD)
 IMAGE="us-central1-docker.pkg.dev/agentics-487016/video-sync/app"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-docker build \
-  --tag "$IMAGE:$SHA" \
-  --tag "$IMAGE:latest" \
-  --build-arg BUILD_SHA="$SHA" \
-  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+# Image build: remote via Cloud Build (cloudbuild-image.yaml).
+# Reasons we don't use local `docker build` here any more:
+#   - The Next.js + Rust/WASM build wants 6+ GiB heap; the devcontainer
+#     consistently OOMs at ~3 GiB available. Cloud Build runs on an
+#     e2-highcpu-8 worker so memory isn't a constraint.
+#   - cloudbuild-image.yaml forwards _SHA + _BUILD_DATE as docker
+#     --build-arg, so the BuildBadge in the UI displays the actual
+#     short SHA instead of the Dockerfile's ARG BUILD_SHA=unknown
+#     default (the bug fixed in 96b936e).
+#
+# If you need a local-docker fallback (e.g. Cloud Build outage):
+#   docker build --tag "$IMAGE:$SHA" --tag "$IMAGE:latest" \
+#     --build-arg BUILD_SHA="$SHA" --build-arg BUILD_DATE="$BUILD_DATE" .
+#   docker push "$IMAGE:$SHA" && docker push "$IMAGE:latest"
+echo "==> Submitting Cloud Build (image only)"
+gcloud builds submit \
+  --config=cloudbuild-image.yaml \
+  --substitutions=_SHA="$SHA",_BUILD_DATE="$BUILD_DATE" \
+  --project=agentics-487016 --region=us-central1 \
+  --timeout=30m \
   .
-
-docker push "$IMAGE:$SHA"
-docker push "$IMAGE:latest"
 
 # Auth mode is selected by IAP_AUDIENCE — non-empty means IAP mode.
 # Defaults to this deployment's actual audience so a bare `bash deploy.sh`
