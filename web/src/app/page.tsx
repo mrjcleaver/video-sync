@@ -217,6 +217,22 @@ export default function Dashboard() {
     refresh();
   }
 
+  // ADR-049 slice 3: index every BroadcastedFrom upstream link in the
+  // catalog so consumers (Overview, VideoCard) can collapse paired
+  // records into one canonical row + a "📺 broadcast" badge.
+  // NOTE: these useMemo calls MUST sit above the `if (!ready) return`
+  // early-exit below — React's hook-count invariant requires the same
+  // number of hooks per render, and the loading branch can't have
+  // fewer hooks than the loaded branch.
+  const broadcastPairs = useMemo(() => buildBroadcastPairs(videos), [videos]);
+
+  // Videos visible in the dashboard — hides broadcast destinations
+  // unless "Show paired records" is toggled on. The canonical
+  // (upstream) record stays visible and carries the badge.
+  const visibleVideos = useMemo(() =>
+    showPaired ? videos : videos.filter(v => !broadcastPairs.destinationRecordIds.has(v.id)),
+  [videos, broadcastPairs, showPaired]);
+
   if (!ready) {
     return <div className="loading">Loading WASM module...</div>;
   }
@@ -228,18 +244,6 @@ export default function Dashboard() {
       new Date(v.indexed_at).getTime(),
     );
   }
-
-  // ADR-049 slice 3: index every BroadcastedFrom upstream link in the
-  // catalog so consumers (Overview, VideoCard) can collapse paired
-  // records into one canonical row + a "📺 broadcast" badge.
-  const broadcastPairs = useMemo(() => buildBroadcastPairs(videos), [videos]);
-
-  // Videos visible in the dashboard — hides broadcast destinations
-  // unless "Show paired records" is toggled on. The canonical
-  // (upstream) record stays visible and carries the badge.
-  const visibleVideos = useMemo(() =>
-    showPaired ? videos : videos.filter(v => !broadcastPairs.destinationRecordIds.has(v.id)),
-  [videos, broadcastPairs, showPaired]);
 
   const filtered = (() => {
     const base =
