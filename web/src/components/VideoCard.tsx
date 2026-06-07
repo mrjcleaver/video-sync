@@ -29,6 +29,7 @@ import {
 } from "../lib/suggestionRejections";
 import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatcher";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
+import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -412,6 +413,33 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setShowPreview(true);
   }
 
+  /**
+   * ADR-049/050 C3 — after a successful YouTube publish, ingest the
+   * resulting video as a fresh YouTube source row in the catalog with
+   * the right upstream link. Without this, publishing keeps creating
+   * Destination locations on host records but no YouTube source row,
+   * so ADR-049's pair-aware UI never lights up for the freshly-published
+   * video. Fire-and-forget — the publish itself has already succeeded;
+   * an ingest failure shouldn't break the operator's flow.
+   */
+  async function ingestYouTubeRowAfterPublish(ytVideoId: string) {
+    try {
+      const result = await ingestYouTubeSourceRow(ytVideoId, video);
+      if (!result.ok) {
+        onEvent(`YouTubeSourceRowIngestSkipped: ${ytVideoId} — ${result.error}`, { video_id: video.id });
+        return;
+      }
+      if (!result.created) return;
+      const linkMsg = result.upstreamLinked
+        ? `, BroadcastedFrom → ${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`
+        : "";
+      onEvent(`YouTubeSourceRowIngested: ${ytVideoId}${linkMsg}`, { video_id: result.recordId });
+      onMutated();
+    } catch (err) {
+      onEvent(`YouTubeSourceRowIngestFailed: ${ytVideoId} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+    }
+  }
+
   async function publishToYouTube() {
     const attrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
 
@@ -561,6 +589,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
       onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
       onMutated();
+      void ingestYouTubeRowAfterPublish(result.videoId);
       firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -822,6 +851,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       );
       onEvent(`VideoMarkedPublished: "${video.title}"${dateTag(video.recorded_at)} — already on YouTube${ytLoc ? "" : " (via broadcast pair)"}`, { video_id: video.id });
       onMutated();
+      void ingestYouTubeRowAfterPublish(destinationId);
     } catch (err) {
       onEvent(`Mark Published failed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
     }
@@ -957,6 +987,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
       onEvent(`VideoRecovered: "${video.title}"${dateTag(video.recorded_at)} -> ${videoUrl}`, { video_id: video.id });
       onMutated();
+      void ingestYouTubeRowAfterPublish(ytId);
       setShowRecover(false);
       setRecoverInput("");
     } catch (err) {
