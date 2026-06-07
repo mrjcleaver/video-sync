@@ -100,8 +100,31 @@ export function resolveYouTubeCanonical(
   return null;
 }
 
+/**
+ * Read the operator-stored YouTube Google API key from the same place
+ * URLImport does — `localStorage["video-sync:connections"]
+ * .YouTube.credentials.googleApiKey`. Prod Cloud Run has no
+ * GOOGLE_API_KEY env var (server falls through to a 500 without it),
+ * so without this the helper hits "No Google API key configured" for
+ * every call. Returns null silently if the operator hasn't configured
+ * one — the server's error message tells them where to put it.
+ */
+function getGoogleApiKeyFromConnections(): string | null {
+  try {
+    const raw = localStorage.getItem("video-sync:connections");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { YouTube?: { credentials?: { googleApiKey?: string } } };
+    return parsed?.YouTube?.credentials?.googleApiKey?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchYouTubeVideoInfo(videoId: string): Promise<YouTubeVideoInfo> {
-  const res = await fetch(`/api/youtube/video-info?videoId=${encodeURIComponent(videoId)}`);
+  const params = new URLSearchParams({ videoId });
+  const apiKey = getGoogleApiKeyFromConnections();
+  if (apiKey) params.set("apiKey", apiKey);
+  const res = await fetch(`/api/youtube/video-info?${params}`);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`video-info ${res.status}: ${text.slice(0, 200)}`);
