@@ -34,6 +34,23 @@ Extend ADR-049's directional-pair model to cover transcription bots:
 | `TranscribedFrom` | Fireflies → meeting source | Transcription bot — Fireflies + {Zoom, Streamyard, OBS, Wirecast} | ≤ 60 min | **No** — transcript ≠ publication |
 | `SameEvent` | Peer (bidirectional) | Anything else above review threshold | ≤ 30 h (ADR-048 gate) | n/a (not collapsed) |
 
+### When Fireflies is the earliest catalog row (no Zoom upstream available)
+
+Semantically Fireflies is downstream of the Zoom (or other meeting source) it joined, but the catalog only contains records the operator can *import*. Two operational realities make this break in practice:
+
+- The meeting may be hosted on a Zoom account the operator doesn't own / isn't credentialed against. The host's recording is unreachable; only the Fireflies bot's capture is.
+- Fireflies is configured as a **shared dumping ground** — a single Fireflies workspace that the bot joins across many Zoom hosts (community calls, partner sessions, hackerspace events). The Fireflies record exists in our catalog regardless of which Zoom account ran the meeting.
+
+In that case **Fireflies is the earliest record we have**, and for catalog purposes it *acts as the canonical*: nothing upstream exists to collapse it under. The matcher must not invent a Zoom record that isn't there.
+
+Operating rule for the matcher / migrations:
+
+- `TranscribedFrom` is emitted *only* when both sides exist in the catalog. If no meeting-source record matches the Fireflies record within the 60-min gate, the Fireflies row stays standalone — it has no upstream link, and it is its own canonical for any downstream pair purposes (e.g. a YouTube broadcast published from this Fireflies card pairs as `BroadcastedFrom → Fireflies`, with no intermediate Zoom).
+- This also means an existing standalone Fireflies record does **not** become an orphan when a Zoom record is added later. The next sibling-matcher / catch-up pass picks up the new pair and writes the `TranscribedFrom` link forward. There is no "stuck canonical" failure mode.
+- Downstream pair-aware UI (badges, "already published" gating) works identically whether the canonical is a meeting source or a fallback Fireflies row — the broadcastPairs index keys off "any record that has incoming `BroadcastedFrom` / `TranscribedFrom` upstream links pointing at it", not off platform.
+
+This is why the migration that ran 2026-06-07 only touched 29 Fireflies records — not all Fireflies records had a pair-able Zoom in the catalog, and those without correctly remained standalone.
+
 ## What shipped
 
 1. **Sibling matcher** (`web/src/lib/siblingMatcher.ts`):
@@ -52,6 +69,7 @@ Extend ADR-049's directional-pair model to cover transcription bots:
    - `markAsAlreadyPublished` falls back to the broadcast pair's `external_id` (transcript pair ignored).
    - New 📝 transcript badge alongside the existing 📺 broadcast badge.
 5. **Server-side migration** (one-shot 2026-06-07, before code deploy): walked `catalog.json` directly, reclassified 29 Fireflies records' `SameEvent` upstream links → `TranscribedFrom`. Backup at `/tmp/catalog_backup_<timestamp>_pre_ff.json` on the build host. Affected records span the full back catalogue of AI Hackerspace Live / Agentics Live Vibe / Friday Hackerspace Live / Friday live coding sessions.
+6. **Reverse-stub cleanup migration** (one-shot 2026-06-07, after the deploy above): pruned 3 reverse `SameEvent` stubs on Zoom canonicals (`db22d0b3`, `abb9d200`, `a040dab6`) whose downstream Fireflies records were already correctly `TranscribedFrom`. Backup at `gs://video-sync-data-agentics-487016/catalog_backup_<ts>_pre_ab.json`. Resolves Open Question #3.
 
 ## Consequences
 
@@ -81,8 +99,9 @@ Extend ADR-049's directional-pair model to cover transcription bots:
 
 1. **Other transcription bots.** Otter, Granola, Krisp, etc. — when/if they land as source platforms, adding them to `TRANSCRIPT_BOT_PLATFORMS` plus an import flow is the work. No model changes.
 2. **Time gate per-relation.** Both `BroadcastedFrom` and `TranscribedFrom` use 60 min today. A bot's join latency profile may differ from RTMP relay delay; if Fireflies pairs start missing the gate, split the constants. Not seen in operator practice yet.
-3. **Reverse-direction cleanup.** The migration changes the Fireflies → Zoom link to `TranscribedFrom` but does not touch the reverse Zoom → Fireflies `SameEvent` link (left as benign provenance noise). The pair-aware index keys off the downstream side's relation, so the reverse link is ignored. If it becomes a clutter problem in the upstream-provenance card view, a follow-up can prune.
+3. ~~**Reverse-direction cleanup.** The migration changes the Fireflies → Zoom link to `TranscribedFrom` but does not touch the reverse Zoom → Fireflies `SameEvent` link.~~ **Resolved 2026-06-07** — a follow-up operator-invoked migration pruned the reverse SameEvent stub on 3 Zoom canonicals (`db22d0b3`, `abb9d200`, `a040dab6`). The stub was rendering as "Fireflies is upstream of Zoom" on the canonical's provenance-card view, which is the inversion the user reported. Pruning rule: drop a canonical's `SameEvent → <downstream>` link when the downstream record has the corresponding directional link (`TranscribedFrom`/`BroadcastedFrom`) pointing back at the canonical.
 4. **TranscribedFrom for non-meeting sources.** A YouTube video could in principle be transcribed by a service like Whisper-API that wasn't joined as a bot — semantically still `TranscribedFrom` but the trigger pattern is different. Out of scope here; same-event-at-the-time-of-recording is the trigger this ADR detects.
+5. **Missing YouTube source rows for past publications.** Audit on 2026-06-07 found that **none** of the 28 Destination-YouTube locations on existing host records have a corresponding YouTube source row in the catalog — so ADR-049's `BroadcastedFrom` pair-aware UI is currently a no-op for all historical publishes. 22 of those 28 are hosted on a Fireflies record (which per the operating rule above is sometimes the legitimate canonical, sometimes a downstream of a missing Zoom). Backfill plan tracked separately (informal C1 + C3): C1 = ingest the 28 YouTube IDs as YouTube source rows via the existing import path, then let the matcher classify; C3 = wire the publish-to-YouTube path so it ingests the resulting YouTube video as a source row on success, preventing this gap from accruing further.
 
 ## References
 
