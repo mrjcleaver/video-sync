@@ -102,7 +102,13 @@ docker push "$IMAGE:latest"
 # (the deploy-without-iap.sh wrapper does this).
 IAP_AUDIENCE="${IAP_AUDIENCE-/projects/667037737667/locations/us-central1/services/video-sync}"
 
-BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=4096"
+# Memory: 8 GiB — bumped from 4 to fit a multi-GB Zoom recording PLUS
+# its ffmpeg-trimmed output in the RAM-backed /tmp tmpfs. The 4 GiB
+# cap was OOM-killing long-recording publishes during the trim step
+# (signal 9 / SIGKILL mid-stream). See logs around 2026-06-07T14:04Z
+# for the canonical example. MEMORY_LIMIT_MB tracks --memory so the
+# ADR-032 memory-pressure monitor fires at the right thresholds.
+BASE_ENV="NODE_ENV=production,MEMORY_LIMIT_MB=8192"
 # ADR-039: Drive artifact storage. Runtime SA must be a Manager on the
 # Shared Drive (Plan B — no domain-wide delegation).
 BASE_ENV+=",DRIVE_ROOT_FOLDER_ID=1pHH83fpK6Ca1k5D_RyDAIG8TgR83m6EP"
@@ -132,7 +138,7 @@ gcloud run deploy video-sync \
   --region=us-central1 \
   --concurrency=80 \
   --timeout=3600 \
-  --memory=4Gi \
+  --memory=8Gi \
   --cpu=2 \
   --min-instances=0 \
   --max-instances=3 \
