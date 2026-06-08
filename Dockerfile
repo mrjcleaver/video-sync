@@ -6,7 +6,7 @@
 # Run:    docker run -p 3080:3080 video-sync
 
 # ── Stage 0: build WASM pkg from Rust source ────────────────────────────────
-FROM rust:1.85-alpine AS wasm
+FROM rust:1.86-alpine AS wasm
 RUN apk add --no-cache musl-dev curl && \
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 WORKDIR /build
