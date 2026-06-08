@@ -424,7 +424,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
    */
   async function ingestYouTubeRowAfterPublish(ytVideoId: string) {
     try {
-      const result = await ingestYouTubeSourceRow(ytVideoId, video);
+      const result = await ingestYouTubeSourceRow(ytVideoId, video, { actor: actorState.actor });
       if (!result.ok) {
         onEvent(`YouTubeSourceRowIngestSkipped: ${ytVideoId} — ${result.error}`, { video_id: video.id });
         return;

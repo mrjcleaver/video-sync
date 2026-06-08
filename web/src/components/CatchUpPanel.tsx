@@ -115,7 +115,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   // the same actor + event log as the broadcast-pair migration above.
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<{ index: number; total: number } | null>(null);
-  const [backfillSummary, setBackfillSummary] = useState<{ created: number; skipped: number; errors: number } | null>(null);
+  const [backfillSummary, setBackfillSummary] = useState<{ created: number; repaired: number; skipped: number; errors: number } | null>(null);
   const missingYouTubeCount = useMemo(() => findMissingYouTubeRows(videos).length, [videos]);
 
   async function runBackfill() {
@@ -133,7 +133,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
           }
         },
         onEvent,
-        { actorUserId: actorState.actor?.user_id },
+        { actor: actorState.actor },
       );
     } catch (err) {
       onEvent?.(`Backfill errored: ${err instanceof Error ? err.message : String(err)}`);
@@ -538,7 +538,8 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             {backfillSummary && (
               <span style={{ color: "var(--text-muted)" }}>
                 Last run: {backfillSummary.created} created ·{" "}
-                {backfillSummary.skipped} skipped (already present) ·{" "}
+                {backfillSummary.repaired} repaired (link added) ·{" "}
+                {backfillSummary.skipped} skipped (already complete) ·{" "}
                 {backfillSummary.errors} error{backfillSummary.errors === 1 ? "" : "s"}.
               </span>
             )}

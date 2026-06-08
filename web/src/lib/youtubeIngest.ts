@@ -30,12 +30,14 @@ import { WasmVideoRecord } from "./wasm";
 import type { VideoRecordJSON } from "./wasm";
 import { videoStore } from "./store";
 import type { YouTubeVideoInfo } from "../app/api/youtube/video-info/route";
+import type { Role } from "./types/actor";
 
 const MEETING_SOURCE_PLATFORMS: ReadonlySet<string> = new Set([
   "Zoom", "Streamyard", "OBS", "Wirecast",
 ]);
 
-const DEFAULT_ACTOR = "00000000-0000-0000-0000-000000000001";
+const DEFAULT_ACTOR_ID = "00000000-0000-0000-0000-000000000001";
+const DEFAULT_ACTOR_ROLE: Role = "Admin";
 
 export interface UpstreamLinkInfo {
   canonicalId: string;
@@ -145,17 +147,25 @@ function findExistingYouTubeRow(youtubeVideoId: string): VideoRecordJSON | null 
 export async function ingestYouTubeSourceRow(
   youtubeVideoId: string,
   host: VideoRecordJSON,
-  opts?: { actorUserId?: string },
+  opts?: { actor?: { user_id: string; role: Role } | null },
 ): Promise<IngestResult> {
   if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeVideoId)) {
     return { ok: false, error: `Invalid YouTube video id: ${youtubeVideoId}` };
   }
-  const actorUserId = opts?.actorUserId ?? DEFAULT_ACTOR;
+  // Role MUST be one of Admin/Publisher/Viewer — the WASM aggregate
+  // rejects others (incident 2026-06-07: hardcoded "Operator" → every
+  // upstream-link write failed silently after a successful ingest).
+  const actorUserId = opts?.actor?.user_id ?? DEFAULT_ACTOR_ID;
+  const actorRole: Role = opts?.actor?.role ?? DEFAULT_ACTOR_ROLE;
 
-  // Idempotency check
+  // Idempotency check — but with repair-on-rerun semantics. If a row
+  // already exists but is missing its BroadcastedFrom upstream link
+  // (e.g. partial completion from a prior run where the ingest
+  // succeeded but the link write failed), write the missing link now.
   const existing = findExistingYouTubeRow(youtubeVideoId);
   if (existing) {
-    return { ok: true, recordId: existing.id, created: false, upstreamLinked: null };
+    const linked = maybeWriteBroadcastedFromLink(existing.id, host, { user_id: actorUserId, role: actorRole });
+    return { ok: true, recordId: existing.id, created: false, upstreamLinked: linked };
   }
 
   let info: YouTubeVideoInfo;
@@ -199,17 +209,51 @@ export async function ingestYouTubeSourceRow(
   videoStore.add(record);
   const newRecordId = record.id();
 
-  // Resolve canonical AFTER adding to store, so findExistingYouTubeRow
-  // semantics stay consistent (host is unchanged but the new YT row is
-  // visible to subsequent lookups).
-  const canonicalResolution = resolveYouTubeCanonical(host, videoStore.getAll());
-  if (!canonicalResolution) {
-    return { ok: true, recordId: newRecordId, created: true, upstreamLinked: null };
+  const linked = maybeWriteBroadcastedFromLink(newRecordId, host, { user_id: actorUserId, role: actorRole });
+  return { ok: true, recordId: newRecordId, created: true, upstreamLinked: linked };
+}
+
+/**
+ * Idempotent helper — given a newly-created or existing YouTube source
+ * row, write a BroadcastedFrom upstream link to the canonical resolved
+ * via ADR-049/050 rules, IF such a link doesn't already exist on the
+ * row. Returns the link info if a link is (or already was) present
+ * pointing at the expected canonical; null if no canonical applies or
+ * the write failed.
+ *
+ * Repair-on-rerun: a row from a prior partial run (record created but
+ * link missing — e.g. WASM rejected the link cmd) gets healed on the
+ * next backfill pass without needing a re-fetch from YouTube.
+ */
+function maybeWriteBroadcastedFromLink(
+  youtubeRecordId: string,
+  host: VideoRecordJSON,
+  actor: { user_id: string; role: Role },
+): UpstreamLinkInfo | null {
+  const allRecords = videoStore.getAll();
+  const canonicalResolution = resolveYouTubeCanonical(host, allRecords);
+  if (!canonicalResolution) return null;
+  const canonical = canonicalResolution.canonical;
+
+  const youtubeRow = allRecords.find((r) => r.id === youtubeRecordId);
+  if (!youtubeRow) return null;
+  const alreadyLinked = (youtubeRow.upstream_links ?? []).some(
+    (l) =>
+      l.relation === "BroadcastedFrom" &&
+      l.platform === canonical.source_platform &&
+      l.external_id === canonical.source_id,
+  );
+  if (alreadyLinked) {
+    return {
+      canonicalId: canonical.id,
+      canonicalPlatform: canonical.source_platform,
+      canonicalExternalId: canonical.source_id,
+      relation: "BroadcastedFrom",
+    };
   }
 
-  const canonical = canonicalResolution.canonical;
   const linkCmd = {
-    actor: { user_id: actorUserId, role: "Operator" },
+    actor,
     video_id: canonical.id,
     platform: canonical.source_platform,
     external_id: canonical.source_id,
@@ -217,30 +261,17 @@ export async function ingestYouTubeSourceRow(
     linked_by: "Auto" as const,
   };
   try {
-    videoStore.mutate(newRecordId, (r) => r.link_upstream(JSON.stringify(linkCmd)));
-  } catch (err) {
-    // The record is in catalog; just the upstream link failed. Caller
-    // can still surface the success of ingestion. The matcher will
-    // attempt to write the link on a subsequent catch-up pass.
-    return {
-      ok: true,
-      recordId: newRecordId,
-      created: true,
-      upstreamLinked: null,
-    };
-    void err;
+    videoStore.mutate(youtubeRecordId, (r) => r.link_upstream(JSON.stringify(linkCmd)));
+  } catch {
+    // The record is in catalog; just the link failed. Next backfill
+    // run will retry — repair semantics ensure no permanent orphan.
+    return null;
   }
-
   return {
-    ok: true,
-    recordId: newRecordId,
-    created: true,
-    upstreamLinked: {
-      canonicalId: canonical.id,
-      canonicalPlatform: canonical.source_platform,
-      canonicalExternalId: canonical.source_id,
-      relation: "BroadcastedFrom",
-    },
+    canonicalId: canonical.id,
+    canonicalPlatform: canonical.source_platform,
+    canonicalExternalId: canonical.source_id,
+    relation: "BroadcastedFrom",
   };
 }
 
@@ -255,23 +286,27 @@ export interface MissingYouTubeRow {
 }
 
 /**
- * Walk the catalog and return every YouTube Destination location whose
- * `external_id` doesn't have a matching `source_platform: "YouTube"`
- * row. This is what C1-A iterates. Idempotent — if a YouTube source
- * row has been ingested since last call, it drops out of the list.
+ * Walk the catalog and return every YouTube Destination location that
+ * still needs work: either no YouTube source row exists yet (full
+ * ingest needed) OR the row exists but is missing its expected
+ * BroadcastedFrom upstream link (link-repair needed — e.g. partial
+ * completion from a prior run where the ingest succeeded but the link
+ * write failed).
  *
- * Dedupe by (youtubeVideoId, host.id) so the same YouTube video
- * published on multiple host records produces multiple work items —
- * the helper handles each (the first creates the row, the rest are
- * idempotent no-ops + may still write upstream links if the host
- * carries different provenance from previously-seen hosts).
+ * "Fully complete" pairs — YT row exists AND has a BroadcastedFrom
+ * link to the expected canonical — are excluded so the operator sees
+ * a count that reflects remaining work.
+ *
+ * Dedupe by (youtubeVideoId, host.id) — the same YouTube video
+ * published from multiple host records produces one work item per
+ * host. The helper handles each idempotently.
  */
 export function findMissingYouTubeRows(allRecords: VideoRecordJSON[]): MissingYouTubeRow[] {
-  const existingYouTubeIds = new Set<string>();
+  const existingYouTubeRowByBareId = new Map<string, VideoRecordJSON>();
   for (const rec of allRecords) {
     if (rec.source_platform !== "YouTube") continue;
     const bare = rec.source_id.startsWith("youtube-") ? rec.source_id.slice("youtube-".length) : rec.source_id;
-    existingYouTubeIds.add(bare);
+    existingYouTubeRowByBareId.set(bare, rec);
   }
 
   const out: MissingYouTubeRow[] = [];
@@ -283,10 +318,30 @@ export function findMissingYouTubeRows(allRecords: VideoRecordJSON[]): MissingYo
       if (!extId) continue;
       const bare = extId.startsWith("youtube-") ? extId.slice("youtube-".length) : extId;
       if (!/^[A-Za-z0-9_-]{11}$/.test(bare)) continue;  // skip malformed
-      if (existingYouTubeIds.has(bare)) continue;
       const pairKey = `${bare}::${host.id}`;
       if (seenPairs.has(pairKey)) continue;
       seenPairs.add(pairKey);
+
+      const existingRow = existingYouTubeRowByBareId.get(bare);
+      if (!existingRow) {
+        // No YT source row yet — full ingest needed.
+        out.push({ youtubeVideoId: bare, host });
+        continue;
+      }
+      // YT row exists. Include in work list only if it's missing the
+      // BroadcastedFrom link to the expected canonical (link-repair
+      // case). If no canonical applies (host platform doesn't qualify),
+      // the row is correctly standalone — no work needed.
+      const canonicalResolution = resolveYouTubeCanonical(host, allRecords);
+      if (!canonicalResolution) continue;
+      const canonical = canonicalResolution.canonical;
+      const alreadyLinked = (existingRow.upstream_links ?? []).some(
+        (l) =>
+          l.relation === "BroadcastedFrom" &&
+          l.platform === canonical.source_platform &&
+          l.external_id === canonical.source_id,
+      );
+      if (alreadyLinked) continue;
       out.push({ youtubeVideoId: bare, host });
     }
   }
@@ -303,10 +358,11 @@ export interface BackfillProgressEvent {
   /** Outcome of this item — only present on "item_done". */
   outcome?:
     | { kind: "created"; recordId: string; linkedTo: string | null }
+    | { kind: "repaired"; recordId: string; linkedTo: string }
     | { kind: "skipped_existed" }
     | { kind: "error"; error: string };
   /** Summary counts — only present on "complete". */
-  totals?: { created: number; skipped: number; errors: number };
+  totals?: { created: number; repaired: number; skipped: number; errors: number };
 }
 
 /**
@@ -321,14 +377,15 @@ export interface BackfillProgressEvent {
 export async function runYouTubeRowBackfill(
   onEvent: (ev: BackfillProgressEvent) => void,
   log?: (msg: string, ctx?: Record<string, unknown>) => void,
-  opts?: { delayMs?: number; actorUserId?: string },
-): Promise<{ created: number; skipped: number; errors: number }> {
+  opts?: { delayMs?: number; actor?: { user_id: string; role: Role } | null },
+): Promise<{ created: number; repaired: number; skipped: number; errors: number }> {
   const allRecords = videoStore.getAll();
   const work = findMissingYouTubeRows(allRecords);
   onEvent({ type: "started", total: work.length });
   log?.(`YouTube row backfill started — ${work.length} missing row${work.length === 1 ? "" : "s"} to ingest`);
 
   let created = 0;
+  let repaired = 0;
   let skipped = 0;
   let errors = 0;
   const delayMs = opts?.delayMs ?? 200;
@@ -338,14 +395,25 @@ export async function runYouTubeRowBackfill(
     const hostTitle = host.title || host.source_id;
     let outcome: BackfillProgressEvent["outcome"];
     try {
-      const result = await ingestYouTubeSourceRow(youtubeVideoId, host, { actorUserId: opts?.actorUserId });
+      const result = await ingestYouTubeSourceRow(youtubeVideoId, host, { actor: opts?.actor ?? null });
       if (!result.ok) {
         errors++;
         outcome = { kind: "error", error: result.error };
         log?.(`Backfill error on ${youtubeVideoId} (host "${hostTitle}"): ${result.error}`, { video_id: host.id });
       } else if (!result.created) {
-        skipped++;
-        outcome = { kind: "skipped_existed" };
+        // Existing row — distinguish full no-op from link-repair.
+        if (result.upstreamLinked) {
+          repaired++;
+          const linkedTo = `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`;
+          outcome = { kind: "repaired", recordId: result.recordId, linkedTo };
+          log?.(
+            `Repaired YouTube row ${youtubeVideoId} — wrote missing BroadcastedFrom → ${linkedTo}`,
+            { video_id: result.recordId },
+          );
+        } else {
+          skipped++;
+          outcome = { kind: "skipped_existed" };
+        }
       } else {
         created++;
         const linkedTo = result.upstreamLinked
@@ -378,8 +446,8 @@ export async function runYouTubeRowBackfill(
     }
   }
 
-  const totals = { created, skipped, errors };
+  const totals = { created, repaired, skipped, errors };
   onEvent({ type: "complete", total: work.length, totals });
-  log?.(`YouTube row backfill complete — ${created} created, ${skipped} skipped, ${errors} error(s)`);
+  log?.(`YouTube row backfill complete — ${created} created, ${repaired} repaired, ${skipped} skipped, ${errors} error(s)`);
   return totals;
 }

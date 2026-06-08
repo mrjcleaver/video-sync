@@ -211,7 +211,32 @@ describe("findMissingYouTubeRows — C1-A work-list", () => {
     expect(result[0].host.id).toBe(fireflies.id);
   });
 
-  it("excludes Destinations whose YouTube id already has a source row", () => {
+  it("excludes pairs that are already complete (YT row exists AND has the expected BroadcastedFrom link)", () => {
+    const fireflies = makeRecord({
+      id: "fireflies-uuid",
+      source_platform: "Fireflies",
+      source_id: "fireflies-xyz",
+      locations: [makeLocation({ external_id: "vJKe77EUCBY" })],
+    });
+    const youtube = makeRecord({
+      source_platform: "YouTube",
+      source_id: "youtube-vJKe77EUCBY",
+      upstream_links: [
+        makeLink({
+          relation: "BroadcastedFrom",
+          platform: "Fireflies",
+          external_id: "fireflies-xyz",
+          video_id: "fireflies-uuid",
+        }),
+      ],
+    });
+    const result = findMissingYouTubeRows([fireflies, youtube]);
+    expect(result).toHaveLength(0);
+  });
+
+  it("INCLUDES partial pairs needing link repair (YT row exists but missing BroadcastedFrom link)", () => {
+    // The exact scenario from the 2026-06-07 partial-run incident:
+    // ingest succeeded, link write failed → orphan row in catalog.
     const fireflies = makeRecord({
       source_platform: "Fireflies",
       source_id: "fireflies-xyz",
@@ -220,22 +245,49 @@ describe("findMissingYouTubeRows — C1-A work-list", () => {
     const youtube = makeRecord({
       source_platform: "YouTube",
       source_id: "youtube-vJKe77EUCBY",
+      upstream_links: [],  // <-- missing!
     });
     const result = findMissingYouTubeRows([fireflies, youtube]);
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].youtubeVideoId).toBe("vJKe77EUCBY");
   });
 
-  it("tolerates a `youtube-` prefixed external_id (operator-entered) and matches via the bare id", () => {
-    const host = makeRecord({
-      source_platform: "Zoom",
-      source_id: "zoom-stub",
-      locations: [makeLocation({ external_id: "youtube-vJKe77EUCBY" })],
+  it("excludes pairs where the host doesn't qualify for auto-link (e.g. host=Loom, no canonical)", () => {
+    // Loom hosts return null from resolveYouTubeCanonical, so the
+    // YT row is correctly "standalone" and there's nothing to repair.
+    const loom = makeRecord({
+      source_platform: "Loom",
+      source_id: "loom-stub",
+      locations: [makeLocation({ external_id: "vJKe77EUCBY" })],
     });
     const youtube = makeRecord({
       source_platform: "YouTube",
       source_id: "youtube-vJKe77EUCBY",
+      upstream_links: [],
     });
-    expect(findMissingYouTubeRows([host, youtube])).toHaveLength(0);
+    expect(findMissingYouTubeRows([loom, youtube])).toHaveLength(0);
+  });
+
+  it("tolerates a `youtube-` prefixed external_id (operator-entered) and matches via the bare id", () => {
+    const host = makeRecord({
+      id: "zoom-uuid",
+      source_platform: "Zoom",
+      source_id: "zoom-stub",
+      locations: [makeLocation({ external_id: "youtube-vJKe77EUCBY" })],
+    });
+    const youtubeComplete = makeRecord({
+      source_platform: "YouTube",
+      source_id: "youtube-vJKe77EUCBY",
+      upstream_links: [
+        makeLink({
+          relation: "BroadcastedFrom",
+          platform: "Zoom",
+          external_id: "zoom-stub",
+          video_id: "zoom-uuid",
+        }),
+      ],
+    });
+    expect(findMissingYouTubeRows([host, youtubeComplete])).toHaveLength(0);
     expect(findMissingYouTubeRows([host])).toEqual([
       expect.objectContaining({ youtubeVideoId: "vJKe77EUCBY" }),
     ]);
