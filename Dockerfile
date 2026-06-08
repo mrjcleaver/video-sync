@@ -7,10 +7,16 @@
 
 # ── Stage 0: build WASM pkg from Rust source ────────────────────────────────
 FROM rust:1.86-alpine AS wasm
+# Pin wasm-bindgen-cli to the version matching our project's Cargo.lock
+# (wasm-bindgen 0.2.108). --locked uses the CLI's own lockfile so its
+# transitive deps stay compatible with this rustc — protects against
+# upstream drift where a new CLI release pulls in a dep that demands
+# a newer rustc (e.g. 2026-06-08 incident: 0.2.123 → time → rustc 1.88).
 RUN apk add --no-cache musl-dev curl && \
-    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && \
+    cargo install wasm-bindgen-cli --version 0.2.108 --locked
 WORKDIR /build
-COPY Cargo.toml Cargo.lock* ./
+COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 RUN wasm-pack build --target web --release --out-dir /build/pkg
 
