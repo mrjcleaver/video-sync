@@ -1,5 +1,9 @@
 /target
-Cargo.lock
+# Cargo.lock IS tracked (application crate, not library) — without it
+# Cloud Build's tarball doesn't include it and wasm-pack regenerates
+# with whatever's latest on crates.io. That bit us 2026-06-08 when
+# wasm-bindgen-cli 0.2.123 demanded a newer rustc than our base image.
+# Keep this commit-tracked for reproducible builds.
 /pkg/
 web/pkg/
 web/node_modules/
