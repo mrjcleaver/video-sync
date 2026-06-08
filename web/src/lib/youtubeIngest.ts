@@ -54,6 +54,14 @@ export type IngestResult =
       created: boolean;
       /** Populated when the helper wrote an upstream_link to the new row. */
       upstreamLinked: UpstreamLinkInfo | null;
+      /** Per ADR-051: YouTube rows ingested via the publish-trail path
+       *  (C1-A backfill, C3 forward-only) land at Published, not
+       *  Discovered, because the video is already live on YouTube by
+       *  the time we ingest. `fromStatus` is the status the record
+       *  was in *before* this advancement (omitted when no advance
+       *  was attempted, e.g. row was already Published or in a
+       *  terminal state we don't override). */
+      advancedToPublished?: { fromStatus: string };
     }
   | { ok: false; error: string };
 
@@ -162,10 +170,14 @@ export async function ingestYouTubeSourceRow(
   // already exists but is missing its BroadcastedFrom upstream link
   // (e.g. partial completion from a prior run where the ingest
   // succeeded but the link write failed), write the missing link now.
+  // Also auto-advance to Published per ADR-051 if it's still in a
+  // pre-publish state.
   const existing = findExistingYouTubeRow(youtubeVideoId);
   if (existing) {
-    const linked = maybeWriteBroadcastedFromLink(existing.id, host, { user_id: actorUserId, role: actorRole });
-    return { ok: true, recordId: existing.id, created: false, upstreamLinked: linked };
+    const actor = { user_id: actorUserId, role: actorRole };
+    const linked = maybeWriteBroadcastedFromLink(existing.id, host, actor);
+    const advanced = maybeAdvanceToPublished(existing.id, youtubeVideoId, actor);
+    return { ok: true, recordId: existing.id, created: false, upstreamLinked: linked, advancedToPublished: advanced };
   }
 
   let info: YouTubeVideoInfo;
@@ -208,9 +220,77 @@ export async function ingestYouTubeSourceRow(
   }
   videoStore.add(record);
   const newRecordId = record.id();
+  const actor = { user_id: actorUserId, role: actorRole };
 
-  const linked = maybeWriteBroadcastedFromLink(newRecordId, host, { user_id: actorUserId, role: actorRole });
-  return { ok: true, recordId: newRecordId, created: true, upstreamLinked: linked };
+  const linked = maybeWriteBroadcastedFromLink(newRecordId, host, actor);
+  const advanced = maybeAdvanceToPublished(newRecordId, youtubeVideoId, actor);
+  return { ok: true, recordId: newRecordId, created: true, upstreamLinked: linked, advancedToPublished: advanced };
+}
+
+/**
+ * ADR-051 — chain a YouTube source row through
+ * Discovered/InScope/Approved → Publishing → Published. The video is
+ * already on YouTube (that's how the ingest path knows about it), so
+ * the Discovered default starting status is misleading; advance to
+ * Published immediately.
+ *
+ * Status guard: only advance when the row is in a pre-publish status
+ * the operator hasn't deliberately moved it past. We never override
+ * Failed / Skipped / Abandoned — those represent explicit operator
+ * intent. Already-Published / already-Publishing is a no-op.
+ *
+ * Returns the prior status when an advancement actually happened;
+ * undefined when no advancement was attempted or it failed at any
+ * stage. The record's catalog state is consistent either way — failed
+ * stages just leave the record at its current stage (the next backfill
+ * run will retry).
+ */
+/** ADR-051 status guard — exported for unit testing. The statuses
+ *  where it's safe to auto-advance to Published represent "operator
+ *  hasn't deliberately moved this past Approved." Skipped / Failed /
+ *  Abandoned / Publishing / Published are excluded. */
+export const ADVANCEABLE_STATUSES: ReadonlyArray<string> = ["Discovered", "InScope", "Approved"];
+export function isAdvanceableStatus(status: string): boolean {
+  return ADVANCEABLE_STATUSES.includes(status);
+}
+
+function maybeAdvanceToPublished(
+  recordId: string,
+  youtubeVideoId: string,
+  actor: { user_id: string; role: Role },
+): { fromStatus: string } | undefined {
+  const allRecords = videoStore.getAll();
+  const rec = allRecords.find((r) => r.id === recordId);
+  if (!rec) return undefined;
+  const fromStatus = rec.status;
+  if (!isAdvanceableStatus(fromStatus)) return undefined;
+
+  const actorBlock = { actor };
+  try {
+    // Discovered → Approved (skip mark_in_scope; approve accepts from Discovered too)
+    if (fromStatus === "Discovered" || fromStatus === "InScope") {
+      videoStore.mutate(recordId, (r) => r.approve(JSON.stringify(actorBlock)));
+    }
+    // Approved → Publishing
+    videoStore.mutate(recordId, (r) => r.request_publish(JSON.stringify(actorBlock)));
+    // Publishing → Published. mark_published dedupes the implicit
+    // Origin=Destination case via ADR-049 slice 1's normalize_external_id,
+    // so passing the bare video id as destination_id is correct here.
+    const markPubCmd = {
+      actor,
+      destination_id: youtubeVideoId,
+      destination_url: `https://www.youtube.com/watch?v=${youtubeVideoId}`,
+      destination_platform: "YouTube" as const,
+    };
+    videoStore.mutate(recordId, (r) => r.mark_published(JSON.stringify(markPubCmd)));
+  } catch {
+    // Mid-chain failure — record sits at whichever stage it reached.
+    // Don't surface as ingest-level error; next backfill run will
+    // retry the remaining transitions (each is idempotent on its
+    // own — request_publish from Publishing is a no-op, etc).
+    return undefined;
+  }
+  return { fromStatus };
 }
 
 /**
@@ -400,30 +480,41 @@ export async function runYouTubeRowBackfill(
         errors++;
         outcome = { kind: "error", error: result.error };
         log?.(`Backfill error on ${youtubeVideoId} (host "${hostTitle}"): ${result.error}`, { video_id: host.id });
-      } else if (!result.created) {
-        // Existing row — distinguish full no-op from link-repair.
-        if (result.upstreamLinked) {
-          repaired++;
-          const linkedTo = `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`;
-          outcome = { kind: "repaired", recordId: result.recordId, linkedTo };
+      } else {
+        const advanceMsg = result.advancedToPublished
+          ? `, ${result.advancedToPublished.fromStatus}→Published`
+          : "";
+        if (!result.created) {
+          // Existing row — distinguish full no-op from link-repair
+          // and/or status-advance.
+          if (result.upstreamLinked || result.advancedToPublished) {
+            repaired++;
+            const linkedTo = result.upstreamLinked
+              ? `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`
+              : null;
+            outcome = { kind: "repaired", recordId: result.recordId, linkedTo: linkedTo ?? "(no canonical)" };
+            const what: string[] = [];
+            if (linkedTo) what.push(`wrote missing BroadcastedFrom → ${linkedTo}`);
+            if (result.advancedToPublished) what.push(`advanced ${result.advancedToPublished.fromStatus}→Published`);
+            log?.(
+              `Repaired YouTube row ${youtubeVideoId} — ${what.join("; ")}`,
+              { video_id: result.recordId },
+            );
+          } else {
+            skipped++;
+            outcome = { kind: "skipped_existed" };
+          }
+        } else {
+          created++;
+          const linkedTo = result.upstreamLinked
+            ? `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`
+            : null;
+          outcome = { kind: "created", recordId: result.recordId, linkedTo };
           log?.(
-            `Repaired YouTube row ${youtubeVideoId} — wrote missing BroadcastedFrom → ${linkedTo}`,
+            `Backfilled YouTube row ${youtubeVideoId}${linkedTo ? ` — linked BroadcastedFrom → ${linkedTo}` : " (standalone)"}${advanceMsg}`,
             { video_id: result.recordId },
           );
-        } else {
-          skipped++;
-          outcome = { kind: "skipped_existed" };
         }
-      } else {
-        created++;
-        const linkedTo = result.upstreamLinked
-          ? `${result.upstreamLinked.canonicalPlatform}:${result.upstreamLinked.canonicalExternalId}`
-          : null;
-        outcome = { kind: "created", recordId: result.recordId, linkedTo };
-        log?.(
-          `Backfilled YouTube row ${youtubeVideoId}${linkedTo ? ` — linked BroadcastedFrom → ${linkedTo}` : " (standalone)"}`,
-          { video_id: result.recordId },
-        );
       }
     } catch (err) {
       errors++;

@@ -56,6 +56,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-048](ADR-048-date-distance-gates-in-matchers.md) | Date-Distance Gates in Cross-Source Matchers | Accepted (implemented 2026-06-03) |
 | [ADR-049](ADR-049-livestream-provenance-zoom-to-youtube.md) | Live-stream Provenance — Zoom-to-YouTube Broadcasts | Proposed |
 | [ADR-050](ADR-050-fireflies-transcribed-from-zoom.md) | Fireflies as Downstream of the Meeting Source | Accepted (implemented 2026-06-07) |
+| [ADR-051](ADR-051-youtube-ingest-auto-published.md) | YouTube Source Rows From Publish-Trail Ingest Land at Published | Accepted (implemented 2026-06-07) |
 
 ## ADR Format
 

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveYouTubeCanonical, findMissingYouTubeRows } from "../src/lib/youtubeIngest";
+import { resolveYouTubeCanonical, findMissingYouTubeRows, isAdvanceableStatus, ADVANCEABLE_STATUSES } from "../src/lib/youtubeIngest";
 import type { VideoRecordJSON, UpstreamLinkJSON, PlatformLocationJSON } from "../src/lib/wasm";
 
 function makeRecord(overrides: Partial<VideoRecordJSON>): VideoRecordJSON {
@@ -333,6 +333,34 @@ describe("findMissingYouTubeRows — C1-A work-list", () => {
       ],
     });
     expect(findMissingYouTubeRows([host])).toHaveLength(0);
+  });
+});
+
+describe("isAdvanceableStatus — ADR-051 status guard", () => {
+  it("advances Discovered / InScope / Approved (pre-publish states)", () => {
+    expect(isAdvanceableStatus("Discovered")).toBe(true);
+    expect(isAdvanceableStatus("InScope")).toBe(true);
+    expect(isAdvanceableStatus("Approved")).toBe(true);
+  });
+
+  it("does NOT advance Publishing / Published (already there or in-flight)", () => {
+    expect(isAdvanceableStatus("Publishing")).toBe(false);
+    expect(isAdvanceableStatus("Published")).toBe(false);
+  });
+
+  it("does NOT advance explicit operator-terminal states (Skipped / Failed / Abandoned)", () => {
+    // Auto-advancing would override deliberate operator intent — the
+    // ADR-051 guard exists specifically to preserve that.
+    expect(isAdvanceableStatus("Skipped")).toBe(false);
+    expect(isAdvanceableStatus("Failed")).toBe(false);
+    expect(isAdvanceableStatus("Abandoned")).toBe(false);
+    expect(isAdvanceableStatus("ToRetry")).toBe(false);
+  });
+
+  it("exports the same constant list it checks against", () => {
+    // Smoke-check that the exported list and the predicate agree —
+    // protects against future drift if the predicate is changed.
+    for (const s of ADVANCEABLE_STATUSES) expect(isAdvanceableStatus(s)).toBe(true);
   });
 });
 
