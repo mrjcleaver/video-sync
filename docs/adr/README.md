@@ -58,6 +58,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-050](ADR-050-fireflies-transcribed-from-zoom.md) | Fireflies as Downstream of the Meeting Source | Accepted (implemented 2026-06-07) |
 | [ADR-051](ADR-051-youtube-ingest-auto-published.md) | YouTube Source Rows From Publish-Trail Ingest Land at Published | Accepted (implemented 2026-06-07) |
 | [ADR-052](ADR-052-catchup-summary-badge-backfill.md) | Catch-Up Summary Badge Backfill (Transcript-Having Records) | Proposed |
+| [ADR-053](ADR-053-transcript-provenance-lookup.md) | Transcript Provenance Lookup — Borrow Transcripts From Related Records | Proposed |
 
 ## ADR Format
 
