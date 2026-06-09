@@ -71,18 +71,34 @@ export function parseSectionCounts(markdown: string): SummaryCountsJSON {
  */
 export async function generateRecordSummary(
   ctx: RecordContext,
-  opts: { rid?: string; prompt?: SummaryPromptVersion } = {},
+  opts: {
+    rid?: string;
+    prompt?: SummaryPromptVersion;
+    /** ADR-053 — caller-supplied transcript override. When the target
+     *  record has no own transcript, the client passes a donor's text
+     *  inline (resolved via transcriptProvenance.resolveTranscriptForOperation).
+     *  Bypasses the Drive read for the target record entirely. */
+    transcriptOverride?: string;
+    /** Audit trail — donor record_id when transcriptOverride is set. */
+    transcriptSourceRecordId?: string;
+  } = {},
 ): Promise<GenerateRecordResult> {
   const rid = opts.rid ?? "n/a";
   const prompt = opts.prompt ?? await getCurrentPrompt();
 
-  const transcriptArtifact = await getArtifact(ctx.record_id, "transcript");
-  if (!transcriptArtifact?.content) {
-    throw new GenerateError("No transcript on Drive for this record — cannot summarise", 400, "no_transcript");
+  let rawTranscript: string;
+  if (opts.transcriptOverride && opts.transcriptOverride.length >= 200) {
+    rawTranscript = opts.transcriptOverride;
+  } else {
+    const transcriptArtifact = await getArtifact(ctx.record_id, "transcript");
+    if (!transcriptArtifact?.content) {
+      throw new GenerateError("No transcript on Drive for this record — cannot summarise", 400, "no_transcript");
+    }
+    rawTranscript = transcriptArtifact.content;
   }
-  const transcript = transcriptArtifact.content.length > MAX_TRANSCRIPT_CHARS
-    ? transcriptArtifact.content.slice(0, MAX_TRANSCRIPT_CHARS) + "\n\n[transcript truncated]"
-    : transcriptArtifact.content;
+  const transcript = rawTranscript.length > MAX_TRANSCRIPT_CHARS
+    ? rawTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + "\n\n[transcript truncated]"
+    : rawTranscript;
 
   const chatArtifact = await getArtifact(ctx.record_id, "chat").catch(() => null);
   const chat = chatArtifact?.content && chatArtifact.content.length > 0

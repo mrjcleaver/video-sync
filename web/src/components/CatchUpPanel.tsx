@@ -15,6 +15,8 @@ import { useCurrentActor } from "../lib/useCurrentActor";
 import { formatUsd, estimatePerRecordCost } from "../lib/llmCost";
 import { runCatchUp, runBroadcastPairMigration, type OrchestratorEvent, type StageId, type StageStatus, AUTO_LINK_THRESHOLD, type MigrationProgressEvent } from "../lib/catchupOrchestrator";
 import { runYouTubeRowBackfill, findMissingYouTubeRows, type BackfillProgressEvent } from "../lib/youtubeIngest";
+import { runSummaryBadgeBackfill, findRecordsNeedingSummaryBadge, type BackfillProgressEvent as SummaryBackfillEvent } from "../lib/summaryBadgeBackfill";
+import { getCurrentPromptVersion } from "../lib/summaryPromptClient";
 
 interface Props {
   open: boolean;
@@ -139,6 +141,58 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       onEvent?.(`Backfill errored: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBackfilling(false);
+    }
+  }
+
+  // ADR-052 — Summary Badge Backfill state. Walks every record in
+  // catalog, regenerates badges for missing + stale. Default skips
+  // locked records; the "include locked (override)" checkbox enables
+  // re-summarising those too.
+  const [summaryBackfilling, setSummaryBackfilling] = useState(false);
+  const [summaryIncludeLocked, setSummaryIncludeLocked] = useState(false);
+  const [summaryCurrentPromptVersion, setSummaryCurrentPromptVersion] = useState<number | null>(null);
+  const [summaryBackfillProgress, setSummaryBackfillProgress] = useState<{ index: number; total: number } | null>(null);
+  const [summaryBackfillSummary, setSummaryBackfillSummary] = useState<{ generated: number; skipped: number; errors: number; cost_spent_usd: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentPromptVersion().then((v) => { if (!cancelled) setSummaryCurrentPromptVersion(v); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const summaryWorkList = useMemo(
+    () => findRecordsNeedingSummaryBadge(videos, summaryCurrentPromptVersion, { includeLocked: summaryIncludeLocked }),
+    [videos, summaryCurrentPromptVersion, summaryIncludeLocked],
+  );
+  const summaryWorkCounts = useMemo(() => {
+    const missing = summaryWorkList.filter((c) => c.reason === "missing").length;
+    const stale = summaryWorkList.filter((c) => c.reason === "stale").length;
+    const viaBorrow = summaryWorkList.filter((c) => c.needsBorrowedTranscript).length;
+    return { missing, stale, total: summaryWorkList.length, viaBorrow };
+  }, [summaryWorkList]);
+
+  async function runSummaryBackfill() {
+    setSummaryBackfilling(true);
+    setSummaryBackfillProgress(null);
+    setSummaryBackfillSummary(null);
+    try {
+      await runSummaryBadgeBackfill(
+        actorState,
+        (ev: SummaryBackfillEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setSummaryBackfillProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setSummaryBackfillSummary(ev.totals);
+            setSummaryBackfillProgress(null);
+          }
+        },
+        onEvent,
+        { includeLocked: summaryIncludeLocked },
+      );
+    } catch (err) {
+      onEvent?.(`Summary backfill errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSummaryBackfilling(false);
     }
   }
 
@@ -541,6 +595,62 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
                 {backfillSummary.repaired} repaired (link added) ·{" "}
                 {backfillSummary.skipped} skipped (already complete) ·{" "}
                 {backfillSummary.errors} error{backfillSummary.errors === 1 ? "" : "s"}.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ADR-052 — Summary Badge Backfill. Walks every record with a
+            usable transcript (own or borrowed via ADR-053) and
+            generates / refreshes the 📄 badge. */}
+        <div style={{
+          marginTop: 12, padding: 10,
+          background: "rgba(96,165,250,0.05)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>📄 Summary badge backfill (ADR-052)</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            Walks every record with a usable transcript (own or borrowed via paired Fireflies / Zoom / YouTube / Kaltura per ADR-053)
+            and generates summary badges that are missing or stale (prompt version drifted). Default skips locked records.
+            {summaryCurrentPromptVersion != null && (
+              <> Current prompt version: <strong>v{summaryCurrentPromptVersion}</strong>.</>
+            )}
+            {summaryWorkCounts.total > 0 ? (
+              <>
+                {" "}<strong>{summaryWorkCounts.total}</strong> eligible (
+                {summaryWorkCounts.missing} missing, {summaryWorkCounts.stale} stale
+                {summaryWorkCounts.viaBorrow > 0 && <>, {summaryWorkCounts.viaBorrow} via borrowed transcript</>}
+                ).
+              </>
+            ) : (
+              <> All badges current.</>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={runSummaryBackfill}
+              disabled={summaryBackfilling || summaryWorkCounts.total === 0}
+            >
+              {summaryBackfilling
+                ? summaryBackfillProgress ? `Generating ${summaryBackfillProgress.index}/${summaryBackfillProgress.total}…` : "Generating…"
+                : `Run backfill${summaryWorkCounts.total ? ` (${summaryWorkCounts.total})` : ""}`}
+            </button>
+            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={summaryIncludeLocked}
+                onChange={(e) => setSummaryIncludeLocked(e.target.checked)}
+                disabled={summaryBackfilling}
+              />
+              Include locked records (override)
+            </label>
+            {summaryBackfillSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {summaryBackfillSummary.generated} generated ·{" "}
+                {summaryBackfillSummary.skipped} skipped ·{" "}
+                {summaryBackfillSummary.errors} error{summaryBackfillSummary.errors === 1 ? "" : "s"} ·{" "}
+                ${summaryBackfillSummary.cost_spent_usd.toFixed(2)} spent.
               </span>
             )}
           </div>

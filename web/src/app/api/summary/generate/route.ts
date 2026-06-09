@@ -28,6 +28,10 @@ interface GenerateBody {
   source_platform?: string;
   source_id?: string;
   recorded_at?: string;
+  /** ADR-053 — client-resolved borrowed transcript (when the target
+   *  record has no own transcript, a donor's text is passed inline). */
+  transcript_override?: string;
+  transcript_source_record_id?: string;
 }
 
 async function handler(req: NextRequest) {
@@ -47,7 +51,7 @@ async function handler(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { record_id, title, source_platform, source_id, recorded_at } = body;
+  const { record_id, title, source_platform, source_id, recorded_at, transcript_override, transcript_source_record_id } = body;
   if (!record_id || !title || !source_platform || !source_id || !recorded_at) {
     return NextResponse.json(
       { error: "record_id, title, source_platform, source_id, recorded_at all required" },
@@ -59,7 +63,11 @@ async function handler(req: NextRequest) {
   const ctx: RecordContext = { record_id, title, source_platform, source_id, recorded_at };
 
   try {
-    const result = await generateRecordSummary(ctx, { rid });
+    const result = await generateRecordSummary(ctx, {
+      rid,
+      transcriptOverride: transcript_override,
+      transcriptSourceRecordId: transcript_source_record_id,
+    });
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof GenerateError) {

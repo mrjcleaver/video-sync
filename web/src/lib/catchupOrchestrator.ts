@@ -32,6 +32,7 @@ import { rankSiblingCandidates } from "./siblingMatcher";
 import { getCurrentPromptVersion } from "./summaryPromptClient";
 import { estimatePerRecordCost } from "./llmCost";
 import { getDisplayTitle } from "./processingRules";
+import { resolveTranscriptForOperation } from "./transcriptProvenance";
 
 /** ADR-049 — broadcaster source platforms (must match siblingMatcher's set). */
 const BROADCASTER_PLATFORMS_MIGRATION: ReadonlySet<string> = new Set(["Zoom", "Streamyard", "OBS", "Wirecast"]);
@@ -297,20 +298,38 @@ function tryAutoLinkSibling({ target, candidates, actorState, threshold }: LinkA
   }
 }
 
-interface SummaryArgs {
+export interface SummaryArgs {
   record: VideoRecordJSON;
   currentPromptVersion: number | null;
   actorState: Parameters<typeof actorCommand>[0];
   signal: AbortSignal;
+  /** All catalog records — needed for ADR-053 transcript provenance
+   *  lookup so we can borrow a sibling's transcript when our own is
+   *  empty. Optional for backwards-compat with existing callers that
+   *  don't yet pass it; absent → falls back to own-transcript-only. */
+  allRecords?: VideoRecordJSON[];
+  /** Skip the locked-record gate. ADR-052 backfill exposes this as
+   *  an explicit "include locked (override)" checkbox. */
+  overrideLock?: boolean;
 }
 
-async function tryEnsureSummary({ record, currentPromptVersion, actorState, signal }: SummaryArgs): Promise<{ generated: boolean; reason?: string }> {
-  if ((record.transcript_text?.length ?? 0) < 200) return { generated: false, reason: "no transcript" };
-  if (record.summary_locked) return { generated: false, reason: "locked" };
+export async function tryEnsureSummary({ record, currentPromptVersion, actorState, signal, allRecords, overrideLock }: SummaryArgs): Promise<{ generated: boolean; reason?: string }> {
+  // ADR-053 — try own transcript first; fall back to a donor record
+  // linked via a safe relation (SameEvent / BroadcastedFrom /
+  // TranscribedFrom). The allRecords arg is optional so existing
+  // call-sites that don't pass it keep their no-donor behaviour.
+  const resolved = allRecords
+    ? resolveTranscriptForOperation(record, allRecords)
+    : ((record.transcript_text?.length ?? 0) >= 200
+        ? { text: record.transcript_text!, source: { kind: "own" as const } }
+        : null);
+  if (!resolved) return { generated: false, reason: "no transcript (own or via provenance)" };
+  if (record.summary_locked && !overrideLock) return { generated: false, reason: "locked" };
   if (record.summary_doc_id && currentPromptVersion != null && record.summary_prompt_version === currentPromptVersion) {
     return { generated: false, reason: "current" };
   }
 
+  const isBorrowed = resolved.source.kind === "borrowed";
   const res = await fetch("/api/summary/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -320,6 +339,14 @@ async function tryEnsureSummary({ record, currentPromptVersion, actorState, sign
       source_platform: record.source_platform,
       source_id: record.source_id,
       recorded_at: record.recorded_at ?? record.indexed_at,
+      // ADR-053 — when transcript is borrowed from a paired record,
+      // send the text inline so the server doesn't try (and fail) to
+      // read the target's own Drive transcript artifact. Also record
+      // the donor pointer for audit.
+      ...(isBorrowed ? {
+        transcript_override: resolved.text,
+        transcript_source_record_id: resolved.source.donor_record_id,
+      } : {}),
     }),
     signal,
   });
@@ -490,7 +517,7 @@ export async function runCatchUp(opts: CatchupOptions, actorState: Parameters<ty
       return;
     }
     try {
-      const result = await tryEnsureSummary({ record: afterLink, currentPromptVersion, actorState, signal });
+      const result = await tryEnsureSummary({ record: afterLink, currentPromptVersion, actorState, signal, allRecords: videoStore.getAll() });
       if (result.generated) {
         costSpent += estCost;
         anyStageDone = true;
