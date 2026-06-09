@@ -363,14 +363,43 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     onMutated();
   }
 
+  /**
+   * "Exclude" = add to rules-based exclusions (so future imports skip
+   * this source) + move the record itself out of the active flow.
+   *
+   * Operator intent is "stop dealing with this", which makes sense
+   * from any non-terminal status — not just Discovered/InScope. The
+   * underlying WASM transitions have different allowed-from sets
+   * (skip: {Discovered,InScope}; abandon: {Failed,InScope,Discovered,
+   * Skipped,Published}; mark_failed: {Publishing,Published}), so we
+   * chain transitions to reach a terminal state per current status.
+   *
+   * Approved / ToRetry have no clean state-machine path to a terminal
+   * state and remain gated — operator can move them via the publish
+   * flow first.
+   */
   function exclude() {
     addExclusion(video.source_platform, video.source_id, "Manual exclusion");
-    videoStore.mutate(video.id, (r) =>
-      r.skip(
-        cmd({ reason: "Excluded from ingestion", })
-      )
-    );
-    onEvent(`VideoExcluded: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+    const s = video.status;
+    try {
+      if (s === "Discovered" || s === "InScope") {
+        videoStore.mutate(video.id, (r) => r.skip(cmd({ reason: "Excluded from ingestion" })));
+      } else if (s === "Publishing") {
+        // Publishing has no direct skip/abandon path — mark_failed first.
+        videoStore.mutate(video.id, (r) => r.mark_failed(JSON.stringify({ error_message: "Excluded from ingestion (was Publishing)" })));
+        videoStore.mutate(video.id, (r) => r.abandon(cmd({ reason: "Excluded from ingestion" })));
+      } else if (s === "Failed" || s === "Published") {
+        videoStore.mutate(video.id, (r) => r.abandon(cmd({ reason: "Excluded from ingestion" })));
+      } else if (s === "Skipped") {
+        // Already terminal — exclusion rule is the only new effect.
+      } else {
+        // Approved / ToRetry / Abandoned — no transition; exclusion rule still applies.
+      }
+      onEvent(`VideoExcluded: "${video.title}"${dateTag(video.recorded_at)} (from ${s})`, { video_id: video.id });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onEvent(`VideoExcludePartial: "${video.title}"${dateTag(video.recorded_at)} — rule added but transition failed (${msg})`, { video_id: video.id });
+    }
     onMutated();
   }
 
@@ -1332,6 +1361,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
   const canAbandon = status === "Failed" || status === "InScope" || status === "Discovered" || status === "Skipped" || status === "Published";
+  // Exclude widened beyond canSkip — operator's intent is "never deal
+  // with this source again", which is valid from any status whose
+  // record we can actually retire (skip / abandon / mark_failed→abandon).
+  // Approved + ToRetry stay gated because the WASM state machine has
+  // no clean retirement path for them; Abandoned is already terminal.
+  const canExclude =
+    status === "Discovered" || status === "InScope" ||
+    status === "Publishing" || status === "Failed" ||
+    status === "Published" || status === "Skipped";
   const canRetry = status === "Failed" || status === "Published";
   // Recover is useful for any non-Published video that's already live on YouTube
   // (SSE-dropped uploads, out-of-band publishes, imports of existing YT content).
@@ -2304,7 +2342,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             Skip
           </button>
         )}
-        {canSkip && (
+        {canExclude && (
           <button className="btn btn-sm btn-red" onClick={exclude}>
             Exclude
           </button>
