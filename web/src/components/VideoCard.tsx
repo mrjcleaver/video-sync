@@ -30,6 +30,7 @@ import {
 import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatcher";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
+import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -231,6 +232,14 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setSummarising(true);
     onEvent(`SummaryRequested: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
     try {
+      // ADR-053 — resolve the best transcript usable for this record.
+      // Own transcript when present; otherwise borrow from a paired
+      // record via safe-relations (TranscribedFrom Fireflies / Zoom
+      // sibling / etc). Without this, a record whose transcript only
+      // lives in the client-side cache (not on Drive) silently fails
+      // the per-record Summarise button with "No transcript on Drive."
+      const resolved = resolveTranscriptForOperation(video, allVideos ?? [video]);
+      const isBorrowed = resolved?.source.kind === "borrowed";
       const res = await fetch("/api/summary/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -240,6 +249,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           source_platform: video.source_platform,
           source_id: video.source_id,
           recorded_at: video.recorded_at ?? video.indexed_at,
+          // Pass the resolved transcript inline whenever we have one
+          // client-side. For own-transcript records this is redundant
+          // with the Drive read but harmless; for borrowed-transcript
+          // records this is the only path that works since the donor's
+          // text is on the donor's Drive, not this record's.
+          ...(resolved && resolved.text.length >= 200 ? {
+            transcript_override: resolved.text,
+            ...(isBorrowed ? { transcript_source_record_id: resolved.source.donor_record_id } : {}),
+          } : {}),
         }),
       });
       if (!res.ok) {
