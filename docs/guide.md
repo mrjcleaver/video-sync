@@ -13,6 +13,7 @@ For current behaviour, read instead:
 - [`docs/user-guide.md`](user-guide.md) — comprehensive feature walkthrough (connections, import, review, publish, backfill, recovery, what-lives-where)
 - [`docs/user-flows.md`](user-flows.md) — step-by-step diagrams for common workflows
 - [`docs/stakeholders.md`](stakeholders.md) — roles and touchpoints
+- [`docs/capabilities.md`](capabilities.md) — capability matrix for comparison with other tools (status + ADR refs per row)
 - [`docs/adr/`](adr/) — architectural decisions; start from the index in [`docs/adr/README.md`](adr/README.md)
 
 Specific topics that moved on since this document was written:

@@ -47,6 +47,7 @@ deploy.sh             Manual deploy to Cloud Run (Docker build + push + deploy)
 - [`docs/user-guide.md`](docs/user-guide.md) — comprehensive feature walkthrough (connections, import, review, publish, backfill, recovery)
 - [`docs/user-flows.md`](docs/user-flows.md) — step-by-step diagrams of common workflows
 - [`docs/stakeholders.md`](docs/stakeholders.md) — roles (Curator, Content Owner, Platform Admin, DevOps, Compliance)
+- [`docs/capabilities.md`](docs/capabilities.md) — capability matrix (status + ADR refs per row) for side-by-side comparison with other tools
 - In-app **Help** button (top-right) → project wiki on GitHub
 
 **Start here if you're a developer:**
@@ -63,6 +64,15 @@ deploy.sh             Manual deploy to Cloud Run (Docker build + push + deploy)
   - **ADR-042** Server-side credentials with operator override (Secret Manager hybrid)
   - **ADR-043** Share backfill profiles, queue, exclusions across operators
   - **ADR-044** Always show Kaltura presence alongside YouTube *(Proposed)*
+  - **ADR-045** Wider IAP gate + app-level redirect for unauthorized users
+  - **ADR-046** Prompt-driven video summaries on Drive
+  - **ADR-047** Automated Catch-Up action
+  - **ADR-048** Date-distance gates in matchers
+  - **ADR-049** Live-stream provenance — Zoom-to-YouTube broadcasts
+  - **ADR-050** Fireflies as downstream of the meeting source
+  - **ADR-051** YouTube source rows from publish-trail ingest land at Published
+  - **ADR-052** Catch-Up Summary Badge Backfill *(Proposed)*
+  - **ADR-053** Transcript provenance lookup — borrow from related records *(Proposed)*
 - [`docs/guide.md`](docs/guide.md) — legacy short-form overview; prefer `docs/user-guide.md`
 
 ## Development

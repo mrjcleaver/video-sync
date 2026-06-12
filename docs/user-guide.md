@@ -398,7 +398,81 @@ Below the filters, a summary bar shows:
 
 ---
 
-## 12. Troubleshooting
+## 12. Catch-Up Maintenance
+
+The **Catch-Up** side drawer (gear icon → Catch-Up) houses *operator-invoked maintenance passes* — bulk operations that act across the whole catalog at once. Distinct from §6 Backfill Orchestration: that fills the catalog with new imports; Catch-Up maintains the state of records already in it.
+
+### Run Catch-Up (ADR-047)
+
+The original per-record pipeline. Walks records in a chosen scope (date range / status filter), running three stages per record:
+
+- `hydrate_transcript` — pulls captions from Kaltura when the record is a Kaltura source and the transcript field is empty.
+- `link_siblings` — auto-link high-confidence sibling pairs (cross-platform captures of the same event). Threshold of 0.85 silently links; 0.6–0.85 surfaces via the existing banner for review.
+- `ensure_summary` — regenerate when the summary is missing or stale. Uses the ADR-053 transcript-borrow resolver, so records without their own transcript can still be summarised via a paired record's text.
+
+Has a cost cap (default $5.00) to protect against accidental large runs. Resumes on browser refresh — completed records drop out of the work list automatically.
+
+### Broadcast-Pair Migration (purple card — ADR-049 slice 5)
+
+One-shot cleanup of legacy data. Two effects:
+
+1. Removes duplicate same-video Origin+Destination location entries (e.g. `Origin: youtube-X` + `Destination: X` pointing at the same video — the canonical 779fabe6 case ADR-049 was written to fix).
+2. Reclassifies `SameEvent` upstream links to `BroadcastedFrom` / `TranscribedFrom` for known pair patterns: YouTube-Live ↔ {Zoom, Streamyard, OBS, Wirecast}, Fireflies ↔ meeting-source.
+
+Idempotent. Safe to re-run.
+
+### YouTube Row Backfill (green card — ADR-049/050 C1-A)
+
+For every Destination-YouTube location on a host record (Zoom/Fireflies/Loom/Kaltura) that has no corresponding YouTube source row in the catalog, fetches metadata via the YouTube Data API and creates the source row with the correct `BroadcastedFrom` upstream link. Auto-advances new rows to Published per ADR-051 (born-on-YouTube records shouldn't sit at Discovered).
+
+**Repair-on-rerun**: also catches "partial pair" cases — YouTube row exists but its upstream link is missing (e.g. a prior run was interrupted between ingest and link write). The scanner picks these up; the helper writes the missing link without re-fetching metadata.
+
+The new row gets correctly classified per the ADR-049/050 rules:
+
+| Host | Result |
+|---|---|
+| Zoom/Streamyard/OBS/Wirecast | `BroadcastedFrom → host` |
+| Fireflies *with* a TranscribedFrom upstream to a meeting source still in catalog | `BroadcastedFrom → that-meeting-source` (skip the Fireflies "middleman") |
+| Fireflies *standalone* (no meeting source in catalog — ADR-050 fallback canonical) | `BroadcastedFrom → host` (Fireflies-as-canonical) |
+| Loom / Kaltura / YouTube | Created but not auto-linked; matcher decides |
+
+Requires a Google API Key (for YouTube Data API metadata lookup) — either in **Connections → YouTube → Google API Key** for the operator's session, or as a `GOOGLE_API_KEY` env var on the Cloud Run service for everyone (recommended via Secret Manager per ADR-042).
+
+### Summary Badge Backfill (blue card — ADR-052)
+
+Walks every record with a usable transcript and generates summaries that are **missing** (no `summary_doc_id`) or **stale** (prompt version drifted below current). Pre-flight count breaks down: `Run backfill (N missing, M stale, K via borrowed transcript)`.
+
+Default **skips locked records** (records the operator deliberately froze with the lock icon on the `📄` badge). An **Include locked records (override)** checkbox surfaces in the card so override is one click and visible.
+
+Cost cap **$5.00 USD per run** using `estimatePerRecordCost`. When the cap fires the run halts gracefully; re-clicking the button after starts a fresh budget — deliberate, so the operator splits intentional spend across sessions rather than being stuck with a cap they set hours ago.
+
+**Resumes on browser refresh.** Records already processed (`summary_prompt_version === currentPromptVersion`) drop out of the work list automatically; the button shows the shrunk count. No separate run-state to lose.
+
+### Transcript provenance lookup (ADR-053) — read-time, automatic
+
+When a record's own `transcript_text` is empty, the system walks the provenance graph in a defined safe-relations set and uses a donor record's text. Affects: the Summary Badge Backfill, the per-record **Summarise** button on each `VideoCard`, and (when wired) any future feature needing a transcript (search, RAG, etc.).
+
+| Relation | Safe to borrow? | Why |
+|---|---|---|
+| `SameEvent` | ✅ both directions | Peer capture of same event |
+| `BroadcastedFrom` | ✅ both directions | Same audio, full duration |
+| `TranscribedFrom` | ✅ both directions | Transcript-bot purpose-built |
+| `ClipOf` | ❌ | Partial — can't represent the full upstream |
+| `ScreenRecordingOf` | ❌ | Different audio surface — may include voice-over, omit music |
+
+**Donor priority** when multiple qualify:
+1. Fireflies (diarised, highest fidelity)
+2. Zoom / Streamyard / OBS / Wirecast (meeting-side auto-transcription)
+3. YouTube auto-captions (no diarisation)
+4. Kaltura captions (varies by upload pipeline)
+
+Ties broken by transcript length — longer wins.
+
+Borrowing is **read-time**, not at backfill time. No transcript copying; the donor's text stays on the donor's Drive. The badge UI gains (planned) a via-pair indicator (e.g. `📄 v3 ←FF`) for transparency.
+
+---
+
+## 13. Troubleshooting
 
 ### "Request failed (502)" or upload errors
 
