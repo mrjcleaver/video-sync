@@ -14,7 +14,10 @@ type CredentialType = "OAUTH2" | "API_KEY";
  * lib/sharedCredentials.ts on the server. YouTube and Loom are absent
  * by design (per-operator OAuth / discontinued API).
  */
-const SHARED_PLATFORM_NAMES = ["Zoom", "Fireflies", "Kaltura", "OpenRouter", "OpusClip"] as const;
+// YouTube is shareable for the googleApiKey field only — see the
+// `sharedEligibleFields` array on the YouTube PLATFORMS entry below
+// and ADR-054 for the rationale.
+const SHARED_PLATFORM_NAMES = ["Zoom", "Fireflies", "Kaltura", "OpenRouter", "OpusClip", "YouTube"] as const;
 type SharedPlatformName = (typeof SHARED_PLATFORM_NAMES)[number];
 function isSharedPlatformName(s: string): s is SharedPlatformName {
   return (SHARED_PLATFORM_NAMES as readonly string[]).includes(s);
@@ -35,6 +38,14 @@ interface PlatformInfo {
   description: string;
   credentialType: CredentialType;
   fields: FieldDef[];
+  /** When present, only these field keys are exposed via the
+   *  shared-default editor (Admin → Set as shared default). Other
+   *  fields remain available in the per-operator override editor.
+   *  Used to split YouTube's public Google API Key (shareable) from
+   *  its OAuth credentials (per-operator per ADR-042). If absent,
+   *  ALL fields are eligible in shared mode (existing behaviour for
+   *  Zoom / Fireflies / Kaltura / OpenRouter / OpusClip). */
+  sharedEligibleFields?: string[];
 }
 
 interface FieldDef {
@@ -76,6 +87,9 @@ const PLATFORMS: PlatformInfo[] = [
       { key: "channelId", label: "Channel ID", type: "text", placeholder: "UC... channel ID", required: true },
       { key: "refreshToken", label: "Refresh Token (optional — paste to skip OAuth)", type: "password", placeholder: "Paste from OAuth Playground or existing token", required: false },
     ],
+    // ADR-054 — only the public Google API Key is org-wide shareable.
+    // OAuth credentials stay per-operator (ADR-042 brand-account audit).
+    sharedEligibleFields: ["googleApiKey"],
   },
   {
     name: "Kaltura",
@@ -186,8 +200,17 @@ export default function ConnectionsPanel({ open }: Props) {
   }
 
   async function handleSave(platform: PlatformInfo) {
+    // In shared mode, validate + send ONLY the fields eligible for
+    // sharing (ADR-054 — YouTube splits public API key from per-operator
+    // OAuth). When sharedEligibleFields is undefined, behaviour is
+    // unchanged: all fields participate.
+    const isSharedMode = editor?.mode === "shared";
+    const activeFields = isSharedMode && platform.sharedEligibleFields
+      ? platform.fields.filter((f) => platform.sharedEligibleFields!.includes(f.key))
+      : platform.fields;
+
     const newErrors: Record<string, string> = {};
-    for (const field of platform.fields) {
+    for (const field of activeFields) {
       if (field.required && !draft[field.key]?.trim()) {
         newErrors[field.key] = `${field.label} is required`;
       }
@@ -197,14 +220,20 @@ export default function ConnectionsPanel({ open }: Props) {
       return;
     }
 
-    if (editor?.mode === "shared") {
+    if (isSharedMode) {
       if (!isSharedPlatformName(platform.name)) return;
       setSavingShared(true);
+      // Whitelist body keys to sharedEligibleFields so an admin who
+      // typed values into fields hidden in shared mode doesn't
+      // accidentally upload OAuth credentials to the org-wide secret.
+      const body = platform.sharedEligibleFields
+        ? Object.fromEntries(activeFields.map((f) => [f.key, draft[f.key] ?? ""]))
+        : draft;
       try {
         const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(platform.name)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(draft),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -470,7 +499,15 @@ export default function ConnectionsPanel({ open }: Props) {
                       Local override — saved only in this browser&apos;s localStorage.
                     </div>
                   )}
-                  {p.fields.map((f) => (
+                  {editor.mode === "shared" && p.sharedEligibleFields && (
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
+                      Only the field below is org-wide shareable for {p.name}. Other credentials remain per-operator (set them via &quot;Override locally&quot;).
+                    </div>
+                  )}
+                  {(editor.mode === "shared" && p.sharedEligibleFields
+                    ? p.fields.filter((f) => p.sharedEligibleFields!.includes(f.key))
+                    : p.fields
+                  ).map((f) => (
                     <div key={f.key} className="form-field">
                       <label htmlFor={`${p.name}-${f.key}`}>{f.label}</label>
                       <input

@@ -24,7 +24,12 @@
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import { serverLog } from "./serverLogger";
 
-export const SHARED_PLATFORMS = ["zoom", "fireflies", "kaltura", "openrouter", "opusclip"] as const;
+// YouTube is shareable for ONE field only: the Google API Key (used
+// for public YouTube Data API metadata lookups — has no per-user
+// identity). OAuth credentials (clientId/clientSecret/refreshToken/
+// channelId/ytCookies) stay per-operator per ADR-042 (brand-account
+// attribution). See ADR-054.
+export const SHARED_PLATFORMS = ["zoom", "fireflies", "kaltura", "openrouter", "opusclip", "youtube"] as const;
 export type SharedPlatform = (typeof SHARED_PLATFORMS)[number];
 
 export interface SharedSecretMeta {
