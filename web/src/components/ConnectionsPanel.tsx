@@ -1,17 +1,51 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import HelpTip from "./HelpTip";
+import { useCurrentActor } from "../lib/useCurrentActor";
 
 const STORAGE_KEY = "video-sync:connections";
 
 type CredentialType = "OAUTH2" | "API_KEY";
+
+/**
+ * Platforms whose credentials can be served from the server's shared
+ * Secret Manager (ADR-042). Must match SHARED_PLATFORMS in
+ * lib/sharedCredentials.ts on the server. YouTube and Loom are absent
+ * by design (per-operator OAuth / discontinued API).
+ */
+// YouTube is shareable for the googleApiKey field only — see the
+// `sharedEligibleFields` array on the YouTube PLATFORMS entry below
+// and ADR-054 for the rationale.
+const SHARED_PLATFORM_NAMES = ["Zoom", "Fireflies", "Kaltura", "OpenRouter", "OpusClip", "YouTube"] as const;
+type SharedPlatformName = (typeof SHARED_PLATFORM_NAMES)[number];
+function isSharedPlatformName(s: string): s is SharedPlatformName {
+  return (SHARED_PLATFORM_NAMES as readonly string[]).includes(s);
+}
+
+/** Server platform key (lowercase) — what the API routes expect on the path. */
+function sharedPlatformKey(name: SharedPlatformName): string {
+  return name.toLowerCase();
+}
+
+/** Platforms that ONLY allow shared (admin-managed) credentials —
+ *  no per-operator override. ADR-042: Kaltura admin secret is too
+ *  high-blast-radius to type into operator browsers. */
+const SHARED_ONLY_PLATFORMS = new Set<string>(["Kaltura"]);
 
 interface PlatformInfo {
   name: string;
   description: string;
   credentialType: CredentialType;
   fields: FieldDef[];
+  /** When present, only these field keys are exposed via the
+   *  shared-default editor (Admin → Set as shared default). Other
+   *  fields remain available in the per-operator override editor.
+   *  Used to split YouTube's public Google API Key (shareable) from
+   *  its OAuth credentials (per-operator per ADR-042). If absent,
+   *  ALL fields are eligible in shared mode (existing behaviour for
+   *  Zoom / Fireflies / Kaltura / OpenRouter / OpusClip). */
+  sharedEligibleFields?: string[];
 }
 
 interface FieldDef {
@@ -34,14 +68,6 @@ const PLATFORMS: PlatformInfo[] = [
     ],
   },
   {
-    name: "Loom",
-    description: "Async video messaging",
-    credentialType: "API_KEY",
-    fields: [
-      { key: "apiKey", label: "API Key", type: "password", placeholder: "Your Loom API key", required: true },
-    ],
-  },
-  {
     name: "Fireflies",
     description: "AI meeting notes",
     credentialType: "API_KEY",
@@ -61,6 +87,9 @@ const PLATFORMS: PlatformInfo[] = [
       { key: "channelId", label: "Channel ID", type: "text", placeholder: "UC... channel ID", required: true },
       { key: "refreshToken", label: "Refresh Token (optional — paste to skip OAuth)", type: "password", placeholder: "Paste from OAuth Playground or existing token", required: false },
     ],
+    // ADR-054 — only the public Google API Key is org-wide shareable.
+    // OAuth credentials stay per-operator (ADR-042 brand-account audit).
+    sharedEligibleFields: ["googleApiKey"],
   },
   {
     name: "Kaltura",
@@ -68,7 +97,10 @@ const PLATFORMS: PlatformInfo[] = [
     credentialType: "API_KEY",
     fields: [
       { key: "partnerId", label: "Partner ID", type: "text", placeholder: "Your Kaltura Partner ID", required: true },
-      { key: "apiKey", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
+      // Field key matches the server-side resolver (`adminSecret`), not
+      // the user-facing label "Admin Secret". Legacy local-storage entries
+      // wrote this under `apiKey` — handlers accept either form.
+      { key: "adminSecret", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
     ],
   },
   {
@@ -95,6 +127,13 @@ interface ConnectionState {
   credentials: Record<string, string>;
 }
 
+interface SharedMetaEntry {
+  configured: boolean;
+  set_by?: string;
+  set_at?: string;
+  version_count?: number;
+}
+
 function loadConnections(): Record<string, ConnectionState> {
   if (typeof window === "undefined") return {};
   try {
@@ -110,32 +149,68 @@ function saveConnections(data: Record<string, ConnectionState>) {
 
 interface Props { open: boolean; onToggle: () => void; }
 
-export default function ConnectionsPanel({ open, onToggle }: Props) {
+type EditorMode = "override" | "shared";
+
+interface EditorState {
+  platform: string;
+  mode: EditorMode;
+}
+
+export default function ConnectionsPanel({ open }: Props) {
   const [connections, setConnections] = useState<Record<string, ConnectionState>>({});
-  const [editing, setEditing] = useState<string | null>(null);
+  const [sharedMeta, setSharedMeta] = useState<Record<string, SharedMetaEntry>>({});
+  const [editor, setEditor] = useState<EditorState | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [savingShared, setSavingShared] = useState(false);
+  const actorState = useCurrentActor();
+  const isAdmin = actorState.actor?.role === "Admin";
 
+  useEffect(() => { setConnections(loadConnections()); }, []);
+
+  // Fetch shared metadata on mount + after admin writes (refreshTick).
+  const [refreshTick, setRefreshTick] = useState(0);
   useEffect(() => {
-    setConnections(loadConnections());
-  }, []);
+    let cancelled = false;
+    fetch("/api/credentials/shared", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((data: { shared?: Record<string, SharedMetaEntry> }) => {
+        if (cancelled) return;
+        setSharedMeta(data.shared ?? {});
+      })
+      .catch(() => { /* silent — non-fatal */ });
+    return () => { cancelled = true; };
+  }, [refreshTick]);
 
-  function openEditor(platform: PlatformInfo) {
-    const existing = connections[platform.name]?.credentials || {};
-    setDraft({ ...existing });
+  function openEditor(platform: PlatformInfo, mode: EditorMode) {
+    if (mode === "shared" && SHARED_ONLY_PLATFORMS.has(platform.name) && !isAdmin) return;
+    if (mode === "override" && SHARED_ONLY_PLATFORMS.has(platform.name)) return;
+    const seed = mode === "override"
+      ? (connections[platform.name]?.credentials ?? {})
+      : {}; // Always start blank for shared edits — secret values are write-only
+    setDraft({ ...seed });
     setErrors({});
-    setEditing(platform.name);
+    setEditor({ platform: platform.name, mode });
   }
 
   function closeEditor() {
-    setEditing(null);
+    setEditor(null);
     setDraft({});
     setErrors({});
   }
 
-  function handleSave(platform: PlatformInfo) {
+  async function handleSave(platform: PlatformInfo) {
+    // In shared mode, validate + send ONLY the fields eligible for
+    // sharing (ADR-054 — YouTube splits public API key from per-operator
+    // OAuth). When sharedEligibleFields is undefined, behaviour is
+    // unchanged: all fields participate.
+    const isSharedMode = editor?.mode === "shared";
+    const activeFields = isSharedMode && platform.sharedEligibleFields
+      ? platform.fields.filter((f) => platform.sharedEligibleFields!.includes(f.key))
+      : platform.fields;
+
     const newErrors: Record<string, string> = {};
-    for (const field of platform.fields) {
+    for (const field of activeFields) {
       if (field.required && !draft[field.key]?.trim()) {
         newErrors[field.key] = `${field.label} is required`;
       }
@@ -145,13 +220,43 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
       return;
     }
 
-    const next = {
-      ...connections,
-      [platform.name]: { connected: true, credentials: { ...draft } },
-    };
-    setConnections(next);
-    saveConnections(next);
-    closeEditor();
+    if (isSharedMode) {
+      if (!isSharedPlatformName(platform.name)) return;
+      setSavingShared(true);
+      // Whitelist body keys to sharedEligibleFields so an admin who
+      // typed values into fields hidden in shared mode doesn't
+      // accidentally upload OAuth credentials to the org-wide secret.
+      const body = platform.sharedEligibleFields
+        ? Object.fromEntries(activeFields.map((f) => [f.key, draft[f.key] ?? ""]))
+        : draft;
+      try {
+        const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(platform.name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setErrors({ _form: (data as { error?: string }).error ?? `Save failed (${res.status})` });
+          return;
+        }
+        setRefreshTick(t => t + 1);
+        closeEditor();
+      } catch (err) {
+        setErrors({ _form: `Network error: ${String(err)}` });
+      } finally {
+        setSavingShared(false);
+      }
+    } else {
+      // Local override → localStorage only
+      const next = {
+        ...connections,
+        [platform.name]: { connected: true, credentials: { ...draft } },
+      };
+      setConnections(next);
+      saveConnections(next);
+      closeEditor();
+    }
   }
 
   function handleDisconnect(platformName: string) {
@@ -162,8 +267,29 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
     closeEditor();
   }
 
+  async function handleDeleteShared(platformName: string) {
+    if (!isSharedPlatformName(platformName)) return;
+    if (!isAdmin) return;
+    if (!confirm(`Remove the shared ${platformName} credential? Operators without their own override will fall back to "unconfigured".`)) return;
+    setSavingShared(true);
+    try {
+      const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(platformName)}`, { method: "DELETE" });
+      if (!res.ok) {
+        alert(`Delete failed (${res.status})`);
+        return;
+      }
+      setRefreshTick(t => t + 1);
+    } finally {
+      setSavingShared(false);
+    }
+  }
+
+  function handleDropOverride(platformName: string) {
+    if (!confirm(`Drop your local ${platformName} override and use the shared default instead?`)) return;
+    handleDisconnect(platformName);
+  }
+
   function handleReauthorize(platformName: string) {
-    // Clear only the refreshToken so user can re-do OAuth without losing clientId/clientSecret
     const next = { ...connections };
     const conn = next[platformName];
     if (conn?.credentials) {
@@ -173,14 +299,10 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
     }
     setConnections(next);
     saveConnections(next);
-    // Trigger OAuth flow
     if (platformName === "YouTube" && conn?.credentials?.clientId) {
       window.location.href = `/api/youtube/auth?clientId=${encodeURIComponent(conn.credentials.clientId)}`;
     }
   }
-
-  const isConnected = (name: string) => connections[name]?.connected === true;
-  const isYouTubeAuthorized = () => !!connections["YouTube"]?.credentials?.refreshToken;
 
   function handleYouTubeAuth() {
     const yt = connections["YouTube"];
@@ -191,35 +313,145 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
     window.location.href = `/api/youtube/auth?clientId=${encodeURIComponent(yt.credentials.clientId)}`;
   }
 
+  function platformStatus(name: string): { source: "override" | "shared" | "none"; sharedSetBy?: string; sharedSetAt?: string } {
+    const overrideOn = connections[name]?.connected === true;
+    const sharedOn = isSharedPlatformName(name) && sharedMeta[sharedPlatformKey(name)]?.configured;
+    if (overrideOn) {
+      return {
+        source: "override",
+        sharedSetBy: sharedOn ? sharedMeta[sharedPlatformKey(name as SharedPlatformName)]?.set_by : undefined,
+        sharedSetAt: sharedOn ? sharedMeta[sharedPlatformKey(name as SharedPlatformName)]?.set_at : undefined,
+      };
+    }
+    if (sharedOn) {
+      const m = sharedMeta[sharedPlatformKey(name as SharedPlatformName)];
+      return { source: "shared", sharedSetBy: m?.set_by, sharedSetAt: m?.set_at };
+    }
+    return { source: "none" };
+  }
+
+  const isYouTubeAuthorized = () => !!connections["YouTube"]?.credentials?.refreshToken;
+
+  // Memoize the Kaltura admin-only banner copy
+  const adminCanShare = useMemo(() => isAdmin, [isAdmin]);
+
+  if (!open) return null;
+
   return (
     <div className="connections-panel">
       <h2>Connections</h2>
       <HelpTip>
-        Store API credentials for external services. Credentials are saved only in your
-        browser&apos;s localStorage — nothing is sent to any server until you use a feature that
-        requires them. <strong>Zoom</strong> and <strong>YouTube</strong> use OAuth 2.0
-        (Account ID + Client ID + Secret). <strong>Fireflies</strong>, <strong>Loom</strong>,
-        and <strong>Kaltura</strong> use API keys. <strong>OpenRouter</strong> powers LLM
-        transcript summarisation in Processing Rules.
+        Two sources for credentials (ADR-042): your <strong>local override</strong>{" "}
+        (browser localStorage) takes precedence over the org&apos;s{" "}
+        <strong>shared default</strong> (Google Secret Manager, set by a key admin).
+        <br /><br />
+        <strong>Kaltura</strong> is shared-only — its admin secret is too privileged
+        for per-operator overrides. <strong>YouTube</strong> is per-operator only,
+        so brand-account uploads carry the actual operator&apos;s identity (audit
+        and copyright trail).
       </HelpTip>
 
-      {open && (
-        <div className="connections-grid">
-          {PLATFORMS.map((p) => (
+      <div className="connections-grid">
+        {PLATFORMS.map((p) => {
+          const status = platformStatus(p.name);
+          const editingThis = editor?.platform === p.name;
+          const sharedSupported = isSharedPlatformName(p.name);
+          const sharedOnly = SHARED_ONLY_PLATFORMS.has(p.name);
+          const showOverrideEdit = !sharedOnly;
+
+          return (
             <div
               key={p.name}
-              className={`connection-card ${isConnected(p.name) ? "connected" : ""}`}
-              onClick={() => editing !== p.name && openEditor(p)}
+              className={`connection-card ${status.source !== "none" ? "connected" : ""}`}
             >
               <h3>{p.name}</h3>
               <p>{p.description}</p>
               <span className="connection-badge">{p.credentialType === "OAUTH2" ? "OAuth 2.0" : "API Key"}</span>
-              <span className="connection-status">
-                {isConnected(p.name) ? "Connected" : "Not connected"}
-              </span>
 
-              {p.name === "YouTube" && isConnected("YouTube") && editing !== "YouTube" && (
-                <div className="yt-auth-row">
+              {/* Source line */}
+              <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 6 }}>
+                {/* YouTube is per-operator by design (ADR-042 §"YouTube
+                    brand account") — uploads go out under the operator's
+                    own identity inside the brand account, so the audit
+                    trail at YouTube's layer is accurate. The "not
+                    configured" badge would otherwise read as generic. */}
+                {p.name === "YouTube" && status.source === "override" && (
+                  <span style={{ color: "var(--green)" }}>● Authorised (per-user, via Brand Account)</span>
+                )}
+                {p.name === "YouTube" && status.source === "none" && (
+                  <span>
+                    ○ Per-user — not yet authorised. YouTube credentials are deliberately
+                    not shared so that uploads carry your identity inside the brand
+                    account (accountability + Content ID audit).
+                  </span>
+                )}
+                {p.name !== "YouTube" && status.source === "override" && (
+                  <span style={{ color: "var(--green)" }}>● Override active (your browser)</span>
+                )}
+                {p.name !== "YouTube" && status.source === "shared" && (
+                  <span style={{ color: "#a78bfa" }}>
+                    ● Shared default
+                    {status.sharedSetBy ? ` · set by ${status.sharedSetBy}` : ""}
+                    {status.sharedSetAt ? ` on ${status.sharedSetAt.slice(0, 10)}` : ""}
+                  </span>
+                )}
+                {p.name !== "YouTube" && status.source === "none" && (
+                  <span>
+                    ○ {sharedOnly && !adminCanShare
+                      ? "The key admin has chosen not to make this available."
+                      : "Not configured"}
+                  </span>
+                )}
+              </div>
+
+              {/* Action row */}
+              {!editingThis && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                  {showOverrideEdit && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => openEditor(p, "override")}
+                    >
+                      {status.source === "override" ? "Edit override" : "Override locally"}
+                    </button>
+                  )}
+                  {status.source === "override" && sharedSupported && sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => handleDropOverride(p.name)}
+                      title="Use the shared default instead of your local override"
+                    >
+                      Drop override → use shared
+                    </button>
+                  )}
+                  {sharedSupported && isAdmin && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => openEditor(p, "shared")}
+                      title="Set the org-wide default for this platform"
+                      style={{ borderColor: "#a78bfa", color: "#a78bfa" }}
+                    >
+                      {status.source === "shared" || sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured
+                        ? "Edit shared default…"
+                        : "Set as shared default…"}
+                    </button>
+                  )}
+                  {sharedSupported && isAdmin && sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured && (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => handleDeleteShared(p.name)}
+                      title="Remove the shared default — operators without overrides will see 'not configured'"
+                      disabled={savingShared}
+                    >
+                      Remove shared
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* YouTube OAuth flow — unchanged from pre-ADR-042 */}
+              {p.name === "YouTube" && status.source === "override" && !editingThis && (
+                <div className="yt-auth-row" style={{ marginTop: 6 }}>
                   {isYouTubeAuthorized() ? (
                     <>
                       <span className="yt-authorized">
@@ -230,22 +462,52 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
                       <button
                         className="btn btn-sm"
                         style={{ marginLeft: 8, fontSize: "0.65rem" }}
-                        onClick={(e) => { e.stopPropagation(); handleReauthorize("YouTube"); }}
+                        onClick={() => handleReauthorize("YouTube")}
                       >
                         Re-authorize
                       </button>
                     </>
                   ) : (
-                    <button className="btn btn-sm btn-primary" onClick={(e) => { e.stopPropagation(); handleYouTubeAuth(); }}>
+                    <button className="btn btn-sm btn-primary" onClick={handleYouTubeAuth}>
                       Authorize YouTube
                     </button>
                   )}
                 </div>
               )}
 
-              {editing === p.name && (
+              {/* Editor — rendered when this card is being edited */}
+              {editingThis && (
                 <div className="credential-form" onClick={(e) => e.stopPropagation()}>
-                  {p.fields.map((f) => (
+                  {editor.mode === "shared" && (
+                    <div style={{
+                      background: "rgba(168,85,247,0.08)",
+                      border: "1px solid rgba(168,85,247,0.3)",
+                      borderRadius: 6,
+                      padding: "6px 10px",
+                      marginBottom: 8,
+                      fontSize: "0.75rem",
+                      color: "var(--text)",
+                    }}>
+                      <strong style={{ color: "#a78bfa" }}>⚠ Editing shared default.</strong>{" "}
+                      Saving here writes to Google Secret Manager and affects every operator
+                      who doesn&apos;t have a local override. To test changes against your own
+                      account first, cancel and choose <em>Override locally</em> instead.
+                    </div>
+                  )}
+                  {editor.mode === "override" && (
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
+                      Local override — saved only in this browser&apos;s localStorage.
+                    </div>
+                  )}
+                  {editor.mode === "shared" && p.sharedEligibleFields && (
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
+                      Only the field below is org-wide shareable for {p.name}. Other credentials remain per-operator (set them via &quot;Override locally&quot;).
+                    </div>
+                  )}
+                  {(editor.mode === "shared" && p.sharedEligibleFields
+                    ? p.fields.filter((f) => p.sharedEligibleFields!.includes(f.key))
+                    : p.fields
+                  ).map((f) => (
                     <div key={f.key} className="form-field">
                       <label htmlFor={`${p.name}-${f.key}`}>{f.label}</label>
                       <input
@@ -266,13 +528,22 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
                       {errors[f.key] && <span className="field-error">{errors[f.key]}</span>}
                     </div>
                   ))}
+                  {errors._form && (
+                    <div className="field-error" style={{ marginBottom: 6 }}>{errors._form}</div>
+                  )}
                   <div className="form-actions">
-                    <button className="btn btn-primary" onClick={() => handleSave(p)}>
-                      {isConnected(p.name) ? "Update" : "Connect"}
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleSave(p)}
+                      disabled={savingShared}
+                    >
+                      {editor.mode === "shared"
+                        ? (savingShared ? "Saving…" : "Save shared default")
+                        : (status.source === "override" ? "Update override" : "Save override")}
                     </button>
-                    {isConnected(p.name) && (
+                    {editor.mode === "override" && status.source === "override" && (
                       <button className="btn btn-danger" onClick={() => handleDisconnect(p.name)}>
-                        Disconnect
+                        Drop override
                       </button>
                     )}
                     <button className="btn btn-sm" onClick={closeEditor}>
@@ -282,9 +553,9 @@ export default function ConnectionsPanel({ open, onToggle }: Props) {
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }

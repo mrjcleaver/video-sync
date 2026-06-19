@@ -1,0 +1,44 @@
+name: Feature request
+description: A new capability or extension of an existing one.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For substantial features (new external integration, new domain
+        concept, persistence changes), an ADR is the right artifact —
+        link this issue to a draft ADR PR when you have one. Smaller
+        features can be scoped here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the workflow gap, not the proposed feature. "When I do X, I have to also do Y by hand."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: How you'd like it to work. Skip if you'd rather we propose one.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Things you tried, or other shapes the feature could take.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Roughly how big do you think this is?
+      options:
+        - Small (one button, one config, one page)
+        - Medium (new flow or screen)
+        - Large (new integration, domain model change, new ADR)
+        - I have no idea
+    validations:
+      required: true

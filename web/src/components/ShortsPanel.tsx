@@ -4,16 +4,12 @@ import { useState, useMemo } from "react";
 import { videoStore } from "../lib/store";
 import { WasmVideoRecord } from "../lib/wasm";
 import type { VideoRecordJSON } from "../lib/wasm";
-
-const ADMIN_ACTOR = JSON.stringify({
-  user_id: "00000000-0000-0000-0000-000000000001",
-  role: "Admin",
-});
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 interface Props {
   videos: VideoRecordJSON[];
   onMutated: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 function formatScore(score: number): string {
@@ -27,6 +23,8 @@ function formatDuration(start: number, end: number): string {
 }
 
 export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
+  const actorState = useCurrentActor();
+  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<Record<string, string>>({});
 
@@ -43,7 +41,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
   function approveclip(clip: VideoRecordJSON) {
     videoStore.mutate(clip.id, (r) =>
-      r.approve(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
+      r.approve(cmd())
     );
     onEvent(`ShortApproved: "${clip.title}"`);
     onMutated();
@@ -51,7 +49,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
   function rejectClip(clip: VideoRecordJSON) {
     videoStore.mutate(clip.id, (r) =>
-      r.abandon(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
+      r.abandon(cmd())
     );
     onEvent(`ShortRejected: "${clip.title}"`);
     onMutated();
@@ -95,7 +93,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     try {
       // Move to Publishing state
       videoStore.mutate(clip.id, (r) =>
-        r.request_publish(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }))
+        r.request_publish(cmd())
       );
       onMutated();
 
@@ -126,14 +124,11 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
       // Record YouTube destination location
       videoStore.mutate(clip.id, (r) => {
-        r.add_location(JSON.stringify({
-          actor: JSON.parse(ADMIN_ACTOR),
-          platform: "YouTube",
+        r.add_location(cmd({ platform: "YouTube",
           external_id: data.videoId ?? "",
           external_url: data.videoUrl ?? null,
-          role: "Destination",
-        }));
-        return r.mark_published(JSON.stringify({ actor: JSON.parse(ADMIN_ACTOR) }));
+          role: "Destination", }));
+        return r.mark_published(cmd());
       });
 
       onEvent(`ShortPublished: "${clip.title}" → YouTube/${data.videoId}`);

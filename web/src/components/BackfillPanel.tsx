@@ -13,15 +13,24 @@ import {
   statusColor,
   MONTH_NAMES,
 } from "../lib/backfill";
-import BackfillCalendar from "./BackfillCalendar";
 import HelpTip from "./HelpTip";
+import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 const CONNECTIONS_KEY = "video-sync:connections";
 
+/** Short date tag for event log disambiguation — e.g. "(15 Mar)" */
+function dateTag(recorded_at: string | null | undefined): string {
+  if (!recorded_at) return "";
+  const d = new Date(recorded_at);
+  return ` (${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })})`;
+}
+
 interface Props {
   videos: VideoRecordJSON[];
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
   onMutated: () => void;
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
 function loadYouTubeCreds(): { refreshToken?: string; clientId?: string; clientSecret?: string } {
@@ -66,7 +75,9 @@ function newProfile(): BackfillProfile {
   };
 }
 
-export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
+export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateToVideo }: Props) {
+  const actorState = useCurrentActor();
+  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [profiles, setProfilesState] = useState<BackfillProfile[]>([]);
   const [queue, setQueueState] = useState(loadQueue());
   const [clientState, setClientStateValue] = useState(loadClientState());
@@ -74,8 +85,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
   const [editing, setEditing] = useState<BackfillProfile | null>(null);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"profiles" | "queue" | "calendar">("profiles");
-  const [calendarProfile, setCalendarProfile] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"profiles" | "queue">("queue");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -170,12 +180,9 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
 
     // Mark as publishing
     try {
-      videoStore.mutate(videoId, r =>
-        r.request_publish(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-        }))
-      );
+      videoStore.mutate(videoId, r => r.request_publish(cmd()));
       onMutated();
+      onNavigateToVideo?.(videoId, "publish");
     } catch { /* may already be in Publishing */ }
 
     const uploadBody: Record<string, unknown> = {
@@ -216,14 +223,13 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
 
       const { videoId: ytId, videoUrl } = await res.json() as { videoId: string; videoUrl: string };
 
-      videoStore.mutate(videoId, r =>
-        r.mark_published(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-          destination_id: ytId,
-          destination_url: videoUrl,
-          platform: "YouTube",
-        }))
-      );
+      videoStore.mutate(videoId, r => r.mark_published(cmd({
+        destination_id: ytId,
+        destination_url: videoUrl,
+        platform: "YouTube",
+      })));
+      // Cache privacy — we know what we uploaded with
+      setPrivacy(ytId, normalisePrivacy(attrs.privacy_status ?? profile.default_privacy));
       onMutated();
 
       removeFromQueue(videoId);
@@ -244,19 +250,14 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
       saveClientState(newCs);
       setClientStateValue(newCs);
 
-      onEvent(`Backfill: published "${video.title}" → ${videoUrl}`);
+      onEvent(`Backfill: published "${video.title}"${dateTag(video.recorded_at)} → ${videoUrl}`, { video_id: videoId });
       setStatus(`Published "${video.title}"`);
     } catch (err) {
-      videoStore.mutate(videoId, r =>
-        r.mark_failed(JSON.stringify({
-          actor: { user_id: "00000000-0000-0000-0000-000000000001", role: "Admin" },
-          reason: String(err),
-        }))
-      );
+      videoStore.mutate(videoId, r => r.mark_failed(cmd({ reason: String(err) })));
       onMutated();
       markQueueEntryFailed(videoId, 1);
       setQueueState(loadQueue());
-      onEvent(`Backfill: upload failed for "${video.title}" — ${String(err)}`);
+      onEvent(`Backfill: upload failed for "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: videoId });
       setStatus(`Failed: ${String(err).slice(0, 80)}`);
     }
   }, [videos, onEvent, onMutated]);
@@ -277,7 +278,6 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
 
   const readyEntries = readyQueue(queue);
   const uploadsToday = serverState?.uploads_today ?? clientState.uploads_today;
-  const calendarProfileObj = profiles.find(p => p.id === calendarProfile) ?? profiles[0];
 
   return (
     <div className="zoom-import">
@@ -293,6 +293,9 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
           <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
             {readyEntries.length} queued
           </span>
+          <button className="btn btn-sm" onClick={onMutated} title="Refresh video data">
+            ↻
+          </button>
           <button
             className={`btn btn-sm ${running ? "btn-primary" : "btn-green"}`}
             onClick={running ? stopOrchestrator : startOrchestrator}
@@ -310,12 +313,12 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
         <strong>Queue</strong> shows videos pending upload with their transformed titles,
         descriptions, tags, and privacy — computed by your Processing Rules. Click{" "}
         <em>Auto-populate</em> to fill the queue from Approved videos, then{" "}
-        <em>▶ Start</em> to begin the timed orchestrator. <strong>Calendar</strong> gives a
-        month-by-month view of coverage gaps vs. published videos.
+        <em>▶ Start</em> to begin the timed orchestrator. Coverage and per-video status
+        live in the <strong>Sync Status</strong> panel above.
       </HelpTip>
 
       <div className="filter-tabs" style={{ marginBottom: 12 }}>
-        {(["profiles", "queue", "calendar"] as const).map(t => (
+        {(["profiles", "queue"] as const).map(t => (
           <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "queue" && readyEntries.length > 0 ? ` (${readyEntries.length})` : ""}
@@ -355,27 +358,6 @@ export default function BackfillPanel({ videos, onEvent, onMutated }: Props) {
             onEvent("Backfill: queue cleared");
           }}
         />
-      )}
-
-      {activeTab === "calendar" && calendarProfileObj && (
-        <div>
-          {profiles.length > 1 && (
-            <select
-              value={calendarProfile}
-              onChange={e => setCalendarProfile(e.target.value)}
-              style={{ marginBottom: 12, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            >
-              {profiles.map(p => <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>)}
-            </select>
-          )}
-          <BackfillCalendar videos={videos} profile={calendarProfileObj} />
-        </div>
-      )}
-
-      {activeTab === "calendar" && profiles.length === 0 && (
-        <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: 16 }}>
-          Create a profile first to see the calendar view.
-        </div>
       )}
     </div>
   );

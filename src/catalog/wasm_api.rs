@@ -272,6 +272,40 @@ impl WasmVideoRecord {
         serde_json::to_string(&self.inner.rejected_links)
             .map_err(|e| JsError::new(&e.to_string()))
     }
+
+    /// ADR-046: record a freshly generated summary Doc on the record.
+    /// Returns JSON array of emitted events.
+    pub fn set_summary_metadata(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: SetSummaryMetadata =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .set_summary_metadata(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// ADR-046: lock the summary so bulk-regen skips this record.
+    pub fn lock_summary(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: LockSummary =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .lock_summary(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// ADR-046: unlock the summary so bulk-regen will rewrite it.
+    pub fn unlock_summary(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: UnlockSummary =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .unlock_summary(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
 }
 
 impl WasmVideoRecord {

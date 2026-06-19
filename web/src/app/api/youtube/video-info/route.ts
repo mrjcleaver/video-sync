@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
 export interface YouTubeVideoInfo {
   videoId: string;
@@ -32,13 +33,19 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Valid 11-character videoId required" }, { status: 400 });
   }
 
+  // ADR-054 fallback chain — per-operator query-param key wins, then
+  // the org-wide shared default (Secret Manager), then the legacy
+  // env-var path. The shared default is what Admin sets via
+  // Connections → YouTube → "Set as shared default".
+  const sharedYouTube = await getSharedCredential("youtube").catch(() => null);
   const apiKey =
     req.nextUrl.searchParams.get("apiKey") ||
+    (sharedYouTube as { googleApiKey?: string } | null)?.googleApiKey ||
     process.env.GOOGLE_API_KEY ||
     process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "No Google API key configured. Add one in Connections → YouTube → Google API Key, or set GOOGLE_API_KEY on the server." },
+      { error: "No Google API key configured. Ask an Admin to set the shared default in Connections → YouTube → Set as shared default, or add a personal override in Connections → YouTube → Override locally → Google API Key." },
       { status: 500 },
     );
   }

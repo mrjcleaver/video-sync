@@ -5,13 +5,18 @@
  *
  * Requires env:
  *   OPENROUTER_API_KEY   — your OpenRouter API key
- *   OPENROUTER_MODEL     — optional, defaults to google/gemini-2.0-flash-001
+ *   OPENROUTER_MODEL     — optional, defaults to google/gemini-2.5-flash
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 
-const DEFAULT_MODEL = "google/gemini-2.0-flash-001";
+// google/gemini-2.0-flash-001 was retired upstream — OpenRouter returns
+// 404 "No endpoints found" for it. Default to the current Flash tier;
+// the fallback handler below also triggers on 404 so a future
+// retirement doesn't take this route down again.
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const FALLBACK_MODEL = "anthropic/claude-haiku-4-5";
 
 const SYSTEM_PROMPT = `You are a video session summariser. Given a meeting or coding session transcript, return a JSON object with exactly these fields:
@@ -29,8 +34,9 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Key priority: request body (from Connections panel) > env var fallback
-  const apiKey = body.apiKey?.trim() || process.env.OPENROUTER_API_KEY;
+  // ADR-042 resolution: operator override (body) → shared secret → env legacy.
+  const sharedOR = (await getSharedCredential("openrouter")) ?? {};
+  const apiKey = body.apiKey?.trim() || (sharedOR as { apiKey?: string }).apiKey?.trim() || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
       { error: "OpenRouter API key not configured. Add it in the Connections panel." },
@@ -81,8 +87,13 @@ async function handler(req: NextRequest) {
     let res = await callOpenRouter(model);
     let usedModel = model;
 
-    if (res.status === 429 && model !== FALLBACK_MODEL) {
-      serverLog("warn", "ext:openrouter", "rate-limited, retrying with fallback", { model, fallback: FALLBACK_MODEL, rid });
+    // Trigger the fallback for rate-limit (429), model-retired (404
+    // "No endpoints found"), and model-not-available-on-this-key
+    // (400/402). Catches the common reasons a configured model
+    // disappears without taking the route down.
+    const FALLBACK_TRIGGERS = new Set([400, 402, 404, 429]);
+    if (FALLBACK_TRIGGERS.has(res.status) && model !== FALLBACK_MODEL) {
+      serverLog("warn", "ext:openrouter", "retrying with fallback", { status: res.status, model, fallback: FALLBACK_MODEL, rid });
       res = await callOpenRouter(FALLBACK_MODEL);
       usedModel = FALLBACK_MODEL;
     }

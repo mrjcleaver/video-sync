@@ -9,6 +9,12 @@ const gitSha = (() => {
 const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: ["*.app.github.dev"],
+  // Type-check + lint are run separately (deploy.sh + CI) — Next 15's
+  // in-build worker OOMs in our 7.8GB devcontainer once the project crossed
+  // ~30 routes. Disabling here doesn't bypass the checks; deploy.sh runs
+  // `tsc --noEmit` before docker build and fails fast on type errors.
+  typescript: { ignoreBuildErrors: true },
+  eslint: { ignoreDuringBuilds: true },
   env: {
     NEXT_PUBLIC_APP_VERSION: "0.2.0",
     NEXT_PUBLIC_BUILD_SHA: gitSha,

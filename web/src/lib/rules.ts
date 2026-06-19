@@ -91,6 +91,28 @@ export function loadExclusions(): ExclusionEntry[] {
 
 export function saveExclusions(entries: ExclusionEntry[]): void {
   localStorage.setItem(EXCLUSIONS_KEY, JSON.stringify(entries));
+  // ADR-043: write-through to server so Bob doesn't re-import what
+  // Alice already excluded. Best-effort; localStorage is the primary.
+  fetch("/api/exclusions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entries),
+  }).catch(() => { /* offline — ignore */ });
+}
+
+/** ADR-043: hydrate localStorage from server on boot. Server-wins-if-non-empty. */
+export async function syncExclusionsFromServer(): Promise<void> {
+  try {
+    const res = await fetch("/api/exclusions", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json() as ExclusionEntry[];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem(EXCLUSIONS_KEY, JSON.stringify(data));
+    } else {
+      const local = loadExclusions();
+      if (local.length > 0) saveExclusions(local);
+    }
+  } catch { /* offline — ignore */ }
 }
 
 export function addExclusion(
@@ -137,14 +159,19 @@ export function matchesCriteria(c: RuleCriteria, video: VideoRecordJSON): boolea
     }
   }
 
+  // Date-based criteria evaluate against when the meeting was actually
+  // recorded, NOT when this record was added to the catalog. For 18-month
+  // backfills the difference matters: an import done today of a video
+  // recorded last Friday should match a "Friday only" rule.
+  const eventTimeStr = video.recorded_at ?? video.indexed_at ?? video.created_at;
+  const eventTime = new Date(eventTimeStr);
+
   if (c.days_of_week && c.days_of_week.length > 0) {
-    const day = new Date(video.created_at).getDay();
-    if (!c.days_of_week.includes(day)) return false;
+    if (!c.days_of_week.includes(eventTime.getDay())) return false;
   }
 
   if (c.time_range) {
-    const d = new Date(video.created_at);
-    const hhmm = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    const hhmm = `${eventTime.getHours().toString().padStart(2, "0")}:${eventTime.getMinutes().toString().padStart(2, "0")}`;
     if (c.time_range.after && hhmm < c.time_range.after) return false;
     if (c.time_range.before && hhmm > c.time_range.before) return false;
   }
@@ -158,12 +185,12 @@ export function matchesCriteria(c: RuleCriteria, video: VideoRecordJSON): boolea
 
   if (c.date_from) {
     const from = new Date(c.date_from).getTime();
-    if (new Date(video.created_at).getTime() < from) return false;
+    if (eventTime.getTime() < from) return false;
   }
 
   if (c.date_to) {
     const to = new Date(c.date_to).getTime();
-    if (new Date(video.created_at).getTime() > to) return false;
+    if (eventTime.getTime() > to) return false;
   }
 
   return true;

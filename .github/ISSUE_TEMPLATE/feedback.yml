@@ -1,0 +1,56 @@
+name: General feedback
+description: Reaction, suggestion, or rough edge from using the app.
+title: "[feedback] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to send feedback. The in-app **Feedback**
+        button drops you here pre-filled with the build SHA so we can pin
+        your report to the exact deployed revision. Keep what you don't
+        need; rip the rest.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What were you doing / trying to do?
+      description: One sentence is fine. "Importing a Loom URL", "Reviewing the catalog", etc.
+      placeholder: e.g. Saving a shared Kaltura credential
+    validations:
+      required: true
+
+  - type: textarea
+    id: observation
+    attributes:
+      label: What surprised you, broke, or felt off?
+      description: |
+        Whatever caught your attention. UI text that's unclear, behaviour you didn't expect, a slow step, anything.
+      placeholder: e.g. Kaltura lozenge stays grey even after I confirmed the entry exists
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Optional — only if there's a concrete contrast worth noting.
+
+  - type: input
+    id: build
+    attributes:
+      label: Build SHA (auto-filled from the in-app Feedback button)
+      description: Leave blank if you don't know; the title prefix already has it when you came from the app.
+      placeholder: e.g. 10e8490
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How blocking is it?
+      options:
+        - Just an observation
+        - Annoying but workable
+        - Costing me time on every task
+        - Outright broken
+    validations:
+      required: true

@@ -34,7 +34,9 @@ interface ZoomMeeting {
 
 interface Props {
   onImported: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {
@@ -52,28 +54,30 @@ function getZoomCredentials(): { accountId: string; clientId: string; clientSecr
   }
 }
 
-export default function ZoomImport({ onImported, onEvent }: Props) {
+export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
   const [meetings, setMeetings] = useState<ZoomMeeting[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
-  const [dateFrom, setDateFrom] = useState(() => {
+  const [localDateFrom, setLocalDateFrom] = useState(() => {
     const d = new Date(Date.now() - 30 * 86400000);
     return d.toISOString().slice(0, 10);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [localDateTo, setLocalDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const dateFrom = dateFromProp ?? localDateFrom;
+  const dateTo = dateToProp ?? localDateTo;
+  const datesAreControlled = dateFromProp !== undefined && dateToProp !== undefined;
   const [filterTitle, setFilterTitle] = useState("");
   const [filterMinLen, setFilterMinLen] = useState("2");
   const [filterMaxLen, setFilterMaxLen] = useState("");
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
 
   async function fetchRecordings() {
-    const creds = getZoomCredentials();
-    if (!creds) {
-      setError("Zoom credentials not configured. Go to Connections and add your Account ID, Client ID, and Client Secret.");
-      return;
-    }
+    // ADR-042: don't gate on local creds — the server resolves through
+    // local override → shared default → env var. If nothing is configured
+    // anywhere, the server returns 400 with a clear message.
+    const creds = getZoomCredentials() ?? {};
 
     setLoading(true);
     setError(null);
@@ -110,9 +114,75 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
     });
   }
 
+  /**
+   * Background-fetch the Zoom in-meeting CHAT for a record (if available)
+   * and push it to Drive as `chat.md`. Best-effort; failures are logged
+   * to the event stream and don't block the import.
+   */
+  async function fetchAndStoreChat(args: {
+    record_id: string;
+    meeting_uuid: string;
+    title: string;
+    source_id: string;
+    recorded_at: string;
+    creds: { accountId: string; clientId: string; clientSecret: string } | null;
+  }): Promise<void> {
+    try {
+      const res = await fetch("/api/zoom/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(args.creds ?? {}), meetingUuid: args.meeting_uuid }),
+      });
+      if (res.status === 404) return; // no CHAT file for this recording — common, silent
+      if (!res.ok) {
+        onEvent(`Zoom chat fetch failed for "${args.title}": ${res.status}`);
+        return;
+      }
+      const data = await res.json() as { content: string; participants: string[]; private_chats_stripped: boolean; private_chats_stripped_count: number; lines: number };
+      if (!data.content) return;
+
+      const frontmatter = [
+        "---",
+        `record_id: ${args.record_id}`,
+        "source_platform: Zoom",
+        `source_id: ${args.source_id}`,
+        `recorded_at: ${args.recorded_at}`,
+        `generated_at: ${new Date().toISOString()}`,
+        `private_chats_stripped: ${data.private_chats_stripped}`,
+        ...(data.private_chats_stripped_count > 0 ? [`private_chats_stripped_count: ${data.private_chats_stripped_count}`] : []),
+        `participants: [${data.participants.join(", ")}]`,
+        "---",
+        "",
+        "",
+      ].join("\n");
+
+      const putRes = await fetch(`/api/artifacts/${encodeURIComponent(args.record_id)}/chat`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: frontmatter + data.content,
+          title: args.title,
+          source_platform: "Zoom",
+          source_id: args.source_id,
+          recorded_at: args.recorded_at,
+        }),
+      });
+      if (!putRes.ok) {
+        onEvent(`Zoom chat upload failed for "${args.title}": ${putRes.status}`);
+        return;
+      }
+      onEvent(`Zoom chat captured for "${args.title}" (${data.lines} lines${data.private_chats_stripped_count > 0 ? `, ${data.private_chats_stripped_count} private stripped` : ""})`);
+    } catch (err) {
+      onEvent(`Zoom chat error for "${args.title}": ${String(err)}`);
+    }
+  }
+
   function importSelected() {
     let count = 0;
     let skipped = 0;
+    const chatJobs: Array<() => Promise<void>> = [];
+    const creds = getZoomCredentials();
+
     for (const meeting of meetings) {
       if (!selected.has(meeting.uuid)) continue;
 
@@ -143,6 +213,20 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
       onEvent(`VideoIndexed: "${meeting.topic}" (Zoom import)`);
+
+      // ADR-039: capture in-meeting chat to Drive if a CHAT file exists
+      if (meeting.recording_files?.some((f) => f.file_type === "CHAT")) {
+        const recordId = record.id();
+        chatJobs.push(() => fetchAndStoreChat({
+          record_id: recordId,
+          meeting_uuid: meeting.uuid,
+          title: meeting.topic,
+          source_id: sourceId,
+          recorded_at: meeting.start_time,
+          creds,
+        }));
+      }
+
       count++;
     }
 
@@ -155,6 +239,13 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
       setMeetings([]);
       setSelected(new Set());
       setFetched(false);
+
+      // Fire chat fetches in the background, throttled to avoid hammering Zoom
+      void (async () => {
+        for (const job of chatJobs) {
+          await job();
+        }
+      })();
     }
   }
 
@@ -163,19 +254,23 @@ export default function ZoomImport({ onImported, onEvent }: Props) {
       <div className="zoom-import-header">
         <h2>Zoom Recordings</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
-          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
+          {!datesAreControlled && (
+            <>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setLocalDateFrom(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setLocalDateTo(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+            </>
+          )}
           <button
             className="btn btn-sm btn-primary"
             onClick={fetchRecordings}

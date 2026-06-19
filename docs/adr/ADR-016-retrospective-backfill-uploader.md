@@ -243,6 +243,68 @@ The `BackfillCalendar` component generates one `CalendarSlot` per day in the con
 
 ---
 
+## Addendum: Multi-Month Overview and Timezone Fix (2026-04-20)
+
+### Problem: Single-Month Calendar Inadequate for 18-Month Backlogs
+
+The original `BackfillCalendar` showed one month at a time. For an 18-month backlog (~78 weeks of content), operators had to click through months individually with no way to see the full picture — total progress, gaps across the entire period, or estimated completion.
+
+### Problem: Day-of-Week Timezone Bug
+
+`new Date("YYYY-MM-DD").getDay()` parses the string as UTC midnight but returns the day in local time. In timezones east of UTC, this shifts the day-of-week forward by one (e.g. Thu → Fri), causing target-day filtering and calendar rendering to highlight the wrong days. The same bug affected `matchesProfile()` when filtering videos by day-of-week criteria.
+
+### Solution
+
+**1. Timezone fix** — Both `buildCalendarMonth()` and `matchesProfile()` now use `new Date(year, month, day).getDay()` (local-time constructor) instead of parsing ISO date strings. This ensures the day-of-week matches the operator's local timezone regardless of UTC offset.
+
+**2. Multi-month overview** (`BackfillOverview` component, "Overview" tab) — Shows the entire profile date range at once:
+
+- **Summary bar**: Total progress percentage, counts by status (published, approved, backlog, failed, gaps), and estimated days to clear at current upload rate.
+- **Progress bar**: Visual percentage of target days published.
+- **Month rows**: One row per month with a stacked bar showing published (green), approved (purple), failed (red), and backlog (yellow) proportions. Each row shows `published/target · N gaps`.
+- **Expandable detail**: Click a month row to expand a vertical date list. Each row shows:
+  - **Date label**: `Thu 15`, `Fri 16`, etc. (local-time day-of-week).
+  - **Status dot**: Colour-coded by video status (published, approved, failed, etc.) or hollow circle for gaps.
+  - **Title**: Video title (or "— no source —" for gaps).
+  - **Origin link**: Clickable badge linking to the source platform (Zoom, Fireflies, Loom). Pseudo-URLs (`zoom://`, `fireflies://`) are resolved to real web URLs.
+  - **YouTube link**: Clickable badge linking to the published YouTube video (when available).
+- **Target-days toggle**: When active, the expanded list shows **only** target-day rows (non-target dates are removed, not just hidden). When off, rows are grouped under week headers (`Week of Mon 13 Jan`) for orientation.
+- **URL resolution**: `resolveExternalUrl()` is extracted to a shared `urlResolver.ts` module (reused by `VideoCard` and `BackfillOverview`).
+
+```ts
+interface CalendarSlot {
+  date: string;
+  day_of_week: number;
+  is_target: boolean;
+  video?: {
+    id: string;
+    title: string;
+    duration_seconds: number;
+    source_platform: string;
+    status: string;
+    origin_url?: string;   // source download URL (pseudo or real)
+    youtube_url?: string;  // destination URL on YouTube
+  };
+}
+
+interface MonthSummary {
+  year: number;
+  month: number;
+  label: string;         // "Jan 2025"
+  target_days: number;   // total target slots
+  published: number;
+  approved: number;
+  in_backlog: number;
+  failed: number;
+  gaps: number;          // target days with no video
+  slots: CalendarSlot[];
+}
+```
+
+The existing single-month "Calendar" tab remains for detailed day-by-day inspection of a specific month.
+
+---
+
 ## Implementation Phases
 
 | Phase | Scope | Quota impact |
@@ -266,3 +328,111 @@ The `BackfillCalendar` component generates one `CalendarSlot` per day in the con
 - ADR-015: Fireflies Import Integration (source adapter)
 - [YouTube Data API — Quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost)
 - [YouTube Data API — Videos.update](https://developers.google.com/youtube/v3/docs/videos/update)
+
+---
+
+## Addendum: UX Rework (2026-04-20)
+
+### Page Section Order
+
+The Backfill Uploader is the most-used panel once a profile is configured — it's where operators spend most of their time during a long backfill. It now sits directly under the Import panel (and above Rules / Processing Rules / Post-Processing Rules / Shorts), so the two frequently-used sections (Import and Backfill) are adjacent at the top of the page.
+
+Source tab order in Import: **Fireflies** → **Zoom** → **URL** → **Manual**. Fireflies is the dominant source for this operator, and making it the default tab removes one click per import session.
+
+### Filter Coordination with Publish
+
+When a user clicks **Publish** on a VideoCard (or when the Backfill orchestrator triggers `request_publish`), the main video list filter automatically switches to `Active`. Rationale: the card is about to leave the filtered view if the filter was narrow (e.g. `Approved`), but the operator almost certainly wants to watch the upload progress. `Active` includes `Publishing`, `Failed`, and `ToRetry`, so they can also see any immediate failure without switching filters.
+
+### Jump-To-Video with Filter Fallback
+
+Clicking a video row in Overview or a dot in Calendar calls `ensureVideoVisible(videoId, intent?)` (defined in `page.tsx`). The helper:
+
+1. Looks up the video's current status from `videoStore.getAll()`.
+2. Checks if the current filter includes that status (directly, or via `Active` / `Done` / `All`).
+3. If not, switches the filter to `All`.
+4. After a 50ms delay (to let React render), scrolls `#video-card-${id}` into view and highlights it.
+
+With `intent === "publish"`, step 2 is skipped and the filter is forced to `Active` regardless.
+
+This keeps the operator's current filter when possible (e.g. clicking a Published video while filtered to `Published` is a no-op on filter) but prevents the "clicked but nothing happened" failure mode where the target video was filtered out of the DOM.
+
+### Connections Panel Collapse
+
+When `showConnections` is false, `ConnectionsPanel` returns `null` instead of rendering an empty header + HelpTip pair. The toggle button in the main header is the only affordance when collapsed. The HelpTip now lives inside the open branch so it's visible only when relevant.
+
+### Recover From YouTube
+
+**Problem.** The streaming upload path (`/api/youtube/upload` → SSE) is vulnerable to a race where the upload succeeds server-side (YouTube has the video) but the SSE connection is cut before the `complete` event reaches the browser (Cloud Run idle timeout, proxy buffering, network drop). The client falls through to `Upload stream ended without a result` and calls `mark_failed`. YouTube has the video; the app records Failed; the destination_url and YouTube Destination location are never set.
+
+A related class of problems: the operator uploaded a video to YouTube out-of-band (YouTube Studio, manual curl upload, earlier tooling) and wants to tell Video Bridge "this record is actually already on YouTube."
+
+**Decision.** Add a **Recover from YouTube** button on any card whose status is not `Published`, `Publishing`, or `Abandoned`. It opens a small input that accepts:
+
+- A full watch URL (`https://youtube.com/watch?v=...`)
+- A short URL (`youtu.be/...`)
+- A Studio URL (`studio.youtube.com/video/.../edit`)
+- A raw 11-character ID
+
+On submit, the client:
+
+1. Parses the YouTube ID.
+2. Calls `GET /api/youtube/status?videoId=...` to verify the video exists (404 → reject). Also captures `privacyStatus` into the browser-side privacy cache (ADR-012 pathway #2).
+3. Chains WASM transitions to reach `Published`:
+   - If current status is neither `Approved`, `Publishing`, nor `Published`: `approve()` (allowed from Discovered/InScope/Skipped/Failed/ToRetry)
+   - If current status is `Approved` after step 2: `request_publish()`
+   - Finally: `mark_published(destination_id, destination_url, destination_platform: YouTube)` which adds the `Destination` PlatformLocation for us (idempotent: the existing code skips duplicates).
+
+No new Rust commands are needed — the transition chain is expressible with existing domain operations.
+
+**Events emitted.** The sequence produces `VideoApproved`, `StatusChanged(→Publishing)`, `StatusChanged(→Published)` events in the normal way. The client logs a single `VideoRecovered` event with the YouTube URL.
+
+**Failure modes.** If the YouTube status check returns 404, the recovery aborts without touching the record (the operator pasted a bad ID or a private-to-other-channel video). If a WASM transition throws (e.g. the record is in an unexpected state), the partial progress is retained — the operator can re-run Recover, which picks up from the current status.
+
+### Auto-Lookup on the Channel
+
+Pasting a YouTube ID is the fallback, not the primary path. A new **Auto-lookup on YouTube** button inside the Recover panel enumerates the authorized channel's uploads and ranks them by fuzzy title match against this record, with a date proximity boost.
+
+New endpoint `GET /api/youtube/channel-uploads`:
+
+1. `channels.list?part=contentDetails,snippet&mine=true` → get uploads playlist ID + channel title. (1 unit)
+2. Paginate `playlistItems.list?part=snippet,contentDetails&maxResults=50` → collect `{ id, title, publishedAt }` for every upload. (1 unit per page)
+3. Batch `videos.list?part=status&id=...` in chunks of 50 to attach `privacyStatus`. (1 unit per chunk)
+
+A 1000-video channel costs ~40 units. Results cached in `localStorage["video-sync:yt-uploads"]` with a 1-hour TTL, so subsequent Recover lookups cost zero quota until expiry. The cache also seeds the privacy cache from ADR-012 — one channel fetch replaces the need for **Fill privacy** on the Overview for already-uploaded videos.
+
+**Matching algorithm** (client-side, `lib/youtubeUploadsCache.ts`):
+
+- Normalise titles (lowercase, strip punctuation, collapse whitespace).
+- Token-set overlap ratio against the record's *display* title (processing rules applied) — not the raw source title.
+- Date proximity boost up to 30% of score if `publishedAt` is within 180 days of `recorded_at`; 0 otherwise.
+- Final score = `0.7 × titleScore + dateBoost`. Top 5 candidates shown with score badges.
+
+The operator picks one with a single click, which feeds the existing Recover flow (verify via status API, chain transitions to Published). The ✓ marker on the date column indicates the YouTube publish date is within 31 days of this record's recording date — a strong signal that this is the right video.
+
+### Post-Import YouTube Sync + Inline Suggestions
+
+Rather than make the operator click Recover on every orphaned record, the system pre-warms the cache and surfaces matches automatically.
+
+**On every successful source import** (Zoom, Fireflies, URL, YouTube, Manual), `page.tsx` `refreshWithYouTube()`:
+
+1. Refreshes the video state from the store (existing behaviour).
+2. If YouTube credentials are configured, fires a fire-and-forget `fetchChannelUploads(false)` — honours the 1-hour TTL, so no API cost if the cache is warm.
+3. Errors are swallowed; the import doesn't fail if YouTube is not configured.
+
+One log line `yt:uploads-sync` records how many uploads are in the cache after the fetch.
+
+**On every VideoCard render**, a `useMemo` checks the cached uploads:
+
+- Skips if the video is already Published / Publishing / Abandoned, or already has a YouTube Destination location.
+- Otherwise computes `rankCandidates(uploads, previewTitle ?? video.title, video.recorded_at, 1)`.
+- If the top match's score is **≥ 0.7**, a light-blue banner appears under the card header:
+
+  > **Possible YouTube match:** [upload title] · [publish date] · 87% match
+  > [Link & mark Published]  [preview]
+
+- Clicking **Link & mark Published** feeds the existing `recoverFromYouTube(id)` flow: verify via status, cache privacy, chain transitions.
+- **preview** is a plain link to the YouTube watch URL so the operator can sanity-check before linking.
+
+The 0.7 threshold was chosen empirically: it filters out low-overlap false positives but still catches titles that differ by date suffixes, episode numbers, or processing-rule prefixes. Below 0.7 the match is still accessible via **Auto-lookup** in the Recover panel but not surfaced automatically.
+
+**Net result for the 18-month backlog use case:** after importing Fireflies / Zoom recordings, the dashboard automatically shows blue suggestion banners on every record that already exists on YouTube. One click per record promotes the suggestion to a Published state with privacy correctly cached — no manual URL pasting, no per-card Recover clicks, no separate Fill Privacy pass.

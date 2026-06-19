@@ -1,0 +1,73 @@
+name: Bug report
+description: Something is broken or behaves incorrectly.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reproduce-on-paper helps: the more concrete the steps, the faster
+        the fix. The in-app EventLog often has the relevant error line —
+        copy it in if you can.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences of what's broken.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered or bulleted; include URLs, button labels, and any data you typed.
+      placeholder: |
+        1. Open https://video-sync.agentics.org
+        2. Connections → click Set as shared default on Zoom
+        3. Type ..., click Save shared default
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+      description: What actually happened. Paste the EventLog line if there is one.
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build SHA
+      description: Visible at the bottom of the app, or from the in-app Feedback button.
+      placeholder: e.g. 10e8490
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser + OS
+      placeholder: e.g. Chrome 147 on macOS 15.4
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Blocking — can't do my job
+        - High — workaround exists but painful
+        - Medium — annoying
+        - Low — cosmetic
+    validations:
+      required: true

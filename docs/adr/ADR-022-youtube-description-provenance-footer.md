@@ -1,4 +1,4 @@
-I# ADR-022: YouTube Description Provenance Footer
+# ADR-022: YouTube Description Provenance Footer
 
 Date: 2026-03-06
 Status: Accepted

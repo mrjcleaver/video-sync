@@ -9,18 +9,31 @@ import {
   DAY_NAMES,
   MONTH_NAMES,
 } from "../lib/backfill";
+import { getDisplayTitle } from "../lib/processingRules";
+
+function scrollToVideo(id: string) {
+  const el = document.getElementById(`video-card-${id}`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.style.outline = "2px solid var(--primary, #6366f1)";
+    setTimeout(() => { el.style.outline = ""; }, 2000);
+  }
+}
 
 interface Props {
   videos: VideoRecordJSON[];
   profile: BackfillProfile;
+  onNavigateToVideo?: (id: string, intent?: "publish") => void;
 }
 
-export default function BackfillCalendar({ videos, profile }: Props) {
+export default function BackfillCalendar({ videos, profile, onNavigateToVideo }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
+  const [targetOnly, setTargetOnly] = useState(true);
 
   const slots = buildCalendarMonth(videos, profile, year, month);
+  const videoMap = new Map(videos.map(v => [v.id, v]));
 
   function prevMonth() {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }
@@ -52,7 +65,13 @@ export default function BackfillCalendar({ videos, profile }: Props) {
     <div className="backfill-calendar">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <button className="btn btn-sm" onClick={prevMonth}>‹</button>
-        <span style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
+          <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+            <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
+            Target days only
+          </label>
+        </div>
         <button className="btn btn-sm" onClick={nextMonth} disabled={isCurrentMonth}>›</button>
       </div>
 
@@ -72,6 +91,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
           if (!slot) {
             return <div key={`empty-${i}`} />;
           }
+          const hidden = targetOnly && !slot.is_target;
           const color = slot.video ? statusColor(slot.video.status) : slot.is_target ? "var(--border)" : "transparent";
           const bg = slot.is_target
             ? slot.video ? "var(--bg-card)" : "var(--bg)"
@@ -79,7 +99,8 @@ export default function BackfillCalendar({ videos, profile }: Props) {
           return (
             <div
               key={slot.date}
-              title={slot.video ? `${slot.video.title}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
+              title={slot.video ? `${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
+              onClick={slot.video ? () => (onNavigateToVideo ?? scrollToVideo)(slot.video!.id) : undefined}
               style={{
                 padding: "4px 2px",
                 borderRadius: 4,
@@ -87,6 +108,7 @@ export default function BackfillCalendar({ videos, profile }: Props) {
                 border: slot.is_target ? `1px solid ${color}` : "1px solid transparent",
                 cursor: slot.video ? "pointer" : "default",
                 minHeight: 36,
+                visibility: hidden ? "hidden" : "visible",
               }}
             >
               <div style={{ fontSize: "0.6rem", color: "var(--text-muted)", textAlign: "center" }}>

@@ -222,3 +222,52 @@ The `cloudbuild.yaml` substitutions (`_REGION`, `_PROJECT_ID`) are set in the Cl
 - [Cloud Run — Volume mounts (GCS FUSE)](https://cloud.google.com/run/docs/configuring/services/cloud-storage-volume-mounts)
 - [Cloud Run — Request timeout](https://cloud.google.com/run/docs/configuring/request-timeout)
 - [Next.js — Standalone output](https://nextjs.org/docs/app/api-reference/config/next-config-js/output)
+
+---
+
+## Addendum: GCS FUSE remains DEFERRED (2026-04-21)
+
+### Current state
+
+The original ADR specified a GCS FUSE mount for `/app/data`, but **that mount is not active in production**. Cloud Run runs with an **ephemeral filesystem**: every cold start, revision rollout, or instance shutdown wipes `data/`.
+
+An attempt was made on 2026-04-21 to add the mount flags to `deploy.sh` and run `scripts/gcs-fuse-setup.sh` to create the backing bucket. The setup script failed because the operator's account lacks both:
+
+- `roles/serviceusage.serviceUsageAdmin` (to enable or verify `run.googleapis.com` / `storage.googleapis.com` / `iam.googleapis.com`), and
+- `roles/storage.admin` (to create the bucket and set IAM on it).
+
+Rather than hold up other work waiting on a support ticket, the FUSE flags were **reverted from `deploy.sh`** and the app now operates explicitly in ephemeral-filesystem mode. The setup script remains in the repo (`scripts/gcs-fuse-setup.sh`) for the day the IAM blocker is resolved.
+
+### What that means right now
+
+| File | Persistence today |
+|------|-------------------|
+| `data/rules.json` | Ephemeral. Survives in practice because every browser re-POSTs its localStorage copy on boot (ADR-031). If all browsers are closed during a redeploy the file is gone, but the next browser to connect re-seeds it. |
+| `data/backfill-state.json` | Ephemeral. The **`uploads_today` quota counter resets on every cold start.** Clients keep their own copy in `localStorage["video-sync:backfill-state"]`, but server-tracked quota may under-count because the per-instance counter is transient. |
+| `data/server.log` | Ephemeral. Not a practical loss — ADR-017 already routes all structured logs to stdout, which Cloud Logging captures automatically. The on-disk file was only ever a local-dev convenience. |
+| `/tmp` during upload | Ephemeral. Expected — only used as a streaming buffer within a single request. |
+
+### What needs to happen to turn FUSE on
+
+Once IAM is granted (see support ticket text in the section below), two steps flip it live:
+
+1. `bash scripts/gcs-fuse-setup.sh` — creates `gs://video-sync-data-agentics-487016` in `us-central1` and grants the Cloud Run runtime service account `roles/storage.objectUser` on the bucket.
+2. Re-add the flags to `deploy.sh` under `gcloud run deploy`:
+   ```
+   --execution-environment=gen2
+   --add-volume=name=data,type=cloud-storage,bucket=video-sync-data-agentics-487016
+   --add-volume-mount=volume=data,mount-path=/app/data
+   ```
+
+### Support ticket request
+
+Request one-time grants (can be revoked after setup completes):
+
+- `roles/serviceusage.serviceUsageAdmin` — to confirm/enable the APIs
+- `roles/storage.admin` — to create the bucket and grant IAM on it
+
+Or: have an admin run `bash scripts/gcs-fuse-setup.sh` directly.
+
+### Broader persistence question
+
+This addendum is about **one specific bucket mount**. The wider question of what data lives in localStorage versus the server (and the multi-browser/multi-user implications) is captured in **ADR-035: Persistence Topology and Single-Browser Constraint**. That ADR frames the four-level sequencing (FUSE → catalog-to-server → credentials-to-server → multi-user identity) and is the authoritative document for the broader architectural direction. This addendum stays focused on the mechanics of the FUSE mount itself.

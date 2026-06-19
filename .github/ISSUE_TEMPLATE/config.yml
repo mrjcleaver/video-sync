@@ -1,0 +1,13 @@
+# Configures the issue picker shown when an operator clicks "New issue"
+# in the GitHub UI. The in-app [Feedback] header button bypasses this
+# picker and lands directly on the feedback template.
+
+blank_issues_enabled: true
+
+contact_links:
+  - name: Project wiki & how-to guides
+    url: https://github.com/mrjcleaver/video-sync/wiki
+    about: Configuration walkthroughs, troubleshooting, and architecture notes (ADRs).
+  - name: Architecture Decision Records
+    url: https://github.com/mrjcleaver/video-sync/tree/main/docs/adr
+    about: Why the system works the way it does. Read before proposing structural changes.

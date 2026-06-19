@@ -25,7 +25,9 @@ interface NormalisedTranscript {
 
 interface Props {
   onImported: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 function getFirefliesApiKey(): string | null {
@@ -41,28 +43,31 @@ function getFirefliesApiKey(): string | null {
   }
 }
 
-export default function FirefliesImport({ onImported, onEvent }: Props) {
+export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
   const [transcripts, setTranscripts] = useState<NormalisedTranscript[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
-  const [dateFrom, setDateFrom] = useState(() => {
+  // Local fallback dates — used only when no parent-controlled dates are passed
+  // (i.e. component is rendered standalone, not inside the merged Meetings tab).
+  const [localDateFrom, setLocalDateFrom] = useState(() => {
     const d = new Date(Date.now() - 30 * 86400000);
     return d.toISOString().slice(0, 10);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [localDateTo, setLocalDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const dateFrom = dateFromProp ?? localDateFrom;
+  const dateTo = dateToProp ?? localDateTo;
+  const datesAreControlled = dateFromProp !== undefined && dateToProp !== undefined;
   const [filterTitle, setFilterTitle] = useState("");
   const [filterMinLen, setFilterMinLen] = useState("2");
   const [filterMaxLen, setFilterMaxLen] = useState("");
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
 
   async function fetchTranscripts() {
+    // ADR-042: server resolves through local override → shared default → env.
+    // Pass apiKey only when set locally; absent body field falls through.
     const apiKey = getFirefliesApiKey();
-    if (!apiKey) {
-      setError("Fireflies API key not configured. Go to Connections and add your Fireflies API key.");
-      return;
-    }
 
     setLoading(true);
     setError(null);
@@ -70,7 +75,7 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
       const res = await fetch("/api/fireflies/transcripts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, from: dateFrom, to: dateTo }),
+        body: JSON.stringify({ ...(apiKey ? { apiKey } : {}), from: dateFrom, to: dateTo }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -167,19 +172,23 @@ export default function FirefliesImport({ onImported, onEvent }: Props) {
       <div className="zoom-import-header">
         <h2>Fireflies Transcripts</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
-          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
+          {!datesAreControlled && (
+            <>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setLocalDateFrom(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setLocalDateTo(e.target.value)}
+                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              />
+            </>
+          )}
           <button
             className="btn btn-sm btn-primary"
             onClick={fetchTranscripts}

@@ -1,0 +1,51 @@
+# Build + push the video-sync container image with BUILD_SHA + BUILD_DATE
+# stamped in. Used in place of `gcloud builds submit --tag` so the
+# Dockerfile's BUILD_SHA / BUILD_DATE ARGs land as NEXT_PUBLIC env vars
+# and the dashboard's BuildBadge can show the actual SHA instead of
+# the placeholder "unknown".
+#
+# Usage:
+#   SHA=$(git rev-parse --short HEAD)
+#   DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+#   gcloud builds submit \
+#     --config=cloudbuild-image.yaml \
+#     --substitutions=_SHA=${SHA},_BUILD_DATE=${DATE} \
+#     --project=agentics-487016 --region=us-central1 \
+#     --machine-type=e2-highcpu-8 --timeout=30m \
+#     --gcs-log-dir=gs://agentics-487016_cloudbuild/logs \
+#     .
+#
+# Then deploy with the printed image tag via `gcloud run deploy`.
+
+substitutions:
+  _SHA: unknown
+  _BUILD_DATE: ""
+  _REGION: us-central1
+  _REPO: video-sync
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:${_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:latest
+      - --build-arg=BUILD_SHA=${_SHA}
+      - --build-arg=BUILD_DATE=${_BUILD_DATE}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app
+    waitFor: [build]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:${_SHA}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/app:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

@@ -38,12 +38,17 @@ function minLevel(): LogLevel {
 const REDACT_KEYS = new Set([
   "apiKey", "refreshToken", "clientSecret", "access_token",
   "password", "authorization", "basicAuth", "token",
+  // ADR-036: identity claims must not appear in structured logs
+  "email", "sub",
+  "x-goog-iap-jwt-assertion",
+  "iapJwt", "jwt",
 ]);
 
 const REDACT_VALUE_PATTERNS = [
   /^sk-[a-zA-Z0-9\-_]{10,}/,       // OpenRouter/OpenAI keys
   /^[A-Za-z0-9+/]{40,}={0,2}$/,    // long base64 tokens
   /^ya29\./,                         // Google access tokens
+  /^eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\./,  // JWT shape (header.payload.sig)
 ];
 
 export function redact(obj: unknown, depth = 0): unknown {

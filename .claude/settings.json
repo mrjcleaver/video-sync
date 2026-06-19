@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs pre-bash",
+            "command": "node ./.claude/helpers/hook-handler.cjs pre-bash",
             "timeout": 5000
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs post-edit",
+            "command": "node ./.claude/helpers/hook-handler.cjs post-edit",
             "timeout": 10000
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs route",
+            "command": "node ./.claude/helpers/hook-handler.cjs route",
             "timeout": 10000
           }
         ]
@@ -40,13 +40,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs session-restore",
+            "command": "node ./.claude/helpers/hook-handler.cjs session-restore",
             "timeout": 15000
           },
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/auto-memory-hook.mjs import",
+            "command": "cd /workspaces/video-sync && node ./.claude/helpers/auto-memory-hook.mjs import",
             "timeout": 8000
+          },
+          {
+            "type": "command",
+            "command": "df -h / | awk 'NR==2 && +($5+0) > 85 {exit 1}' || bash /workspaces/video-sync/scripts/prune-build-artifacts.sh --apply >/dev/null 2>&1 || true",
+            "timeout": 60,
+            "async": true
           }
         ]
       }
@@ -56,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs session-end",
+            "command": "node ./.claude/helpers/hook-handler.cjs session-end",
             "timeout": 10000
           }
         ]
@@ -67,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/auto-memory-hook.mjs sync",
+            "command": "cd /workspaces/video-sync && node ./.claude/helpers/auto-memory-hook.mjs sync",
             "timeout": 10000
           }
         ]
@@ -79,11 +85,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs compact-manual"
+            "command": "node ./.claude/helpers/hook-handler.cjs compact-manual"
           },
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs session-end",
+            "command": "node ./.claude/helpers/hook-handler.cjs session-end",
             "timeout": 5000
           }
         ]
@@ -93,11 +99,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs compact-auto"
+            "command": "node ./.claude/helpers/hook-handler.cjs compact-auto"
           },
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs session-end",
+            "command": "node ./.claude/helpers/hook-handler.cjs session-end",
             "timeout": 6000
           }
         ]
@@ -108,7 +114,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs status",
+            "command": "node ./.claude/helpers/hook-handler.cjs status",
             "timeout": 3000
           }
         ]
@@ -119,7 +125,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs post-task",
+            "command": "node ./.claude/helpers/hook-handler.cjs post-task",
             "timeout": 5000
           }
         ]
@@ -130,7 +136,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /workspaces/video-sync/.claude/helpers/hook-handler.cjs post-task",
+            "command": "node ./.claude/helpers/hook-handler.cjs post-task",
             "timeout": 5000
           }
         ]
@@ -139,7 +145,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "node /workspaces/video-sync/.claude/helpers/statusline.cjs",
+    "command": "node ./.claude/helpers/statusline.cjs",
     "refreshMs": 5000,
     "enabled": true
   },

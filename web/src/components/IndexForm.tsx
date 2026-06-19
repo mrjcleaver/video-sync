@@ -8,7 +8,7 @@ import HelpTip from "./HelpTip";
 
 interface Props {
   onIndexed: () => void;
-  onEvent: (event: string) => void;
+  onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
 export default function IndexForm({ onIndexed, onEvent }: Props) {

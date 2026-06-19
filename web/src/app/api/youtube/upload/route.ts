@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { serverLog } from "../../../../lib/serverLogger";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 import { execFile } from "child_process";
 import { createWriteStream, createReadStream } from "fs";
 import { promises as fs } from "fs";
@@ -25,6 +26,11 @@ interface UploadRequest {
   zoomClientSecret?: string;
   // Fireflies credentials (needed when downloadUrl is fireflies://...)
   firefliesApiKey?: string;
+  // Kaltura credentials (needed when downloadUrl is kaltura://entry/...).
+  // Usually resolved server-side from Secret Manager; body fields are an
+  // optional operator override.
+  kalturaPartnerId?: string;
+  kalturaAdminSecret?: string;
   // YouTube cookies in Netscape format (needed to bypass bot detection)
   ytCookies?: string;
 }
@@ -112,95 +118,73 @@ function extractLoomVideoId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
 async function downloadLoomToFile(videoId: string, outPath: string): Promise<void> {
-  // Scrape the Loom share page to extract video URL (same approach as loom-dl)
-  const shareUrl = `https://www.loom.com/share/${videoId}`;
-  const pageRes = await fetch(shareUrl, {
-    headers: {
-      "User-Agent": BROWSER_UA,
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
-
-  if (!pageRes.ok) {
-    throw new Error(`Loom page fetch failed (${pageRes.status}). Is the share link correct and public?`);
-  }
-
-  const html = await pageRes.text();
-
-  // Extract Apollo state containing video URLs
-  const apolloMatch = html.match(/window\.__APOLLO_STATE__\s*=\s*(\{[\s\S]+?\});?\s*<\/script>/);
-
-  let hlsUrl: string | null = null;
-  let hlsCreds: { policy: string; signature: string; keyPairId: string } | null = null;
-
-  if (apolloMatch) {
-    try {
-      const apolloData = JSON.parse(apolloMatch[1]);
-      for (const key of Object.keys(apolloData)) {
-        const obj = apolloData[key];
-        if (!obj || typeof obj !== "object") continue;
-        const m3u8Key = Object.keys(obj).find((k) => k.includes("M3U8") && obj[k]?.url);
-        if (m3u8Key && obj[m3u8Key]?.url) {
-          hlsUrl = obj[m3u8Key].url;
-          const creds = obj[m3u8Key]?.credentials;
-          if (creds) {
-            hlsCreds = { policy: creds.Policy, signature: creds.Signature, keyPairId: creds.KeyPairId };
-          }
-        }
-      }
-    } catch { /* JSON parse failed, try MP4 fallback */ }
-  }
-
-  // Try direct MP4 URL (some older videos have this)
-  const mp4Match = html.match(/https:\/\/cdn\.loom\.com\/sessions\/(?:transcoded|raw)\/[^"'\s\\]+\.mp4/);
-  if (mp4Match) {
-    const dlRes = await fetch(mp4Match[0], {
-      headers: { Referer: "https://www.loom.com/", "User-Agent": BROWSER_UA },
-    });
-    if (dlRes.ok) {
-      await streamToFile(dlRes, outPath);
-      return;
-    }
-  }
-
-  // Use ffmpeg to convert HLS stream to MP4
-  if (hlsUrl) {
-    const finalHlsUrl = hlsUrl;
-    await new Promise<void>((resolve, reject) => {
-      let headers = "Referer: https://www.loom.com/\r\n";
-      if (hlsCreds) {
-        headers += `Cookie: CloudFront-Policy=${hlsCreds.policy}; CloudFront-Signature=${hlsCreds.signature}; CloudFront-Key-Pair-Id=${hlsCreds.keyPairId}\r\n`;
-      }
-      const args = [
-        "-loglevel", "error",
-        "-headers", headers,
-        "-i", finalHlsUrl,
-        "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",
-        "-movflags", "+faststart",
-        "-y", outPath,
-      ];
-      execFile("ffmpeg", args, { timeout: 600000 }, (err, _stdout, stderr) => {
+  // yt-dlp handles Loom's Apollo-state extraction, MP4 vs HLS fallback,
+  // and CloudFront-signed chunk downloads. The previous inline scraper
+  // shelled out to ffmpeg for HLS, which silently failed on long videos
+  // (empty stderr at -loglevel error masked the actual cause). yt-dlp is
+  // already in the runtime image (Dockerfile installs ffmpeg + yt-dlp)
+  // and is the canonical path used by lib/sourceDownload.ts.
+  const url = `https://www.loom.com/share/${videoId}`;
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      "yt-dlp",
+      ["--output", outPath, "--no-playlist", "--no-warnings", "--newline", url],
+      { timeout: 3600000, maxBuffer: 16 * 1024 * 1024 },
+      (err, _stdout, stderr) => {
         if (err) {
           if (err.message.includes("ENOENT")) {
-            reject(new Error("ffmpeg is not installed. Required to download Loom HLS videos."));
+            reject(new Error("yt-dlp is not installed."));
           } else {
-            // With -loglevel error, stderr contains only the actual error (no banner)
             const detail = (stderr || "").trim() || err.message;
-            reject(new Error(`ffmpeg failed: ${detail.slice(0, 500)}`));
+            reject(new Error(`Loom download failed: ${detail.slice(0, 1500)}`));
+          }
+        } else {
+          resolve();
+        }
+      },
+    );
+  });
+}
+
+async function downloadYouTubeToFile(videoId: string, outPath: string, cookies?: string): Promise<void> {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+  // Write cookies to a temp file if provided
+  let cookiesPath: string | null = null;
+  if (cookies?.trim()) {
+    cookiesPath = join(tmpdir(), `yt-cookies-${Date.now()}.txt`);
+    await fs.writeFile(cookiesPath, cookies, "utf8");
+  }
+
+  const args = [
+    "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "--output", outPath,
+    "--no-playlist",
+    "--quiet",
+    "--no-warnings",
+  ];
+  if (cookiesPath) args.push("--cookies", cookiesPath);
+  args.push(url);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile("yt-dlp", args, { timeout: 3600000 }, (err, _stdout, stderr) => {
+        if (err) {
+          if (err.message.includes("ENOENT")) {
+            reject(new Error("yt-dlp is not installed. It must be present in the container (ADR-027)."));
+          } else {
+            const detail = (stderr || "").trim() || err.message;
+            reject(new Error(`yt-dlp failed: ${detail.slice(0, 500)}`));
           }
         } else {
           resolve();
         }
       });
     });
-    return;
+  } finally {
+    if (cookiesPath) fs.unlink(cookiesPath).catch(() => {});
   }
-
-  throw new Error("Could not find a downloadable video URL on the Loom page. The video may be private or password-protected.");
 }
 
 async function downloadYouTubeToFile(videoId: string, outPath: string, cookies?: string): Promise<void> {
@@ -288,170 +272,53 @@ async function downloadFirefliesToFile(
   await streamToFile(dlRes, outPath);
 }
 
-// ── Async job store ──────────────────────────────────────────────────────────
-// Keeps upload jobs in memory so the POST can return immediately and the
-// client can poll GET /api/youtube/upload?jobId=XXX for status.
-// Lost on process restart, which is acceptable for a dev server.
+async function downloadKalturaToFile(
+  entryId: string,
+  partnerId: string,
+  adminSecret: string,
+  outPath: string,
+): Promise<void> {
+  // 1. Mint an admin Kaltura Session (KS) so the download URL is authorized.
+  const sessForm = new URLSearchParams();
+  sessForm.set("format", "1"); // JSON
+  sessForm.set("partnerId", partnerId);
+  sessForm.set("secret", adminSecret);
+  sessForm.set("type", "2"); // ADMIN
+  sessForm.set("userId", "video-sync");
+  sessForm.set("expiry", "3600");
+  const sessRes = await fetch("https://www.kaltura.com/api_v3/?service=session&action=start", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: sessForm,
+  });
+  if (!sessRes.ok) throw new Error(`Kaltura session.start HTTP ${sessRes.status}`);
+  const sessJson = await sessRes.json();
+  const ks: string = typeof sessJson === "string" ? sessJson : (sessJson?.result ?? "");
+  if (!ks || ks.length < 10) throw new Error(`Kaltura session.start returned no usable KS: ${JSON.stringify(sessJson).slice(0, 120)}`);
 
-interface UploadJob {
-  status: "processing" | "completed" | "failed";
-  videoId?: string;
-  videoUrl?: string;
-  error?: string;
-  phase?: string;
-  startedAt: number;
-}
-
-const jobStore = new Map<string, UploadJob>();
-
-function newJobId(): string {
-  return `yt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// Clean up jobs older than 2 hours
-function pruneJobs() {
-  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [id, job] of jobStore) {
-    if (job.startedAt < cutoff) jobStore.delete(id);
+  // 2. playManifest "format/download" serves the source/highest flavor as a
+  //    direct file. The KS authorizes access to the entry.
+  const downloadUrl = `https://cdnapisec.kaltura.com/p/${partnerId}/sp/${partnerId}00/playManifest/entryId/${entryId}/format/download/protocol/https/ks/${ks}`;
+  const dlRes = await fetch(downloadUrl, { redirect: "follow" });
+  if (!dlRes.ok) throw new Error(`Kaltura download failed (${dlRes.status}) for entry ${entryId}`);
+  // Guard against Kaltura returning an HTML error page instead of media.
+  const ctype = dlRes.headers.get("content-type") ?? "";
+  if (ctype.includes("text/html") || ctype.includes("application/xml")) {
+    throw new Error(`Kaltura returned ${ctype} instead of media for entry ${entryId} — entry may not be downloadable or KS lacks permission`);
   }
+  await streamToFile(dlRes, outPath);
 }
 
-// Status polling endpoint
-async function getHandler(req: NextRequest) {
-  const jobId = req.nextUrl.searchParams.get("jobId");
-  if (!jobId) return NextResponse.json({ error: "jobId required" }, { status: 400 });
-  const job = jobStore.get(jobId);
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  return NextResponse.json(job);
+// ── SSE helpers ───────────────────────────────────────────────────────────────
+
+function sseEvent(type: string, data: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-export const GET = withRequestLogging("api:youtube/upload:status", getHandler);
-
-// ── Main upload handler ───────────────────────────────────────────────────────
-
-async function runUpload(jobId: string, body: UploadRequest & {
-  refreshToken: string; clientId: string; clientSecret: string;
-  zoomAccountId?: string; zoomClientId?: string; zoomClientSecret?: string;
-  firefliesApiKey?: string;
-}): Promise<void> {
-  const job = jobStore.get(jobId)!;
-  const {
-    refreshToken, clientId, clientSecret,
-    title, description = "", tags = [], downloadUrl,
-    privacyStatus = "unlisted", recordedAt,
-    zoomAccountId, zoomClientId, zoomClientSecret, firefliesApiKey,
-  } = body;
-
-  try {
-    // Step 1: Refresh YouTube token
-    job.phase = "Refreshing YouTube token…";
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
-    });
-    if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      throw new Error(`YouTube token refresh failed (${tokenRes.status}): ${text}`);
-    }
-    const { access_token: ytAccessToken } = await tokenRes.json();
-
-    // Step 2: Download source to temp file
-    job.phase = "Downloading source video…";
-    let tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
-
-    if (downloadUrl.startsWith("youtube://")) {
-      await downloadYouTubeToFile(downloadUrl.replace("youtube://", ""), tmpPath, body.ytCookies);
-    } else if (downloadUrl.startsWith("zoom://recording/")) {
-      if (!zoomAccountId || !zoomClientId || !zoomClientSecret) throw new Error("Zoom credentials required");
-      await downloadZoomToFile(downloadUrl.replace("zoom://recording/", ""), zoomAccountId, zoomClientId, zoomClientSecret, tmpPath);
-    } else if (downloadUrl.startsWith("fireflies://")) {
-      if (!firefliesApiKey) throw new Error("Fireflies API key required");
-      await downloadFirefliesToFile(downloadUrl.replace("fireflies://", ""), firefliesApiKey, tmpPath);
-    } else {
-      const loomId = extractLoomVideoId(downloadUrl);
-      if (loomId) {
-        await downloadLoomToFile(loomId, tmpPath);
-      } else {
-        const dlRes = await fetch(downloadUrl);
-        if (!dlRes.ok) throw new Error(`Source download failed (${dlRes.status})`);
-        await streamToFile(dlRes, tmpPath);
-      }
-    }
-
-    // Step 2b: Trim if requested
-    if (body.trimStartSeconds && body.trimStartSeconds > 0) {
-      job.phase = "Trimming…";
-      const trimmedPath = join(tmpdir(), `video-trimmed-${Date.now()}.mp4`);
-      await new Promise<void>((resolve, reject) => {
-        execFile("ffmpeg", ["-ss", String(body.trimStartSeconds), "-i", tmpPath, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", "-y", trimmedPath],
-          { timeout: 300000 }, (err, _stdout, stderr) => {
-            if (err) reject(new Error(`ffmpeg trim failed: ${(stderr || err.message).slice(0, 300)}`));
-            else resolve();
-          });
-      });
-      fs.unlink(tmpPath).catch(() => {});
-      tmpPath = trimmedPath;
-    }
-
-    // Step 3: Initiate resumable upload
-    job.phase = "Initiating YouTube upload…";
-    const videoSize = (await fs.stat(tmpPath)).size;
-    const metadata: Record<string, unknown> = {
-      snippet: { title, description, tags },
-      status: { privacyStatus, selfDeclaredMadeForKids: false },
-    };
-    const parts = ["snippet", "status"];
-    if (recordedAt) { metadata.recordingDetails = { recordingDate: recordedAt }; parts.push("recordingDetails"); }
-
-    const initRes = await fetch(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=${parts.join(",")}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ytAccessToken}`,
-        "Content-Type": "application/json",
-        "X-Upload-Content-Length": videoSize.toString(),
-        "X-Upload-Content-Type": "video/mp4",
-      },
-      body: JSON.stringify(metadata),
-    });
-    if (!initRes.ok) {
-      const text = await initRes.text();
-      throw new Error(`YouTube upload init failed (${initRes.status}): ${text}`);
-    }
-    const uploadUrl = initRes.headers.get("Location");
-    if (!uploadUrl) throw new Error("YouTube did not return an upload URL");
-
-    // Step 4: Stream to YouTube
-    job.phase = "Uploading to YouTube…";
-    const fileStream = createReadStream(tmpPath);
-    const nodeReadable = Readable.toWeb(fileStream) as ReadableStream;
-    const uploadRes = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": "video/mp4", "Content-Length": videoSize.toString() },
-      body: nodeReadable,
-      // @ts-expect-error duplex required for streaming body in Node fetch
-      duplex: "half",
-    });
-    if (!uploadRes.ok) {
-      const text = await uploadRes.text();
-      throw new Error(`YouTube upload failed (${uploadRes.status}): ${text}`);
-    }
-
-    const result = await uploadRes.json();
-    const videoId = result.id;
-    job.status = "completed";
-    job.videoId = videoId;
-    job.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    job.phase = undefined;
-    serverLog("info", "ext:youtube-upload", "published", { jobId, videoId });
-    fs.unlink(tmpPath).catch(() => {});
-  } catch (err) {
-    job.status = "failed";
-    job.error = String(err);
-    job.phase = undefined;
-    serverLog("error", "ext:youtube-upload", "failed", { jobId, error: String(err) });
-  }
-}
+// ── Main upload handler (SSE streaming) ──────────────────────────────────────
+// Returns a text/event-stream response so the full upload lifecycle runs in a
+// single HTTP connection — no cross-instance job-store lookup, no polling.
+// Events: progress { phase }, complete { videoId, videoUrl }, error { message }
 
 async function handler(req: NextRequest) {
   let body: UploadRequest;
@@ -464,10 +331,32 @@ async function handler(req: NextRequest) {
   const refreshToken = body.refreshToken || process.env.YOUTUBE_REFRESH_TOKEN;
   const clientId = body.clientId || process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = body.clientSecret || process.env.YOUTUBE_CLIENT_SECRET;
-  const zoomAccountId = body.zoomAccountId || process.env.ZOOM_ACCOUNT_ID;
-  const zoomClientId = body.zoomClientId || process.env.ZOOM_CLIENT_ID;
-  const zoomClientSecret = body.zoomClientSecret || process.env.ZOOM_CLIENT_SECRET;
-  const firefliesApiKey = body.firefliesApiKey || process.env.FIREFLIES_API_KEY;
+
+  // Source credentials. The client only forwards local overrides; per
+  // ADR-042 Zoom/Fireflies/Kaltura live shared in Secret Manager. Resolve
+  // the shared copy for whichever scheme this download uses so a
+  // cross-platform re-publish (e.g. Kaltura entry → YouTube) works without
+  // the operator pasting platform creds locally.
+  const dl = body.downloadUrl ?? "";
+  let zoomAccountId = body.zoomAccountId || process.env.ZOOM_ACCOUNT_ID;
+  let zoomClientId = body.zoomClientId || process.env.ZOOM_CLIENT_ID;
+  let zoomClientSecret = body.zoomClientSecret || process.env.ZOOM_CLIENT_SECRET;
+  let firefliesApiKey = body.firefliesApiKey || process.env.FIREFLIES_API_KEY;
+  let kalturaPartnerId = body.kalturaPartnerId || process.env.KALTURA_PARTNER_ID;
+  let kalturaAdminSecret = body.kalturaAdminSecret || process.env.KALTURA_ADMIN_SECRET;
+
+  if (dl.startsWith("zoom://") && (!zoomAccountId || !zoomClientId || !zoomClientSecret)) {
+    const s = (await getSharedCredential("zoom")) as { accountId?: string; clientId?: string; clientSecret?: string } | null;
+    if (s) { zoomAccountId ||= s.accountId; zoomClientId ||= s.clientId; zoomClientSecret ||= s.clientSecret; }
+  }
+  if (dl.startsWith("fireflies://") && !firefliesApiKey) {
+    const s = (await getSharedCredential("fireflies")) as { apiKey?: string } | null;
+    if (s?.apiKey) firefliesApiKey = s.apiKey;
+  }
+  if (dl.startsWith("kaltura://") && (!kalturaPartnerId || !kalturaAdminSecret)) {
+    const s = (await getSharedCredential("kaltura")) as { partnerId?: string; adminSecret?: string; apiKey?: string } | null;
+    if (s) { kalturaPartnerId ||= s.partnerId; kalturaAdminSecret ||= s.adminSecret || s.apiKey; }
+  }
 
   if (!refreshToken || !clientId || !clientSecret || !body.title || !body.downloadUrl) {
     return NextResponse.json(
@@ -476,17 +365,170 @@ async function handler(req: NextRequest) {
     );
   }
 
-  pruneJobs();
-  const jobId = newJobId();
-  jobStore.set(jobId, { status: "processing", phase: "Starting…", startedAt: Date.now() });
+  const { title, description = "", tags = [], downloadUrl, privacyStatus = "unlisted", recordedAt } = body;
 
-  // Fire-and-forget — response returns immediately, client polls for status
-  runUpload(jobId, { ...body, refreshToken, clientId, clientSecret, zoomAccountId, zoomClientId, zoomClientSecret, firefliesApiKey }).catch(() => {});
+  const stream = new ReadableStream({
+    async start(controller) {
+      let tmpPath: string | null = null;
 
-  return NextResponse.json({ jobId }, { status: 202 });
+      const send = (type: string, data: Record<string, unknown>) => {
+        try { controller.enqueue(sseEvent(type, data)); } catch { /* client disconnected */ }
+      };
+
+      try {
+        // Step 1: Refresh YouTube token
+        send("progress", { phase: "Refreshing YouTube token…" });
+        serverLog("info", "ext:youtube-upload", "token-refresh-start", { title });
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: clientId!,
+            client_secret: clientSecret!,
+            refresh_token: refreshToken!,
+            grant_type: "refresh_token",
+          }),
+        });
+        if (!tokenRes.ok) {
+          const text = await tokenRes.text();
+          throw new Error(`YouTube token refresh failed (${tokenRes.status}): ${text}`);
+        }
+        const { access_token: ytAccessToken } = await tokenRes.json();
+        serverLog("info", "ext:youtube-upload", "token-refresh-ok", { title });
+
+        // Step 2: Download source to temp file
+        tmpPath = join(tmpdir(), `video-upload-${Date.now()}.mp4`);
+        send("progress", { phase: "Downloading source video…" });
+        serverLog("info", "ext:youtube-upload", "download-start", { title, downloadUrl });
+
+        if (downloadUrl.startsWith("youtube://")) {
+          await downloadYouTubeToFile(downloadUrl.replace("youtube://", ""), tmpPath, body.ytCookies);
+        } else if (downloadUrl.startsWith("zoom://recording/")) {
+          if (!zoomAccountId || !zoomClientId || !zoomClientSecret) throw new Error("Zoom credentials required");
+          await downloadZoomToFile(downloadUrl.replace("zoom://recording/", ""), zoomAccountId, zoomClientId, zoomClientSecret, tmpPath);
+        } else if (downloadUrl.startsWith("fireflies://")) {
+          if (!firefliesApiKey) throw new Error("Fireflies API key required");
+          await downloadFirefliesToFile(downloadUrl.replace("fireflies://", ""), firefliesApiKey, tmpPath);
+        } else if (downloadUrl.startsWith("kaltura://entry/")) {
+          if (!kalturaPartnerId || !kalturaAdminSecret) throw new Error("Kaltura credentials required (shared credential not configured)");
+          await downloadKalturaToFile(downloadUrl.replace("kaltura://entry/", ""), kalturaPartnerId, kalturaAdminSecret, tmpPath);
+        } else {
+          const loomId = extractLoomVideoId(downloadUrl);
+          if (loomId) {
+            await downloadLoomToFile(loomId, tmpPath);
+          } else {
+            const dlRes = await fetch(downloadUrl);
+            if (!dlRes.ok) throw new Error(`Source download failed (${dlRes.status})`);
+            await streamToFile(dlRes, tmpPath);
+          }
+        }
+        serverLog("info", "ext:youtube-upload", "download-ok", { title });
+
+        // Step 2b: Trim if requested
+        if (body.trimStartSeconds && body.trimStartSeconds > 0) {
+          send("progress", { phase: `Trimming first ${body.trimStartSeconds}s…` });
+          serverLog("info", "ext:youtube-upload", "trim-start", { title, trimStartSeconds: body.trimStartSeconds });
+          const trimmedPath = join(tmpdir(), `video-trimmed-${Date.now()}.mp4`);
+          await new Promise<void>((resolve, reject) => {
+            execFile(
+              "ffmpeg",
+              ["-ss", String(body.trimStartSeconds), "-i", tmpPath!, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", "-y", trimmedPath],
+              { timeout: 300000 },
+              (err, _stdout, stderr) => {
+                if (err) reject(new Error(`ffmpeg trim failed: ${(stderr || err.message).slice(0, 300)}`));
+                else resolve();
+              },
+            );
+          });
+          fs.unlink(tmpPath).catch(() => {});
+          tmpPath = trimmedPath;
+          serverLog("info", "ext:youtube-upload", "trim-ok", { title });
+        }
+
+        // Step 3: Initiate resumable upload
+        send("progress", { phase: "Initiating YouTube upload…" });
+        serverLog("info", "ext:youtube-upload", "upload-init-start", { title });
+        const videoSize = (await fs.stat(tmpPath)).size;
+        const metadata: Record<string, unknown> = {
+          snippet: { title, description, tags },
+          status: { privacyStatus, selfDeclaredMadeForKids: false },
+        };
+        const parts = ["snippet", "status"];
+        if (recordedAt) { metadata.recordingDetails = { recordingDate: recordedAt }; parts.push("recordingDetails"); }
+
+        const initRes = await fetch(
+          `https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=${parts.join(",")}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ytAccessToken}`,
+              "Content-Type": "application/json",
+              "X-Upload-Content-Length": videoSize.toString(),
+              "X-Upload-Content-Type": "video/mp4",
+            },
+            body: JSON.stringify(metadata),
+          },
+        );
+        if (!initRes.ok) {
+          const text = await initRes.text();
+          throw new Error(`YouTube upload init failed (${initRes.status}): ${text}`);
+        }
+        const uploadUrl = initRes.headers.get("Location");
+        if (!uploadUrl) throw new Error("YouTube did not return an upload URL");
+        serverLog("info", "ext:youtube-upload", "upload-init-ok", { title, videoSize });
+
+        // Step 4: Stream video to YouTube
+        send("progress", { phase: "Uploading to YouTube…" });
+        serverLog("info", "ext:youtube-upload", "upload-stream-start", { title, videoSize });
+        const fileStream = createReadStream(tmpPath);
+        const nodeReadable = Readable.toWeb(fileStream) as ReadableStream;
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "video/mp4", "Content-Length": videoSize.toString() },
+          body: nodeReadable,
+          // @ts-expect-error duplex required for streaming body in Node fetch
+          duplex: "half",
+        });
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text();
+          throw new Error(`YouTube upload failed (${uploadRes.status}): ${text}`);
+        }
+
+        const result = await uploadRes.json();
+        const videoId = result.id as string;
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        serverLog("info", "ext:youtube-upload", "published", { title, videoId, videoUrl });
+        send("complete", { videoId, videoUrl });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        serverLog("error", "ext:youtube-upload", "failed", { title, error: message });
+        send("error", { message });
+      } finally {
+        if (tmpPath) fs.unlink(tmpPath).catch(() => {});
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 // Cloud Run: --timeout=3600 in cloudbuild.yaml.
 export const maxDuration = 3600;
 
-export const POST = withRequestLogging("api:youtube/upload", handler);
+// withRequestLogging wraps in NextResponse which isn't compatible with the plain
+// Response(stream) needed for SSE — log manually inside the handler instead.
+export async function POST(req: NextRequest) {
+  const rid = req.headers.get("x-request-id") ?? crypto.randomUUID().slice(0, 8);
+  serverLog("info", "api:youtube/upload", "req", { method: "POST", path: new URL(req.url).pathname, rid });
+  const res = await handler(req);
+  const headers = new Headers(res.headers);
+  headers.set("x-request-id", rid);
+  return new Response(res.body, { status: res.status, headers });
+}

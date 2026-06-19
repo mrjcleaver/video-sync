@@ -40,6 +40,21 @@ export interface VideoRecordJSON {
   upstream_links: UpstreamLinkJSON[];
   rejected_links: RejectedLinkJSON[];
   metadata_extra: Record<string, unknown> | null;
+  // ADR-046 — prompt-driven summary metadata.
+  summary_doc_id?: string | null;
+  summary_prompt_version?: number | null;
+  summary_locked?: boolean;
+  summary_counts?: SummaryCountsJSON | null;
+  /** ISO timestamp when the current summary was generated. */
+  summary_generated_at?: string | null;
+}
+
+/** ADR-046 — counts surfaced as M:NN L:NN T:NN C:NN in the Overview. */
+export interface SummaryCountsJSON {
+  m: number;
+  l: number;
+  t: number;
+  c: number;
 }
 
 export interface NoteJSON {
@@ -64,7 +79,7 @@ export interface UpstreamLinkJSON {
   platform: string;
   external_id: string;
   account_hint: string | null;
-  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf" | "BroadcastedFrom";
   linked_by: "Auto" | "Manual";
   linked_at: string;
 }
@@ -81,7 +96,7 @@ export interface LinkUpstreamCmd {
   platform: string;
   external_id: string;
   account_hint?: string;
-  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf";
+  relation: "SameEvent" | "TranscribedFrom" | "ScreenRecordingOf" | "ClipOf" | "BroadcastedFrom";
   linked_by?: "Auto" | "Manual";
 }
 
