@@ -187,6 +187,46 @@ async function downloadYouTubeToFile(videoId: string, outPath: string, cookies?:
   }
 }
 
+async function downloadYouTubeToFile(videoId: string, outPath: string, cookies?: string): Promise<void> {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+  // Write cookies to a temp file if provided
+  let cookiesPath: string | null = null;
+  if (cookies?.trim()) {
+    cookiesPath = join(tmpdir(), `yt-cookies-${Date.now()}.txt`);
+    await fs.writeFile(cookiesPath, cookies, "utf8");
+  }
+
+  const args = [
+    "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "--output", outPath,
+    "--no-playlist",
+    "--quiet",
+    "--no-warnings",
+  ];
+  if (cookiesPath) args.push("--cookies", cookiesPath);
+  args.push(url);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile("yt-dlp", args, { timeout: 3600000 }, (err, _stdout, stderr) => {
+        if (err) {
+          if (err.message.includes("ENOENT")) {
+            reject(new Error("yt-dlp is not installed. It must be present in the container (ADR-027)."));
+          } else {
+            const detail = (stderr || "").trim() || err.message;
+            reject(new Error(`yt-dlp failed: ${detail.slice(0, 500)}`));
+          }
+        } else {
+          resolve();
+        }
+      });
+    });
+  } finally {
+    if (cookiesPath) fs.unlink(cookiesPath).catch(() => {});
+  }
+}
+
 async function downloadFirefliesToFile(
   transcriptId: string,
   apiKey: string,

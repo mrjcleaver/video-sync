@@ -397,6 +397,8 @@ export default function Dashboard() {
 
       <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
+      <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
+
       {/* Burndown stats */}
       <div className="burndown-stats">
         <span>Total: {videos.length}</span>
