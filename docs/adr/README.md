@@ -60,6 +60,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-052](ADR-052-catchup-summary-badge-backfill.md) | Catch-Up Summary Badge Backfill (Transcript-Having Records) | Proposed |
 | [ADR-053](ADR-053-transcript-provenance-lookup.md) | Transcript Provenance Lookup — Borrow Transcripts From Related Records | Proposed |
 | [ADR-054](ADR-054-youtube-google-api-key-shareable.md) | YouTube Google API Key is Org-Wide Shareable; OAuth Stays Per-Operator | Accepted (implemented 2026-06-18) |
+| [ADR-055](ADR-055-youtube-title-alignment.md) | Align YouTube-Live Broadcast Titles with Dated Series Names Used Elsewhere | Proposed |
 
 ## ADR Format
 
