@@ -29,8 +29,9 @@ export interface TitleAlignmentCandidate {
 }
 
 /**
- * Pure scanner — every YouTube-source record for which the resolver
- * would produce a rewrite. Returned in stable catalog order.
+ * Pure scanner — every record for which the resolver would produce
+ * a rewrite. ADR-055 restricted this to YouTube-source; ADR-056
+ * widens to any platform.
  */
 export function findRecordsNeedingTitleAlignment(
   allRecords: VideoRecordJSON[],
@@ -38,7 +39,6 @@ export function findRecordsNeedingTitleAlignment(
 ): TitleAlignmentCandidate[] {
   const out: TitleAlignmentCandidate[] = [];
   for (const rec of allRecords) {
-    if (rec.source_platform !== "YouTube") continue;
     const alignment = resolveAlignedTitle(rec, allRecords, registry);
     if (alignment) out.push({ record: rec, alignment });
   }

@@ -716,11 +716,13 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
           background: "rgba(251,146,60,0.05)", border: "1px solid rgba(251,146,60,0.25)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>🏷️ YouTube title alignment (ADR-055)</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>🏷️ Catalog title alignment (ADR-055/056)</div>
           <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
-            Rewrites undated YouTube-source titles ("AI Hackerspace Live") to the dated form used elsewhere
-            ("AI Hackerspace Live - 6 Feb 2026"). Prefers the paired canonical's title (Zoom/Fireflies); falls
-            back to the series registry when no dated canonical exists. Skips already-dated titles.
+            Rewrites undated series-named titles ("AI Hackerspace Live") to the dated form
+            ("AI Hackerspace Live - 6 Feb 2026") across every source platform. Prefers the
+            paired canonical's title (Zoom / Fireflies / YouTube via SameEvent, BroadcastedFrom,
+            or TranscribedFrom); falls back to the series registry when no dated canonical
+            exists. Skips already-dated titles.
             {titleAlignCounts.total > 0 ? (
               <>
                 {" "}<strong>{titleAlignCounts.total}</strong> eligible (

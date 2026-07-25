@@ -87,15 +87,26 @@ describe("formatDMMMYYYY", () => {
   });
 });
 
-describe("resolveAlignedTitle — non-YouTube records are out of scope", () => {
-  it("returns null for a Zoom record even if undated", () => {
-    const r = makeRecord({ source_platform: "Zoom", title: "AI Hackerspace Live" });
-    expect(resolveAlignedTitle(r, [r], [])).toBeNull();
+describe("resolveAlignedTitle — ADR-056 widened scope covers all platforms", () => {
+  const registry: SeriesRegistryEntry[] = [
+    { series_name: "AI Hackerspace Live", pattern: "^AI Hackerspace Live" },
+  ];
+
+  it("Zoom-source records are now eligible (Strategy 2)", () => {
+    const r = makeRecord({ source_platform: "Zoom", title: "AI Hackerspace Live", recorded_at: "2026-02-06T18:00:00Z" });
+    const result = resolveAlignedTitle(r, [r], registry);
+    expect(result?.new_title).toBe("AI Hackerspace Live - 6 Feb 2026");
+    expect(result?.matched_series).toBe("AI Hackerspace Live");
   });
 
-  it("returns null for a Fireflies record", () => {
-    const r = makeRecord({ source_platform: "Fireflies", title: "AI Hackerspace Live" });
-    expect(resolveAlignedTitle(r, [r], [])).toBeNull();
+  it("Fireflies-source records are now eligible (Strategy 2)", () => {
+    const r = makeRecord({ source_platform: "Fireflies", title: "AI Hackerspace Live", recorded_at: "2026-02-06T18:00:00Z" });
+    expect(resolveAlignedTitle(r, [r], registry)?.new_title).toBe("AI Hackerspace Live - 6 Feb 2026");
+  });
+
+  it("Kaltura-source records are now eligible (Strategy 2)", () => {
+    const r = makeRecord({ source_platform: "Kaltura", title: "AI Hackerspace Live", recorded_at: "2026-02-06T18:00:00Z" });
+    expect(resolveAlignedTitle(r, [r], registry)?.new_title).toBe("AI Hackerspace Live - 6 Feb 2026");
   });
 });
 
@@ -228,6 +239,99 @@ describe("resolveAlignedTitle — Strategy 2 (series registry)", () => {
     const yt = makeRecord({ title: "AI Hackerspace Live", recorded_at: "2026-02-06T18:00:00Z" });
     const result = resolveAlignedTitle(yt, [yt], badFirst);
     expect(result?.matched_series).toBe("AI Hackerspace Live");
+  });
+});
+
+describe("resolveAlignedTitle — Strategy 1 widened relations (ADR-056)", () => {
+  it("Fireflies with TranscribedFrom → Zoom inherits Zoom's dated title", () => {
+    // The most common ADR-056 case: Fireflies transcript-bot capture
+    // paired with a Zoom recording that already carries the date.
+    const zoom = makeRecord({
+      id: "zoom-uuid",
+      source_platform: "Zoom",
+      source_id: "zoom-A",
+      title: "AI Hackerspace Live - 6 Feb 2026",
+    });
+    const fireflies = makeRecord({
+      source_platform: "Fireflies",
+      source_id: "fireflies-A",
+      title: "AI Hackerspace Live",
+      upstream_links: [makeLink({
+        relation: "TranscribedFrom",
+        platform: "Zoom",
+        external_id: "zoom-A",
+        video_id: "zoom-uuid",
+      })],
+    });
+    const result = resolveAlignedTitle(fireflies, [fireflies, zoom], []);
+    expect(result?.source).toBe("paired_canonical");
+    expect(result?.new_title).toBe("AI Hackerspace Live - 6 Feb 2026");
+    expect(result?.canonical_id).toBe("zoom-uuid");
+  });
+
+  it("Zoom with SameEvent → Fireflies (with dated title) inherits Fireflies' title", () => {
+    // The reverse direction — if the Fireflies side happens to be
+    // the one with the date, the Zoom side borrows it.
+    const fireflies = makeRecord({
+      id: "ff-uuid",
+      source_platform: "Fireflies",
+      source_id: "fireflies-A",
+      title: "Agentics Live Vibe - Coding - 21 May 2026",
+    });
+    const zoom = makeRecord({
+      source_platform: "Zoom",
+      source_id: "zoom-A",
+      title: "Agentics Live Vibe - Coding",
+      upstream_links: [makeLink({
+        relation: "SameEvent",
+        platform: "Fireflies",
+        external_id: "fireflies-A",
+        video_id: "ff-uuid",
+      })],
+    });
+    const result = resolveAlignedTitle(zoom, [zoom, fireflies], []);
+    expect(result?.source).toBe("paired_canonical");
+    expect(result?.new_title).toBe("Agentics Live Vibe - Coding - 21 May 2026");
+    expect(result?.canonical_id).toBe("ff-uuid");
+  });
+
+  it("still ignores ClipOf donors (partial context, unsafe)", () => {
+    const clip = makeRecord({
+      id: "clip-uuid",
+      source_platform: "YouTube",
+      title: "AI Hackerspace Live - Highlight - 6 Feb 2026",  // dated, but partial
+    });
+    const source = makeRecord({
+      source_platform: "Zoom",
+      title: "AI Hackerspace Live",
+      upstream_links: [makeLink({
+        relation: "ClipOf",
+        platform: "YouTube",
+        external_id: clip.source_id,
+        video_id: "clip-uuid",
+      })],
+    });
+    // Clip donor is filtered out. No other strategy fires → null.
+    expect(resolveAlignedTitle(source, [source, clip], [])).toBeNull();
+  });
+
+  it("still ignores ScreenRecordingOf donors", () => {
+    const screenRec = makeRecord({
+      id: "loom-uuid",
+      source_platform: "Loom",
+      title: "AI Hackerspace Live - 6 Feb 2026",
+    });
+    const source = makeRecord({
+      source_platform: "Zoom",
+      title: "AI Hackerspace Live",
+      upstream_links: [makeLink({
+        relation: "ScreenRecordingOf",
+        platform: "Loom",
+        external_id: screenRec.source_id,
+        video_id: "loom-uuid",
+      })],
+    });
+    expect(resolveAlignedTitle(source, [source, screenRec], [])).toBeNull();
   });
 });
 

@@ -75,15 +75,32 @@ export function formatDMMMYYYY(iso: string): string {
 }
 
 /**
- * Enumerate paired canonicals — records that appear as the target
- * of this record's BroadcastedFrom upstream link. Returns them in
+ * ADR-056 — safe relations for title inheritance. Matches
+ * ADR-053's transcript-safe set (minus ClipOf/ScreenRecordingOf,
+ * which represent partial audio contexts and can't carry the full
+ * record's dated identity).
+ */
+const TITLE_INHERITANCE_RELATIONS: ReadonlySet<string> = new Set([
+  "SameEvent",
+  "BroadcastedFrom",
+  "TranscribedFrom",
+]);
+
+/**
+ * Enumerate paired canonicals — records this record's upstream_links
+ * point at via any title-inheritance-safe relation. Returns them in
  * catalog order (arbitrary but stable). The caller picks the first
  * dated one.
+ *
+ * ADR-055 walked BroadcastedFrom only (YouTube→Zoom). ADR-056
+ * widened to SameEvent + TranscribedFrom so a Fireflies record with
+ * `TranscribedFrom → Zoom` inherits Zoom's dated title, and either
+ * side of a SameEvent pair can inherit the other's date.
  */
 function findPairedCanonicals(record: VideoRecordJSON, allRecords: VideoRecordJSON[]): VideoRecordJSON[] {
   const out: VideoRecordJSON[] = [];
   for (const link of record.upstream_links ?? []) {
-    if (link.relation !== "BroadcastedFrom") continue;
+    if (!TITLE_INHERITANCE_RELATIONS.has(link.relation)) continue;
     if (link.video_id) {
       const found = allRecords.find((r) => r.id === link.video_id);
       if (found) { out.push(found); continue; }
@@ -174,7 +191,9 @@ export function resolveAlignedTitle(
   allRecords: VideoRecordJSON[],
   registry: SeriesRegistryEntry[],
 ): AlignedTitle | null {
-  if (record.source_platform !== "YouTube") return null;
+  // ADR-056 — ADR-055's YouTube-only gate was too narrow; the
+  // undated-series problem affects Fireflies and Zoom too. Now
+  // applies to any source platform.
   if (titleContainsDate(record.title)) return null;
 
   return tryStrategyPairedCanonical(record, allRecords)
