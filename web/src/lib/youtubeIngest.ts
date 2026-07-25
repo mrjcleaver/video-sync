@@ -31,6 +31,8 @@ import type { VideoRecordJSON } from "./wasm";
 import { videoStore } from "./store";
 import type { YouTubeVideoInfo } from "../app/api/youtube/video-info/route";
 import type { Role } from "./types/actor";
+import { resolveTitleFromRegistry } from "./youtubeTitleAlign";
+import { getSeriesRegistry } from "./seriesRegistryClient";
 
 const MEETING_SOURCE_PLATFORMS: ReadonlySet<string> = new Set([
   "Zoom", "Streamyard", "OBS", "Wirecast",
@@ -192,10 +194,24 @@ export async function ingestYouTubeSourceRow(
   // record indistinguishable from a channel-poll import.
   const isLive = info.liveBroadcastContent === "live" || info.liveBroadcastContent === "completed";
   const tags = isLive ? ["youtube-live", `live-${info.liveBroadcastContent}`] : [];
+
+  // ADR-055 — align the title with the dated series form used
+  // elsewhere. At first-ingest only Strategy 2 (series-registry
+  // template) can fire: Strategy 1 (paired-canonical inheritance)
+  // needs an upstream_link that's added AFTER creation by
+  // maybeWriteBroadcastedFromLink below. The retrospective backfill
+  // card catches Strategy 1 on the next Catch-Up pass — the raw
+  // YouTube title is always preserved in metadata_extra so that
+  // pass still has the original to work from.
+  const registry = await getSeriesRegistry();
+  const alignmentProbe = resolveTitleFromRegistry(info.title, info.publishedAt, registry);
+  const finalTitle = alignmentProbe?.new_title ?? info.title;
+  const alignedAtIngest = alignmentProbe != null;
+
   const cmd: Record<string, unknown> = {
     source_id: `youtube-${youtubeVideoId}`,
     source_platform: "YouTube",
-    title: info.title,
+    title: finalTitle,
     description: info.description ?? undefined,
     duration_seconds: info.durationSeconds,
     participants: [],
@@ -209,6 +225,16 @@ export async function ingestYouTubeSourceRow(
       live_broadcast_content: info.liveBroadcastContent,
       ...(isLive ? { live_broadcast: "1" } : {}),
       youtube_url: `https://www.youtube.com/watch?v=${youtubeVideoId}`,
+      // ADR-055 — always preserve the raw YouTube title so a
+      // retrospective realignment (paired canonical arrives later)
+      // can still see what YouTube itself called it. Only stamp
+      // when we actually rewrote — for untouched titles the raw
+      // is already in `title` and the record.
+      ...(alignedAtIngest ? {
+        youtube_original_title: info.title,
+        title_aligned_source: alignmentProbe!.source,
+        ...(alignmentProbe!.matched_series ? { title_aligned_matched_series: alignmentProbe!.matched_series } : {}),
+      } : {}),
     },
   };
 

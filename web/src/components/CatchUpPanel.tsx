@@ -17,6 +17,9 @@ import { runCatchUp, runBroadcastPairMigration, type OrchestratorEvent, type Sta
 import { runYouTubeRowBackfill, findMissingYouTubeRows, type BackfillProgressEvent } from "../lib/youtubeIngest";
 import { runSummaryBadgeBackfill, findRecordsNeedingSummaryBadge, type BackfillProgressEvent as SummaryBackfillEvent } from "../lib/summaryBadgeBackfill";
 import { getCurrentPromptVersion } from "../lib/summaryPromptClient";
+import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type TitleAlignmentProgressEvent } from "../lib/youtubeTitleAlignBackfill";
+import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 
 interface Props {
   open: boolean;
@@ -193,6 +196,54 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       onEvent?.(`Summary backfill errored: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSummaryBackfilling(false);
+    }
+  }
+
+  // ADR-055 — YouTube title alignment. Fourth Catch-Up maintenance
+  // card. Walks YouTube-source records and applies the resolver
+  // (paired-canonical inheritance > series-registry template).
+  const [titleAligning, setTitleAligning] = useState(false);
+  const [titleAlignProgress, setTitleAlignProgress] = useState<{ index: number; total: number } | null>(null);
+  const [titleAlignSummary, setTitleAlignSummary] = useState<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number } | null>(null);
+  const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSeriesRegistry().then((r) => { if (!cancelled) setSeriesRegistry(r); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const titleAlignWork = useMemo(
+    () => findRecordsNeedingTitleAlignment(videos, seriesRegistry),
+    [videos, seriesRegistry],
+  );
+  const titleAlignCounts = useMemo(() => {
+    const paired = titleAlignWork.filter((c) => c.alignment.source === "paired_canonical").length;
+    const registry = titleAlignWork.filter((c) => c.alignment.source === "series_registry").length;
+    return { paired, registry, total: titleAlignWork.length };
+  }, [titleAlignWork]);
+
+  async function runTitleAlignBackfill() {
+    setTitleAligning(true);
+    setTitleAlignProgress(null);
+    setTitleAlignSummary(null);
+    try {
+      await runYouTubeTitleAlignBackfill(
+        actorState,
+        (ev: TitleAlignmentProgressEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setTitleAlignProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setTitleAlignSummary(ev.totals);
+            setTitleAlignProgress(null);
+          }
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Title alignment errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setTitleAligning(false);
     }
   }
 
@@ -651,6 +702,51 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
                 {summaryBackfillSummary.skipped} skipped ·{" "}
                 {summaryBackfillSummary.errors} error{summaryBackfillSummary.errors === 1 ? "" : "s"} ·{" "}
                 ${summaryBackfillSummary.cost_spent_usd.toFixed(2)} spent.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ADR-055 — YouTube title alignment. Fourth maintenance card.
+            Rewrites undated YouTube-source titles to the dated form
+            used elsewhere in the catalog (paired-canonical
+            inheritance first, series-registry template as fallback). */}
+        <div style={{
+          marginTop: 12, padding: 10,
+          background: "rgba(251,146,60,0.05)", border: "1px solid rgba(251,146,60,0.25)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>🏷️ YouTube title alignment (ADR-055)</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            Rewrites undated YouTube-source titles ("AI Hackerspace Live") to the dated form used elsewhere
+            ("AI Hackerspace Live - 6 Feb 2026"). Prefers the paired canonical's title (Zoom/Fireflies); falls
+            back to the series registry when no dated canonical exists. Skips already-dated titles.
+            {titleAlignCounts.total > 0 ? (
+              <>
+                {" "}<strong>{titleAlignCounts.total}</strong> eligible (
+                {titleAlignCounts.paired} via paired canonical
+                {titleAlignCounts.registry > 0 && <>, {titleAlignCounts.registry} via series registry</>}
+                ).
+              </>
+            ) : (
+              <> All YouTube titles aligned{seriesRegistry.length === 0 ? " (registry is empty — only paired-canonical strategy is active)" : ""}.</>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={runTitleAlignBackfill}
+              disabled={titleAligning || titleAlignCounts.total === 0}
+            >
+              {titleAligning
+                ? titleAlignProgress ? `Renaming ${titleAlignProgress.index}/${titleAlignProgress.total}…` : "Renaming…"
+                : `Run alignment${titleAlignCounts.total ? ` (${titleAlignCounts.total})` : ""}`}
+            </button>
+            {titleAlignSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {titleAlignSummary.renamed_via_pair} via pair ·{" "}
+                {titleAlignSummary.renamed_via_registry} via registry ·{" "}
+                {titleAlignSummary.errors} error{titleAlignSummary.errors === 1 ? "" : "s"}.
               </span>
             )}
           </div>
