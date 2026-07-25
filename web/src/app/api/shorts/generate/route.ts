@@ -13,6 +13,11 @@ interface GenerateRequest {
   apiKey: string;
 }
 
+// Opus Clip API v2 (2026 rewrite of /v1/create → /clip-projects)
+// returns a flat ClipProjectRepresentation. Keep the older
+// data.id/data.uid keys in the shape as fallbacks so a partial
+// server-side proxy or beta gateway that still wraps the response
+// doesn't break us — but the canonical field is `id`.
 interface OpusClipJobResponse {
   data?: {
     id?: string;
@@ -20,6 +25,7 @@ interface OpusClipJobResponse {
   };
   id?: string;
   uid?: string;
+  projectId?: string;
   error?: string;
   message?: string;
 }
@@ -57,24 +63,31 @@ async function handler(req: NextRequest) {
     hasPrompt: !!prompt,
   });
 
-  // Submit clip generation job to Opus Clip
-  // POST /v1/create — creates a new clip project
+  // Submit clip project to Opus Clip.
+  // POST /api/clip-projects — replaces the legacy /api/v1/create,
+  // which was retired around 2026 and now returns HTTP 404
+  // "Cannot POST /api/v1/create". The new schema is camelCase and
+  // groups options under curationPref + renderPref instead of the
+  // flat top-level fields. See help.opus.pro/api-reference/openapi.json.
   const opusPayload: Record<string, unknown> = {
-    video_url: parentYouTubeUrl,
-    video_name: videoTitle,
-    // caption_switch: true burns captions into the clip
-    caption_switch: captions === true || captions === "srt",
-    // aspect_ratio: 9:16 for Shorts/Reels
-    aspect_ratio: "9:16",
-    // Let Opus Clip AI decide clip count
-    num_clips: 0, // 0 = AI decides
+    videoUrl: parentYouTubeUrl,
+    // Portrait aspect ratio for Shorts / Reels (was: aspect_ratio "9:16").
+    renderPref: {
+      enableCaption: captions === true || captions === "srt",
+      layoutAspectRatio: "portrait",
+    },
+    // Empty curationPref lets Opus decide clip count/durations, matching
+    // the old num_clips: 0 semantics. Prompt maps to topicKeywords.
+    ...(prompt
+      ? { curationPref: { topicKeywords: [prompt] } }
+      : {}),
   };
+  // videoTitle is no longer settable via the create endpoint — kept
+  // as a log-only breadcrumb so the server-side audit trail still
+  // reflects which video the project was for.
+  void videoTitle;
 
-  if (prompt) {
-    opusPayload.prompt = prompt;
-  }
-
-  const opusRes = await fetch(`${OPUS_API_BASE}/v1/create`, {
+  const opusRes = await fetch(`${OPUS_API_BASE}/clip-projects`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -85,14 +98,17 @@ async function handler(req: NextRequest) {
 
   const opusData = (await opusRes.json()) as OpusClipJobResponse;
 
+  // The new API returns 201 Created on success; keep the .ok check
+  // (which accepts any 2xx) rather than a strict === 200 test.
   if (!opusRes.ok) {
     const msg = opusData.error ?? opusData.message ?? `Opus Clip API error (${opusRes.status})`;
     serverLog("error", "shorts:generate", "Opus Clip job submission failed", { status: opusRes.status, msg });
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  // Job ID may be at data.id, data.uid, id, or uid depending on API version
-  const jobId = opusData.data?.id ?? opusData.data?.uid ?? opusData.id ?? opusData.uid;
+  // Prefer top-level `id` (the new API's canonical field) with the
+  // older data.id/data.uid/uid shapes as fallbacks.
+  const jobId = opusData.id ?? opusData.projectId ?? opusData.data?.id ?? opusData.data?.uid ?? opusData.uid;
 
   if (!jobId) {
     serverLog("error", "shorts:generate", "No job ID in Opus Clip response", { opusData });
