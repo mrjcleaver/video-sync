@@ -152,12 +152,29 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       return;
     }
 
-    // Prefer the public YouTube destination URL over the download_url
-    const ytLoc = (video.locations ?? []).find(
-      (l) => l.platform === "YouTube" && l.role === "Destination" && l.external_url,
-    );
-    const parentYouTubeUrl = ytLoc?.external_url ?? null;
-    const parentYouTubeId = ytLoc?.external_id ?? null;
+    // Prefer the public YouTube URL. Two shapes count as "on YouTube":
+    //   - a Destination YouTube location (we published there), OR
+    //   - an Origin YouTube location (born-on-YouTube record per
+    //     ADR-051 — the Origin IS the public URL for these).
+    // Order matters: Destination first for pair cases where we pushed
+    // a Zoom recording to YouTube; the destination is authoritative.
+    const ytLocs = (video.locations ?? []).filter((l) => l.platform === "YouTube" && l.external_url);
+    const ytLoc = ytLocs.find((l) => l.role === "Destination") ?? ytLocs.find((l) => l.role === "Origin");
+    let parentYouTubeUrl = ytLoc?.external_url ?? null;
+    let parentYouTubeId = ytLoc?.external_id ?? null;
+
+    // Fallback: metadata_extra.youtube_url (populated by
+    // YouTubeLiveImport for channel-poll imports) — covers cases
+    // where the Origin location's external_url wasn't written but
+    // the metadata knows the video id.
+    if (!parentYouTubeUrl) {
+      const meYtUrl = (video.metadata_extra as { youtube_url?: string } | null)?.youtube_url;
+      if (meYtUrl) {
+        parentYouTubeUrl = meYtUrl;
+        const idMatch = meYtUrl.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11})/);
+        parentYouTubeId = idMatch ? (idMatch[1] ?? idMatch[2]) : null;
+      }
+    }
 
     if (!parentYouTubeUrl) {
       setShortsError("No public YouTube URL found. Publish to YouTube first, or ensure the video is public.");
