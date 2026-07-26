@@ -383,6 +383,7 @@ export function indexShortClips(params: {
     thumbnailUrl: string | null;
     opusClipId?: string | null;
     opusEditUrl?: string | null;
+    keywords?: string[];
   }>;
   /** Present when called from a react component with actor context.
    *  When set, each clip gets a `ClipOf` upstream_link to the parent
@@ -426,6 +427,11 @@ export function indexShortClips(params: {
       // Deep-link to Opus's single-clip editor. Rendered as an "Edit
       // in Opus" link on the clip card in ShortsPanel.
       metadataExtra.opus_edit_url = clip.opusEditUrl;
+    }
+    if (clip.keywords && clip.keywords.length > 0) {
+      // Persist so the collapsible clips list on the parent VideoCard
+      // has content to show without re-hitting Opus.
+      metadataExtra.keywords = clip.keywords;
     }
 
     const record = new WasmVideoRecord(

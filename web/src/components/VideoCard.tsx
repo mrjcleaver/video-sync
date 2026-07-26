@@ -108,6 +108,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [linkRelation, setLinkRelation] = useState("SameEvent");
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [showShortsModal, setShowShortsModal] = useState(false);
+  // Collapsed by default — a video can have 20+ OpusClip children,
+  // and the operator asked for a compact nested list instead of the
+  // flood of standalone VideoCards it used to be.
+  const [showClips, setShowClips] = useState(false);
   const [shortsCaption, setShortsCaption] = useState(true);
   const [shortsPrompt, setShortsPrompt] = useState("");
   const [shortsLoading, setShortsLoading] = useState(false);
@@ -1446,6 +1450,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     }
   }
 
+  // OpusClip children of this video — resolved via ClipOf upstream
+  // link (preferred), falling back to metadata_extra.parent_video_id
+  // for any legacy rows written before ADR-055's link addition.
+  const childClips = useMemo<VideoRecordJSON[]>(() => {
+    if (!allVideos || video.source_platform === "OpusClip") return [];
+    const out: VideoRecordJSON[] = [];
+    for (const r of allVideos) {
+      if (r.source_platform !== "OpusClip") continue;
+      const viaLink = (r.upstream_links ?? []).some(l => l.relation === "ClipOf" && l.video_id === video.id);
+      const viaMeta = (r.metadata_extra as { parent_video_id?: string } | null)?.parent_video_id === video.id;
+      if (viaLink || viaMeta) out.push(r);
+    }
+    // Sort by start-of-clip so the collapsible list reads left-to-
+    // right through the recording timeline.
+    out.sort((a, b) => {
+      const sa = (a.metadata_extra as { clip_start_seconds?: number } | null)?.clip_start_seconds ?? 0;
+      const sb = (b.metadata_extra as { clip_start_seconds?: number } | null)?.clip_start_seconds ?? 0;
+      return sa - sb;
+    });
+    return out;
+  }, [allVideos, video.id, video.source_platform]);
+
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
@@ -1967,6 +1993,78 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Privacy: </span>
             <span>{attrsPreview.privacy_status}</span>
           </div>
+        </div>
+      )}
+
+      {/* Clips derived from this recording — collapsible; a single
+          recording can produce 20+ Opus shorts and rendering each as
+          its own VideoCard flooded the catalog. */}
+      {childClips.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            onClick={() => setShowClips(v => !v)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "none", border: "none", color: "rgb(94,234,212)",
+              fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
+              padding: "2px 0",
+            }}
+            title="Toggle the per-clip list"
+          >
+            <span style={{ display: "inline-block", width: 10 }}>{showClips ? "▾" : "▸"}</span>
+            ✂️ {childClips.length} clip{childClips.length === 1 ? "" : "s"}
+          </button>
+          {showClips && (
+            <div style={{
+              marginTop: 4, paddingLeft: 14,
+              borderLeft: "2px solid rgba(20,184,166,0.35)",
+              display: "flex", flexDirection: "column", gap: 3,
+            }}>
+              {childClips.map(c => {
+                const extra = (c.metadata_extra ?? {}) as Record<string, unknown>;
+                const start = typeof extra.clip_start_seconds === "number" ? extra.clip_start_seconds : 0;
+                const end = typeof extra.clip_end_seconds === "number" ? extra.clip_end_seconds : 0;
+                const length = Math.max(0, end - start);
+                const kw = Array.isArray(extra.keywords) ? (extra.keywords as string[]) : [];
+                const editUrl = typeof extra.opus_edit_url === "string" ? extra.opus_edit_url : null;
+                const fmt = (s: number) => {
+                  const m = Math.floor(s / 60);
+                  const sec = Math.floor(s % 60);
+                  return `${m}:${String(sec).padStart(2, "0")}`;
+                };
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: "flex", gap: 8, alignItems: "baseline",
+                      fontSize: "0.75rem", padding: "2px 4px",
+                      borderRadius: 4,
+                    }}
+                    title={c.title}
+                  >
+                    <span style={{ fontFamily: "monospace", color: "var(--text-muted)", minWidth: 42 }}>@{fmt(start)}</span>
+                    <span style={{ fontFamily: "monospace", color: "var(--text-muted)", minWidth: 34 }}>{fmt(length)}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+                      {kw.length > 0
+                        ? kw.slice(0, 6).join(" · ")
+                        : (c.title.length > 60 ? c.title.slice(0, 59) + "…" : c.title)}
+                    </span>
+                    {editUrl && (
+                      <a
+                        href={editUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "#a78bfa", textDecoration: "none", fontSize: "0.7rem" }}
+                        title="Open in Opus Clip editor"
+                      >
+                        ↗
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

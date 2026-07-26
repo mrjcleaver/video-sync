@@ -30,9 +30,14 @@ export default function CatalogPage() {
     refresh, addEvent, ensureVideoVisible, bulkApprove, exclusionCount,
   } = useApp();
 
+  // OpusClip records are rendered nested under their parent
+  // VideoCard's collapsible '✂️ N clips' section — never as
+  // standalone rows in the main list (a single video can have
+  // 20+ clips and they'd flood the catalog).
+  const catalogPool = videos.filter(v => v.source_platform !== "OpusClip");
   const visibleVideos = showPaired
-    ? videos
-    : videos.filter(v => !broadcastPairs.destinationRecordIds.has(v.id));
+    ? catalogPool
+    : catalogPool.filter(v => !broadcastPairs.destinationRecordIds.has(v.id));
 
   const filtered = (() => {
     const base =

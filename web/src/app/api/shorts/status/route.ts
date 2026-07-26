@@ -26,6 +26,9 @@ export interface OpusClip {
   /** Deep link to the single-clip editor in the Opus web app.
    *  Shape: /editor-ux/<projectId>.<clipId>?clipId=<clipId>&clipRank=<n>&editType=normal */
   opusEditUrl: string | null;
+  /** Opus's own keyword tags for the clip — surfaced compactly in
+   *  the parent VideoCard's clips list. */
+  keywords: string[];
 }
 
 export interface ShortsStatusResponse {
@@ -72,6 +75,7 @@ interface ExportableClipRepresentation {
   timeRanges?: number[][];
   uriForExport?: string;
   uriForPreview?: string;
+  keywords?: string[];
 }
 
 async function handler(req: NextRequest) {
@@ -187,6 +191,7 @@ async function handler(req: NextRequest) {
       thumbnailUrl: null,
       opusClipId: clipId,
       opusEditUrl,
+      keywords: Array.isArray(c.keywords) ? c.keywords.slice(0, 12) : [],
     };
   });
 

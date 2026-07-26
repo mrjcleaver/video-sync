@@ -181,6 +181,7 @@ export async function discoverOneProject(
       thumbnailUrl: string | null;
       opusClipId?: string | null;
       opusEditUrl?: string | null;
+      keywords?: string[];
     }>;
     stage?: string;
     error?: string;
