@@ -27,7 +27,10 @@ interface OpusClipJobResponse {
   uid?: string;
   projectId?: string;
   error?: string;
-  message?: string;
+  // NestJS validation-pipe errors return {message: string[], error, statusCode}.
+  // Legacy responses used message: string. Support both.
+  message?: string | string[];
+  statusCode?: number;
 }
 
 async function handler(req: NextRequest) {
@@ -96,13 +99,37 @@ async function handler(req: NextRequest) {
     body: JSON.stringify(opusPayload),
   });
 
-  const opusData = (await opusRes.json()) as OpusClipJobResponse;
+  // Read the response as text first so we can log it verbatim on
+  // failure. Opus's error shape varies (top-level error/message,
+  // NestJS-style {message: string|array, error, statusCode}, or a
+  // plain string) — logging the raw body is the only reliable way
+  // to diagnose a 422/400 from a strict validator.
+  const opusText = await opusRes.text();
+  let opusData: OpusClipJobResponse = {};
+  try {
+    opusData = JSON.parse(opusText) as OpusClipJobResponse;
+  } catch {
+    // Non-JSON response (rare); leave opusData empty, error path uses opusText.
+  }
 
   // The new API returns 201 Created on success; keep the .ok check
   // (which accepts any 2xx) rather than a strict === 200 test.
   if (!opusRes.ok) {
-    const msg = opusData.error ?? opusData.message ?? `Opus Clip API error (${opusRes.status})`;
-    serverLog("error", "shorts:generate", "Opus Clip job submission failed", { status: opusRes.status, msg });
+    // NestJS-style validation errors come back as {message: string[]}.
+    const nestMessage = opusData.message;
+    const nestMessageStr = Array.isArray(nestMessage)
+      ? nestMessage.join("; ")
+      : (typeof nestMessage === "string" ? nestMessage : null);
+    const msg =
+      opusData.error
+      ?? nestMessageStr
+      ?? (opusText && opusText.length < 500 ? opusText : `Opus Clip API error (${opusRes.status})`);
+    serverLog("error", "shorts:generate", "Opus Clip job submission failed", {
+      status: opusRes.status,
+      msg,
+      body: opusText.slice(0, 800),
+      request_body: opusPayload,
+    });
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
