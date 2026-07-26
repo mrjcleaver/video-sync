@@ -26,6 +26,12 @@ interface Props {
   videos: VideoRecordJSON[];
   onEvent?: (msg: string, ctx?: Record<string, unknown>) => void;
   onClose: () => void;
+  /** ADR-057 Option A: when rendered on a dedicated Maintain page,
+   *  we drop the fixed-drawer chrome and let the content sit inline
+   *  in the page flow. "drawer" is the historical popover behaviour;
+   *  "page" is the new full-canvas mode. Default preserves the
+   *  historical drawer semantics. */
+  variant?: "drawer" | "page";
 }
 
 interface RecordRow {
@@ -60,7 +66,7 @@ const STATUS_COLOR: Record<StageStatus, string> = {
   needs_review: "#fbbf24",
 };
 
-export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) {
+export default function CatchUpPanel({ open, videos, onEvent, onClose, variant = "drawer" }: Props) {
   const actorState = useCurrentActor();
   const [maxRecords, setMaxRecords] = useState(1);
   const [costCapUsd, setCostCapUsd] = useState(10);
@@ -254,7 +260,9 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     }
   }, [logLines]);
 
-  if (!open) return null;
+  // In drawer mode, hidden = null. In page mode the component IS the
+  // page's primary content; render regardless of the (unused) `open`.
+  if (variant === "drawer" && !open) return null;
 
   /** Format an orchestrator event into a single human-readable log line.
    *  Returns null to suppress noisy events (record_start/end already
@@ -384,29 +392,44 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     navigator.clipboard?.writeText(summary.jobTag).catch(() => {});
   }
 
+  const isPageMode = variant === "page";
   return (
-    // Non-blocking side drawer — fixed to the right, doesn't intercept
-    // clicks on the rest of the dashboard. Long catch-up runs can stay
-    // open while the operator inspects cards in parallel.
     <div
-      style={{
-        position: "fixed",
-        top: 16,
-        right: 16,
-        bottom: 16,
-        width: "min(640px, calc(100vw - 32px))",
-        background: "var(--bg-card)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 16,
-        zIndex: 100,
-        overflowY: "auto",
-        boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
-      }}
+      style={
+        isPageMode
+          ? {
+              // Inline on the Maintain page — no fixed positioning, no
+              // shadow. Sits in the normal document flow so the sidebar
+              // + page header layout it naturally.
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: 16,
+              marginTop: 8,
+            }
+          : {
+              // Non-blocking side drawer — fixed to the right, doesn't
+              // intercept clicks on the rest of the dashboard. Long
+              // catch-up runs can stay open while the operator inspects
+              // cards in parallel.
+              position: "fixed",
+              top: 16,
+              right: 16,
+              bottom: 16,
+              width: "min(640px, calc(100vw - 32px))",
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: 16,
+              zIndex: 100,
+              overflowY: "auto",
+              boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+            }
+      }
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: "1.1rem" }}>🏃 Catch Up (ADR-047)</h2>
-          <button className="btn btn-sm" onClick={onClose}>Close</button>
+          {!isPageMode && <button className="btn btn-sm" onClick={onClose}>Close</button>}
         </div>
 
         <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 12 }}>
