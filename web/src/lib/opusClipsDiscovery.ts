@@ -84,18 +84,24 @@ export function parseProjectIds(blob: string): string[] {
 }
 
 /**
- * Extract a YouTube video ID from an Opus `sourceUri` (which is a
- * plain YouTube watch URL for YouTube-sourced projects). Returns
- * null for non-YouTube sources — we can't reconcile those against
- * our catalog today.
+ * Extract a YouTube video ID. Opus's ClipProjectRepresentation can
+ * carry the ID in either field depending on how the project was
+ * created — `sourceUri` for watch URLs, `sourceId` (bare 11-char
+ * ID) for projects created through the "YouTube link" fast path.
+ * We probe both.
  */
-function extractYouTubeId(uri: string | undefined): string | null {
-  if (!uri) return null;
-  const m = uri.match(/[?&]v=([A-Za-z0-9_-]{11})/)
-        ?? uri.match(/youtu\.be\/([A-Za-z0-9_-]{11})/)
-        ?? uri.match(/\/embed\/([A-Za-z0-9_-]{11})/)
-        ?? uri.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
-  return m ? m[1] : null;
+function extractYouTubeId(sourceUri: string | undefined, sourceId?: string | undefined): string | null {
+  if (sourceUri) {
+    const m = sourceUri.match(/[?&]v=([A-Za-z0-9_-]{11})/)
+          ?? sourceUri.match(/youtu\.be\/([A-Za-z0-9_-]{11})/)
+          ?? sourceUri.match(/\/embed\/([A-Za-z0-9_-]{11})/)
+          ?? sourceUri.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
+    if (m) return m[1];
+  }
+  // sourceId is often the bare 11-char YouTube ID when Opus's
+  // sourcePlatform === YOUTUBE and no full URL was recorded.
+  if (sourceId && /^[A-Za-z0-9_-]{11}$/.test(sourceId)) return sourceId;
+  return null;
 }
 
 /**
@@ -178,10 +184,19 @@ export async function discoverOneProject(
   };
 
   const sourceUri = data.sourceUri;
-  const ytId = extractYouTubeId(sourceUri);
+  const sourceId = data.sourceId;
+  const ytId = extractYouTubeId(sourceUri, sourceId);
   const parent = ytId ? findParentByYouTubeId(videoStore.getAll(), ytId) : null;
 
   if (!parent) {
+    // Include the raw source triple in the error so the operator (and
+    // the event log) can see exactly what Opus reported when the
+    // match fails — the reason is usually one of these:
+    //   • Opus reports YOUTUBE but sourceUri is empty AND sourceId is
+    //     not the 11-char bare ID (e.g. it's an internal Opus token).
+    //   • The referenced YouTube video isn't in this catalog at all
+    //     (never imported / imported under a different variant).
+    const rawSummary = `platform=${data.sourcePlatform ?? "?"} id=${sourceId ?? "?"} uri=${sourceUri ?? "?"}`;
     return {
       projectId,
       outcome: "no-parent",
@@ -191,8 +206,8 @@ export async function discoverOneProject(
       clipsSkipped: 0,
       sourceUri,
       error: ytId
-        ? `no catalog row matches YouTube ID ${ytId}`
-        : `Opus source (${data.sourcePlatform ?? "?"}) isn't a YouTube URL we can reconcile`,
+        ? `no catalog row matches YouTube ID ${ytId} (${rawSummary})`
+        : `couldn't extract a YouTube ID from Opus's source (${rawSummary})`,
     };
   }
 
