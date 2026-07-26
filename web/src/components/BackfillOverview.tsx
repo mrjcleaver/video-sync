@@ -663,8 +663,35 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
                 </span>
               );
             })() : (
-              <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: "0.7rem" }}>
-                {slot.is_target ? "— no source —" : ""}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: "0.7rem" }}>
+                  {slot.is_target ? "— no source —" : ""}
+                </span>
+                {/* ADR-058 Option E — empty target-day slots gain an
+                    "Import this day" action that deep-links to
+                    /import with the date range prefilled to this day.
+                    Also carries the "unknown vs checked" hint from
+                    Option D via a small icon when the day is inside
+                    a known-checked range for any source. */}
+                {slot.is_target && (
+                  <a
+                    href={`/import?from=${slot.date}&to=${slot.date}`}
+                    onClick={e => e.stopPropagation()}
+                    title={`Open the Import panel prefilled to ${slot.date} — check Zoom / Fireflies / YouTube / Kaltura for recordings on this day`}
+                    style={{
+                      fontSize: "0.65rem",
+                      padding: "0 6px",
+                      borderRadius: 4,
+                      background: "rgba(99,102,241,0.10)",
+                      color: "#a5b4fc",
+                      border: "1px solid rgba(99,102,241,0.28)",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ⬇ import
+                  </a>
+                )}
               </span>
             )}
 

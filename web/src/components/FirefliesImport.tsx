@@ -5,6 +5,7 @@ import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
 import { applyAutoLinks } from "../lib/provenanceLinker";
+import { saveSourceCheck } from "../lib/importStateClient";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -86,6 +87,8 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
       setTranscripts(data.transcripts ?? []);
       setSelected(new Set());
       setFetched(true);
+      // ADR-058 D — record source-check for the Overview banner.
+      saveSourceCheck("Fireflies", dateFrom, dateTo);
       if ((data.transcripts ?? []).length === 0) {
         setError("No transcripts found in the selected date range.");
       }

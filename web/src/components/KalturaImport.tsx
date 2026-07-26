@@ -4,6 +4,7 @@ import { useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
+import { saveSourceCheck } from "../lib/importStateClient";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -97,6 +98,8 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
       setEntries((data.entries ?? []) as KalturaEntry[]);
       setSelected(new Set());
       setFetched(true);
+      // ADR-058 D — record source-check for the Overview banner.
+      saveSourceCheck("Kaltura", dateFrom, dateTo);
       if ((data.entries ?? []).length === 0) {
         setError("No entries found in the selected date range.");
       }

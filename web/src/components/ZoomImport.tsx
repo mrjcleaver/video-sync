@@ -4,6 +4,7 @@ import { useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
+import { saveSourceCheck } from "../lib/importStateClient";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -95,6 +96,10 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
       setMeetings(data.meetings ?? []);
       setSelected(new Set());
       setFetched(true);
+      // ADR-058 D — record that this source has been probed for
+      // this date range so Overview can distinguish "empty because
+      // checked" from "empty because unknown".
+      saveSourceCheck("Zoom", dateFrom, dateTo);
       if ((data.meetings ?? []).length === 0) {
         setError("No recordings found in the selected date range.");
       }

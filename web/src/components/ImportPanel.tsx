@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ZoomImport from "./ZoomImport";
 import FirefliesImport from "./FirefliesImport";
 import KalturaImport from "./KalturaImport";
@@ -40,6 +40,23 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
     return d.toISOString().slice(0, 10);
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+
+  // ADR-058 Option E — Overview's empty-slot "Import this day"
+  // action deep-links to /import?from=YYYY-MM-DD&to=YYYY-MM-DD.
+  // Read once on mount to prefill the pickers so the operator lands
+  // on the right window without having to re-select it. Using
+  // window.location directly avoids Next.js's useSearchParams
+  // Suspense-boundary requirement — this component is client-only
+  // and mounts under an already-client-side page.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const from = params.get("from");
+    const to = params.get("to");
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) setDateFrom(from);
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) setDateTo(to);
+    if (from || to) setActive("meetings");
+  }, []);
 
   // When the operator picks the 1st of any month as the start date, auto-fill
   // the end date to the last day of that same month. Saves the second click
