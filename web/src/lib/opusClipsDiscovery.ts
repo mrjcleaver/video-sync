@@ -98,9 +98,15 @@ function extractYouTubeId(sourceUri: string | undefined, sourceId?: string | und
           ?? sourceUri.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
     if (m) return m[1];
   }
-  // sourceId is often the bare 11-char YouTube ID when Opus's
-  // sourcePlatform === YOUTUBE and no full URL was recorded.
-  if (sourceId && /^[A-Za-z0-9_-]{11}$/.test(sourceId)) return sourceId;
+  // sourceId for YouTube projects is either the bare 11-char ID
+  // OR the same ID prefixed with `YT_` (confirmed in the wild —
+  // Opus namespaces per-platform when the source pipeline needs
+  // to disambiguate; e.g. `YT_PMaYBXnn_kQ`). Accept both.
+  if (sourceId) {
+    if (/^[A-Za-z0-9_-]{11}$/.test(sourceId)) return sourceId;
+    const m = sourceId.match(/^YT_([A-Za-z0-9_-]{11})$/);
+    if (m) return m[1];
+  }
   return null;
 }
 
