@@ -139,7 +139,27 @@ async function handler(req: NextRequest) {
     } satisfies ShortsStatusResponse);
   }
 
-  const rawClips = (await clipsRes.json()) as ExportableClipRepresentation[];
+  // Opus's /api/exportable-clips response shape shifted between
+  // API revisions: sometimes a bare array, sometimes a paginated
+  // envelope ({items|data|clips|results: [...], ...}). Accept both
+  // + log the top-level shape when we can't find an array so we
+  // don't crash with an opaque ".map is not a function" 500.
+  const clipsJson = (await clipsRes.json()) as unknown;
+  const rawClips: ExportableClipRepresentation[] = Array.isArray(clipsJson)
+    ? clipsJson
+    : (() => {
+        if (clipsJson && typeof clipsJson === "object") {
+          const env = clipsJson as Record<string, unknown>;
+          for (const k of ["items", "data", "clips", "results", "content"]) {
+            if (Array.isArray(env[k])) return env[k] as ExportableClipRepresentation[];
+          }
+          serverLog("error", "shorts:status", "exportable-clips returned unexpected shape", {
+            keys: Object.keys(env).slice(0, 12),
+            preview: JSON.stringify(env).slice(0, 300),
+          });
+        }
+        return [];
+      })();
 
   const clips: OpusClip[] = rawClips.map((c, i) => {
     // timeRanges is [[startMs, endMs], ...] — take the first range.
