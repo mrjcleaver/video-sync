@@ -86,13 +86,36 @@ export default function OverviewPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // OpusClip clips are excluded from the Overview per-day rollups —
+  // a single recording can produce 20+ shorts and they'd swamp the
+  // parent recording. Show the count separately so the operator can
+  // see clip volume at a glance without noise on the calendar.
+  const clipCount = videos.filter(v => v.source_platform === "OpusClip").length;
+  const withoutClips = videos.filter(v => v.source_platform !== "OpusClip");
   const visibleVideos = showPaired
-    ? videos
-    : videos.filter(v => !broadcastPairs.destinationRecordIds.has(v.id));
+    ? withoutClips
+    : withoutClips.filter(v => !broadcastPairs.destinationRecordIds.has(v.id));
   return (
     <>
       <div className="header">
         <h1>Overview</h1>
+        {clipCount > 0 && (
+          <span
+            style={{
+              fontSize: "0.75rem",
+              color: "rgb(94,234,212)",
+              background: "rgba(20,184,166,0.08)",
+              border: "1px solid rgba(20,184,166,0.25)",
+              borderRadius: 12,
+              padding: "2px 10px",
+              marginLeft: 12,
+              fontWeight: 600,
+            }}
+            title="OpusClip shorts derived from your recordings — nested under their parent video in the catalog, listed on /shorts"
+          >
+            ✂️ {clipCount} clip{clipCount === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
       <LastCheckedBanner state={importState} />
       <SyncStatusPanel videos={visibleVideos} onNavigateToVideo={ensureVideoVisible} />
