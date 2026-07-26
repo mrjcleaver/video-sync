@@ -21,7 +21,7 @@ import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type Ti
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
-import { discoverOpusProjects, parseProjectIds, getOpusApiKey, type DiscoverProgressEvent } from "../lib/opusClipsDiscovery";
+import { discoverOpusProjects, parseProjectIds, getOpusApiKey, findClipsMissingKeywords, refreshOpusKeywords, type DiscoverProgressEvent, type KeywordsRefreshProgressEvent } from "../lib/opusClipsDiscovery";
 
 interface Props {
   open: boolean;
@@ -247,6 +247,44 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   const [opusDiscoveryProgress, setOpusDiscoveryProgress] = useState<{ index: number; total: number } | null>(null);
   const [opusDiscoverySummary, setOpusDiscoverySummary] = useState<{ discovered: number; indexed: number; skipped: number; errors: number } | null>(null);
   const parsedOpusIds = useMemo(() => parseProjectIds(opusProjectIdsBlob), [opusProjectIdsBlob]);
+
+  // Keyword refresh — walk existing OpusClip rows lacking
+  // metadata_extra.keywords and refetch from Opus grouped by jobId.
+  const [refreshingKeywords, setRefreshingKeywords] = useState(false);
+  const [keywordsRefreshProgress, setKeywordsRefreshProgress] = useState<{ index: number; total: number } | null>(null);
+  const [keywordsRefreshSummary, setKeywordsRefreshSummary] = useState<{ updated: number; unchanged: number; errors: number } | null>(null);
+  const keywordsNeeded = useMemo(() => findClipsMissingKeywords(videos), [videos]);
+
+  async function runKeywordsRefresh() {
+    const key = getOpusApiKey();
+    if (!key) {
+      onEvent?.("Keyword refresh aborted — OpusClip API key not configured. Add it in Connections.");
+      return;
+    }
+    if (keywordsNeeded.total === 0) return;
+    setRefreshingKeywords(true);
+    setKeywordsRefreshSummary(null);
+    setKeywordsRefreshProgress(null);
+    try {
+      await refreshOpusKeywords(
+        key,
+        actorState,
+        (ev: KeywordsRefreshProgressEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setKeywordsRefreshProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setKeywordsRefreshSummary(ev.totals);
+            setKeywordsRefreshProgress(null);
+          }
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Keyword refresh errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRefreshingKeywords(false);
+    }
+  }
 
   async function runOpusDiscovery() {
     const key = getOpusApiKey();
@@ -926,6 +964,41 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
                   Last run: {opusDiscoverySummary.indexed} clip(s) indexed across {opusDiscoverySummary.discovered} project(s) ·{" "}
                   {opusDiscoverySummary.skipped} skipped ·{" "}
                   {opusDiscoverySummary.errors} error{opusDiscoverySummary.errors === 1 ? "" : "s"}.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Refresh keywords — walks OpusClip rows missing keywords
+              and one-shots each unique project id back through
+              /api/shorts/status to pull them in. */}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed rgba(20,184,166,0.28)" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🏷️ Refresh clip keywords</div>
+            <div style={{ color: "var(--text-muted)", marginBottom: 6, fontSize: "0.78rem" }}>
+              Clips indexed before keyword capture landed show their title in the collapsible list under the parent VideoCard instead of
+              Opus's keyword tags. This pass re-fetches each clip's keywords from Opus (one call per project) and merges them into
+              <code> metadata_extra.keywords</code>. Idempotent — clips that already have keywords are left alone.
+              {keywordsNeeded.total > 0 ? (
+                <> <strong>{keywordsNeeded.total}</strong> clip{keywordsNeeded.total === 1 ? "" : "s"} across {keywordsNeeded.jobs.size} project{keywordsNeeded.jobs.size === 1 ? "" : "s"} need refreshing.</>
+              ) : (
+                <> All clip rows have keywords.</>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={runKeywordsRefresh}
+                disabled={refreshingKeywords || keywordsNeeded.total === 0}
+              >
+                {refreshingKeywords
+                  ? keywordsRefreshProgress ? `Refreshing ${keywordsRefreshProgress.index}/${keywordsRefreshProgress.total}…` : "Refreshing…"
+                  : `Refresh keywords${keywordsNeeded.total ? ` (${keywordsNeeded.total})` : ""}`}
+              </button>
+              {keywordsRefreshSummary && (
+                <span style={{ color: "var(--text-muted)" }}>
+                  Last run: {keywordsRefreshSummary.updated} row(s) updated ·{" "}
+                  {keywordsRefreshSummary.unchanged} unchanged ·{" "}
+                  {keywordsRefreshSummary.errors} error{keywordsRefreshSummary.errors === 1 ? "" : "s"}.
                 </span>
               )}
             </div>

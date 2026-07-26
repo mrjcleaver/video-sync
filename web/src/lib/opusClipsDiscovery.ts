@@ -276,6 +276,134 @@ export async function discoverOneProject(
   };
 }
 
+/**
+ * Enumerate OpusClip catalog rows whose metadata_extra.keywords is
+ * missing or empty. Grouped by opus_clip_job_id so the caller can
+ * one-shot each project instead of hammering /api/shorts/status per
+ * clip. Rows without a job id are skipped (nothing to reconcile).
+ */
+export function findClipsMissingKeywords(allRecords: VideoRecordJSON[]): {
+  jobs: Map<string, VideoRecordJSON[]>;
+  total: number;
+} {
+  const jobs = new Map<string, VideoRecordJSON[]>();
+  let total = 0;
+  for (const r of allRecords) {
+    if (r.source_platform !== "OpusClip") continue;
+    const extra = (r.metadata_extra ?? {}) as Record<string, unknown>;
+    const kw = extra.keywords;
+    if (Array.isArray(kw) && kw.length > 0) continue;
+    const jobId = typeof extra.opus_clip_job_id === "string" ? extra.opus_clip_job_id : null;
+    if (!jobId) continue;
+    const bucket = jobs.get(jobId) ?? [];
+    bucket.push(r);
+    jobs.set(jobId, bucket);
+    total++;
+  }
+  return { jobs, total };
+}
+
+export interface KeywordsRefreshProgressEvent {
+  type: "started" | "item_done" | "complete";
+  index?: number;
+  total: number;
+  jobId?: string;
+  updated?: number;
+  error?: string;
+  totals?: { updated: number; unchanged: number; errors: number };
+}
+
+/**
+ * Refresh metadata_extra.keywords on all OpusClip catalog rows that
+ * don't have any yet, by re-hitting /api/shorts/status once per
+ * unique opus_clip_job_id and matching returned clips to rows by
+ * opus_clip_id first, then by the shorts-<jobId>-<index> source_id
+ * scheme used at ingest.
+ *
+ * Uses update_metadata { edits: { metadata_extra } } which now
+ * shallow-merges (ADR-058 follow-up); no other fields are touched.
+ */
+export async function refreshOpusKeywords(
+  apiKey: string,
+  actorState: Parameters<typeof actorCommand>[0],
+  onEvent: (ev: KeywordsRefreshProgressEvent) => void,
+  log?: (msg: string, ctx?: Record<string, unknown>) => void,
+): Promise<{ updated: number; unchanged: number; errors: number }> {
+  const { jobs } = findClipsMissingKeywords(videoStore.getAll());
+  const jobIds = [...jobs.keys()];
+  onEvent({ type: "started", total: jobIds.length });
+  log?.(`Keyword refresh started — ${jobIds.length} project${jobIds.length === 1 ? "" : "s"} to poll`);
+
+  let updated = 0;
+  let unchanged = 0;
+  let errors = 0;
+
+  for (let i = 0; i < jobIds.length; i++) {
+    const jobId = jobIds[i];
+    const targets = jobs.get(jobId) ?? [];
+    let jobUpdated = 0;
+    let jobErr: string | undefined;
+    try {
+      const res = await fetch(`/api/shorts/status?jobId=${encodeURIComponent(jobId)}&apiKey=${encodeURIComponent(apiKey)}`);
+      if (!res.ok) throw new Error(`status HTTP ${res.status}`);
+      const data = await res.json() as {
+        status: string;
+        clips: Array<{ index: number; opusClipId?: string | null; keywords?: string[] }>;
+      };
+      if (data.status !== "completed") {
+        jobErr = `not complete (status=${data.status})`;
+      } else {
+        const clips = data.clips ?? [];
+        const byOpusId = new Map<string, { keywords: string[] }>();
+        const byIndex = new Map<number, { keywords: string[] }>();
+        for (const c of clips) {
+          const kw = Array.isArray(c.keywords) ? c.keywords : [];
+          if (kw.length === 0) continue;
+          if (c.opusClipId) byOpusId.set(c.opusClipId, { keywords: kw });
+          if (typeof c.index === "number") byIndex.set(c.index, { keywords: kw });
+        }
+        for (const row of targets) {
+          const extra = (row.metadata_extra ?? {}) as Record<string, unknown>;
+          const opusClipId = typeof extra.opus_clip_id === "string" ? extra.opus_clip_id : null;
+          // shorts-<jobId>-<index> → extract index
+          const suffix = row.source_id.startsWith(`shorts-${jobId}-`)
+            ? Number(row.source_id.slice(`shorts-${jobId}-`.length))
+            : NaN;
+          const match = (opusClipId && byOpusId.get(opusClipId))
+                     ?? (Number.isFinite(suffix) ? byIndex.get(suffix) : undefined);
+          if (!match) { unchanged++; continue; }
+          try {
+            videoStore.mutate(row.id, (r) =>
+              r.update_metadata(actorCommand(actorState, {
+                edits: { metadata_extra: { keywords: match.keywords } },
+              })),
+            );
+            updated++;
+            jobUpdated++;
+          } catch (err) {
+            errors++;
+            log?.(`Keyword refresh — ${row.id} update_metadata failed: ${err instanceof Error ? err.message : String(err)}`, { video_id: row.id });
+          }
+        }
+      }
+    } catch (err) {
+      jobErr = err instanceof Error ? err.message : String(err);
+    }
+    if (jobErr) {
+      errors++;
+      log?.(`Keyword refresh ${jobId} — ${jobErr}`);
+    } else {
+      log?.(`Keyword refresh ${jobId} → ${jobUpdated} row(s) updated`);
+    }
+    onEvent({ type: "item_done", index: i + 1, total: jobIds.length, jobId, updated: jobUpdated, error: jobErr });
+  }
+
+  const totals = { updated, unchanged, errors };
+  onEvent({ type: "complete", total: jobIds.length, totals });
+  log?.(`Keyword refresh complete — ${updated} row(s) updated across ${jobIds.length} project(s), ${unchanged} unchanged, ${errors} error(s)`);
+  return totals;
+}
+
 export async function discoverOpusProjects(
   projectIds: string[],
   apiKey: string,
