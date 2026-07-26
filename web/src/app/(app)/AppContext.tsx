@@ -27,6 +27,10 @@ import { useRuleRunner } from "../../lib/useRuleRunner";
 import { useMemoryHealth } from "../../lib/useMemoryHealth";
 import { buildBroadcastPairs, type BroadcastPairsIndex } from "../../lib/broadcastPairs";
 import { useCurrentActor, actorCommand } from "../../lib/useCurrentActor";
+import { loadQueue, readyQueue } from "../../lib/backfill";
+import { getCurrentPromptVersion } from "../../lib/summaryPromptClient";
+import { getSeriesRegistry } from "../../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../../lib/youtubeTitleAlign";
 
 type ActorState = ReturnType<typeof useCurrentActor>;
 
@@ -60,6 +64,14 @@ interface AppContextValue {
   setSearch: (v: string) => void;
   sortBy: "recorded" | "updated";
   setSortBy: (v: "recorded" | "updated") => void;
+  /** Async-hydrated bits the sidebar needs to compute count badges
+   *  (Maintain aggregate work, Import backfill queue). Values are
+   *  cached once at layout mount so the sidebar's badge renders
+   *  cheaply on every route change. Null before hydration. */
+  currentPromptVersion: number | null;
+  seriesRegistry: SeriesRegistryEntry[];
+  backfillQueueSize: number;
+  backfillReadySize: number;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -80,6 +92,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [search, setSearch] = useState<string>("");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
   const [showPaired, setShowPaired] = useState(false);
+  const [currentPromptVersion, setCurrentPromptVersion] = useState<number | null>(null);
+  const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
+  const [backfillQueueSize, setBackfillQueueSize] = useState(0);
+  const [backfillReadySize, setBackfillReadySize] = useState(0);
 
   // Boot sequence — runs once at layout mount. All routes benefit.
   useEffect(() => {
@@ -115,6 +131,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = videoStore.subscribe(() => setVideos(videoStore.getAll()));
     return () => { unsubscribe(); };
   }, []);
+
+  // Sidebar-badge inputs — fetched once at layout mount, cached.
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentPromptVersion().then(v => { if (!cancelled) setCurrentPromptVersion(v); });
+    getSeriesRegistry().then(r => { if (!cancelled) setSeriesRegistry(r); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Backfill queue size — recomputed whenever videos change (queue
+  // mutations trigger a videoStore refresh via the mutate hook).
+  useEffect(() => {
+    try {
+      const q = loadQueue();
+      setBackfillQueueSize(q.length);
+      setBackfillReadySize(readyQueue(q).length);
+    } catch {
+      setBackfillQueueSize(0);
+      setBackfillReadySize(0);
+    }
+  }, [videos]);
 
   const refreshWithYouTube = useCallback(() => {
     refresh();
@@ -227,6 +264,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSearch,
     sortBy,
     setSortBy,
+    currentPromptVersion,
+    seriesRegistry,
+    backfillQueueSize,
+    backfillReadySize,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

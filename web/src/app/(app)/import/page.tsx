@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * ADR-057 Option A — Import activity page. Groups: bulk imports
- * (ImportPanel), retrospective backfill (BackfillPanel), and the
- * Overview/Calendar summary of what's already synced
- * (SyncStatusPanel — kept adjacent because "did my import land?"
- * is the natural next question after clicking Import).
+ * ADR-057 Option A — Import activity page. Bring content in
+ * (ImportPanel) + retrospective backfill orchestrator
+ * (BackfillPanel). The Overview/Calendar sync-status view was
+ * promoted to its own /overview route.
  */
 
 import ImportPanel from "../../../components/ImportPanel";
 import BackfillPanel from "../../../components/BackfillPanel";
-import SyncStatusPanel from "../../../components/SyncStatusPanel";
 import { useApp } from "../AppContext";
 
 export default function ImportPage() {
@@ -24,7 +22,6 @@ export default function ImportPage() {
         <h1>Import</h1>
       </div>
       <ImportPanel onImported={refreshWithYouTube} onEvent={addEvent} />
-      <SyncStatusPanel videos={visibleVideos} onNavigateToVideo={ensureVideoVisible} />
       <BackfillPanel videos={visibleVideos} onEvent={addEvent} onMutated={refresh} onNavigateToVideo={ensureVideoVisible} />
     </>
   );
