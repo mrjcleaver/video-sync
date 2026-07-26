@@ -782,6 +782,27 @@ impl VideoRecord {
         if let Some(ref transcript) = edits.transcript_text {
             self.transcript_text = Some(transcript.clone());
         }
+        if let Some(ref extra_edit) = edits.metadata_extra {
+            match extra_edit {
+                serde_json::Value::Object(patch) => {
+                    let mut current = match self.metadata_extra.take() {
+                        Some(serde_json::Value::Object(m)) => m,
+                        _ => serde_json::Map::new(),
+                    };
+                    for (k, v) in patch {
+                        if v.is_null() {
+                            current.remove(k);
+                        } else {
+                            current.insert(k.clone(), v.clone());
+                        }
+                    }
+                    self.metadata_extra = Some(serde_json::Value::Object(current));
+                }
+                _ => {
+                    self.metadata_extra = Some(extra_edit.clone());
+                }
+            }
+        }
         Ok(())
     }
 

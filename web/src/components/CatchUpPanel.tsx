@@ -21,6 +21,7 @@ import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type Ti
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
+import { discoverOpusProjects, parseProjectIds, getOpusApiKey, type DiscoverProgressEvent } from "../lib/opusClipsDiscovery";
 
 interface Props {
   open: boolean;
@@ -238,6 +239,46 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   const [orphanRepairSummary, setOrphanRepairSummary] = useState<{ repaired: number; errors: number } | null>(null);
   const [orphanRepairProgress, setOrphanRepairProgress] = useState<{ index: number; total: number } | null>(null);
   const orphanCount = useMemo(() => findOrphanClips(videos).length, [videos]);
+
+  // Opus discovery — operator pastes project IDs (Opus has no
+  // list-all endpoint, so we can't enumerate for them).
+  const [opusProjectIdsBlob, setOpusProjectIdsBlob] = useState("");
+  const [discoveringOpus, setDiscoveringOpus] = useState(false);
+  const [opusDiscoveryProgress, setOpusDiscoveryProgress] = useState<{ index: number; total: number } | null>(null);
+  const [opusDiscoverySummary, setOpusDiscoverySummary] = useState<{ discovered: number; indexed: number; skipped: number; errors: number } | null>(null);
+  const parsedOpusIds = useMemo(() => parseProjectIds(opusProjectIdsBlob), [opusProjectIdsBlob]);
+
+  async function runOpusDiscovery() {
+    const key = getOpusApiKey();
+    if (!key) {
+      onEvent?.("Opus discovery aborted — OpusClip API key not configured. Add it in Connections.");
+      return;
+    }
+    if (parsedOpusIds.length === 0) return;
+    setDiscoveringOpus(true);
+    setOpusDiscoverySummary(null);
+    setOpusDiscoveryProgress(null);
+    try {
+      await discoverOpusProjects(
+        parsedOpusIds,
+        key,
+        actorState,
+        (ev: DiscoverProgressEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setOpusDiscoveryProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setOpusDiscoverySummary(ev.totals);
+            setOpusDiscoveryProgress(null);
+          }
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Opus discovery errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDiscoveringOpus(false);
+    }
+  }
 
   async function runOrphanRepair() {
     setRepairingClips(true);
@@ -847,6 +888,47 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
                 {orphanRepairSummary.errors} error{orphanRepairSummary.errors === 1 ? "" : "s"}.
               </span>
             )}
+          </div>
+
+          {/* Discover from Opus — paste project IDs / clip.opus.pro URLs. */}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed rgba(20,184,166,0.28)" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🔍 Discover clips from Opus Clip</div>
+            <div style={{ color: "var(--text-muted)", marginBottom: 6, fontSize: "0.78rem" }}>
+              Opus has no "list my projects" endpoint, so paste project IDs (or full <code>clip.opus.pro/clip/…</code> URLs) — one per line
+              or comma-separated. For each, we call Opus, match the parent by the source YouTube URL, and ingest any clips missing from
+              the catalog with a proper <code>ClipOf</code> link. Already-present clips are skipped.
+            </div>
+            <textarea
+              value={opusProjectIdsBlob}
+              onChange={(e) => setOpusProjectIdsBlob(e.target.value)}
+              placeholder="P30726134uS0&#10;https://clip.opus.pro/clip/P30726134uS1&#10;…"
+              rows={3}
+              disabled={discoveringOpus}
+              style={{
+                width: "100%", padding: "6px 8px", fontFamily: "monospace",
+                fontSize: "0.78rem", background: "var(--bg)", color: "var(--text)",
+                border: "1px solid var(--border)", borderRadius: 4, marginBottom: 6,
+                resize: "vertical",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={runOpusDiscovery}
+                disabled={discoveringOpus || parsedOpusIds.length === 0}
+              >
+                {discoveringOpus
+                  ? opusDiscoveryProgress ? `Discovering ${opusDiscoveryProgress.index}/${opusDiscoveryProgress.total}…` : "Discovering…"
+                  : `Discover from Opus${parsedOpusIds.length ? ` (${parsedOpusIds.length})` : ""}`}
+              </button>
+              {opusDiscoverySummary && (
+                <span style={{ color: "var(--text-muted)" }}>
+                  Last run: {opusDiscoverySummary.indexed} clip(s) indexed across {opusDiscoverySummary.discovered} project(s) ·{" "}
+                  {opusDiscoverySummary.skipped} skipped ·{" "}
+                  {opusDiscoverySummary.errors} error{opusDiscoverySummary.errors === 1 ? "" : "s"}.
+                </span>
+              )}
+            </div>
           </div>
         </div>
     </div>

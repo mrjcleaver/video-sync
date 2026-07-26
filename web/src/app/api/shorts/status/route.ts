@@ -36,6 +36,13 @@ export interface ShortsStatusResponse {
    *  (IMPORT → CURATE, → COMPLETE, etc.) and emit per-stage events
    *  into the catalog log. */
   stage?: "PENDING" | "QUEUED" | "IMPORT" | "CURATE" | "REFINE" | "RENDER" | "UPLOAD" | "COMPLETE" | "STALLED";
+  /** Opus's own record of the source video — echoed back on every
+   *  poll. The discovery flow ([[opusClipsDiscovery]]) uses this to
+   *  resolve the parent catalog record from an operator-pasted
+   *  projectId list, so it doesn't have to guess. */
+  sourcePlatform?: "YOUTUBE" | "UPLOADED" | "YTDLP_LINK" | "GDRIVE" | "ZOOM" | "STREAM_YARD";
+  sourceId?: string;
+  sourceUri?: string;
 }
 
 /**
@@ -51,6 +58,9 @@ interface ClipProjectRepresentation {
   stage?: "PENDING" | "QUEUED" | "IMPORT" | "CURATE" | "REFINE" | "RENDER" | "UPLOAD" | "COMPLETE" | "STALLED";
   error?: string;
   message?: string;
+  sourcePlatform?: "YOUTUBE" | "UPLOADED" | "YTDLP_LINK" | "GDRIVE" | "ZOOM" | "STREAM_YARD";
+  sourceId?: string;
+  sourceUri?: string;
 }
 
 interface ExportableClipRepresentation {
@@ -88,6 +98,13 @@ async function handler(req: NextRequest) {
   }
 
   const stage = proj.stage;
+  // Source pointer echoed on every response — discovery reconciles
+  // Opus's `sourceUri` against catalog rows to find the parent.
+  const sourceFields = {
+    sourcePlatform: proj.sourcePlatform,
+    sourceId: proj.sourceId,
+    sourceUri: proj.sourceUri,
+  } as const;
   // STALLED = terminal failure. Everything except COMPLETE is either
   // in-flight or unknown — treat as "processing" so the client keeps
   // polling.
@@ -97,10 +114,11 @@ async function handler(req: NextRequest) {
       clips: [],
       error: proj.error ?? proj.message ?? "Job stalled",
       stage,
+      ...sourceFields,
     } satisfies ShortsStatusResponse);
   }
   if (stage !== "COMPLETE") {
-    return NextResponse.json({ status: "processing", clips: [], stage } satisfies ShortsStatusResponse);
+    return NextResponse.json({ status: "processing", clips: [], stage, ...sourceFields } satisfies ShortsStatusResponse);
   }
 
   // COMPLETE → fetch the actual clip list from /api/exportable-clips.
@@ -153,7 +171,7 @@ async function handler(req: NextRequest) {
   });
 
   serverLog("info", "shorts:status", "Opus Clip project completed", { jobId, clipCount: clips.length });
-  return NextResponse.json({ status: "completed", clips, stage } satisfies ShortsStatusResponse);
+  return NextResponse.json({ status: "completed", clips, stage, ...sourceFields } satisfies ShortsStatusResponse);
 }
 
 export const GET = withRequestLogging("api:shorts/status", handler);

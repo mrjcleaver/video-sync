@@ -224,4 +224,9 @@ pub struct MetadataEdits {
     pub moderators: Option<Vec<Uuid>>,
     pub recorded_at: Option<String>,
     pub transcript_text: Option<String>,
+    /// Shallow-merged into `VideoRecord.metadata_extra` when Some.
+    /// Non-null values overwrite existing keys; explicit nulls remove the key.
+    /// Non-object values replace the whole map.
+    #[serde(default)]
+    pub metadata_extra: Option<serde_json::Value>,
 }

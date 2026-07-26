@@ -514,6 +514,51 @@ fn test_update_metadata_tags_and_description() {
     assert!(matches!(events[0], CatalogEvent::MetadataUpdated(_)));
 }
 
+#[test]
+fn test_update_metadata_extra_merges_shallow() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    // Seed one key so we can prove non-touched keys survive.
+    record.metadata_extra = Some(serde_json::json!({ "existing_key": "keep_me" }));
+
+    record
+        .update_metadata(UpdateMetadata {
+            actor: admin_actor(),
+            edits: MetadataEdits {
+                metadata_extra: Some(serde_json::json!({
+                    "opus_clip_job_id": "P30726134uS0",
+                    "opus_project_url": "https://clip.opus.pro/clip/P30726134uS0",
+                })),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let extra = record.metadata_extra.clone().unwrap();
+    assert_eq!(extra["existing_key"], "keep_me");
+    assert_eq!(extra["opus_clip_job_id"], "P30726134uS0");
+    assert_eq!(extra["opus_project_url"], "https://clip.opus.pro/clip/P30726134uS0");
+}
+
+#[test]
+fn test_update_metadata_extra_null_removes_key() {
+    let (mut record, _) = VideoRecord::index(make_index_cmd());
+    record.metadata_extra = Some(serde_json::json!({ "stale": "value", "keep": "kept" }));
+
+    record
+        .update_metadata(UpdateMetadata {
+            actor: admin_actor(),
+            edits: MetadataEdits {
+                metadata_extra: Some(serde_json::json!({ "stale": null })),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let extra = record.metadata_extra.clone().unwrap();
+    assert!(extra.get("stale").is_none());
+    assert_eq!(extra["keep"], "kept");
+}
+
 // ── Serialization roundtrip ──────────────────────────────
 
 #[test]
