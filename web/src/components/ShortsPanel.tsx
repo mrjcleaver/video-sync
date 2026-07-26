@@ -36,7 +36,34 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
   const pending = shorts.filter((v) => v.status === "Discovered" || v.status === "InScope");
   const approved = shorts.filter((v) => v.status === "Approved");
+  const publishingRows = shorts.filter((v) => v.status === "Publishing");
+  // Published — most-recent first, so a fresh upload lands at the
+  // top of its section and the operator sees it acknowledged.
+  const published = shorts
+    .filter((v) => v.status === "Published")
+    .sort((a, b) =>
+      new Date(b.published_at ?? b.indexed_at).getTime() -
+      new Date(a.published_at ?? a.indexed_at).getTime(),
+    );
+  const failed = shorts.filter((v) => v.status === "Failed" || v.status === "ToRetry");
   const rejected = shorts.filter((v) => v.status === "Abandoned");
+
+  // Look up parent title (and YouTube ID) for every clip so the row
+  // can show "clipped from …". Parents may be Zoom, YouTube, etc.
+  const parentByClipId = useMemo(() => {
+    const byId = new Map<string, VideoRecordJSON>();
+    for (const v of videos) byId.set(v.id, v);
+    const out = new Map<string, VideoRecordJSON>();
+    for (const c of shorts) {
+      const link = (c.upstream_links ?? []).find(l => l.relation === "ClipOf" && l.video_id);
+      const pid = link?.video_id
+        ?? (c.metadata_extra as { parent_video_id?: string } | null)?.parent_video_id
+        ?? null;
+      const p = pid ? byId.get(pid) : undefined;
+      if (p) out.set(c.id, p);
+    }
+    return out;
+  }, [videos, shorts]);
 
   if (shorts.length === 0) return null;
 
@@ -75,8 +102,13 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const parentYtId = extra.parent_youtube_id as string | undefined;
 
     // Build description with provenance footer (ADR-022 + ADR-029 §6).
-    const parentLink = parentYtId
-      ? `📹 Full recording: https://www.youtube.com/watch?v=${parentYtId}`
+    // The URL sits on its own line at the very top with a leading
+    // blank line — YouTube's auto-linkifier is happier with a URL
+    // preceded by whitespace than one wrapped in emoji + text on the
+    // same line, and the operator wants viewers to be able to tap
+    // through to the full recording.
+    const parentBlock = parentYtId
+      ? `▶ Watch the full recording:\nhttps://youtu.be/${parentYtId}\n\n`
       : "";
     const footerParts = [
       `catalog:${clip.id}`,
@@ -84,7 +116,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
       clip.metadata_extra?.parent_source_id ? `parent:${clip.metadata_extra.parent_source_id}` : null,
     ].filter(Boolean);
     const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
-    const description = `${parentLink}${provenanceFooter}`.slice(0, 5000);
+    const description = `${parentBlock}${provenanceFooter}`.slice(0, 5000);
 
     // #Shorts on title triggers YouTube's Shorts shelf (ADR-029 §7).
     const shortTitle = clip.title.includes("#Shorts") ? clip.title : `${clip.title} #Shorts`;
@@ -227,9 +259,14 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
           {formatScore(score ?? 0)}
         </span>
 
-        {/* Title + duration */}
+        {/* Title + duration + parent */}
         <div style={{ flex: 1, minWidth: 160 }}>
           <div style={{ fontSize: "0.85rem", fontWeight: 500 }}>{clip.title}</div>
+          {parentByClipId.get(clip.id) && (
+            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 1 }}>
+              from <span style={{ color: "var(--text)" }}>{parentByClipId.get(clip.id)!.title}</span>
+            </div>
+          )}
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 8, flexWrap: "wrap" }}>
             {duration && <span>{duration}</span>}
             {parentYtId && (
@@ -384,6 +421,73 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                 </>,
               )
             )}
+          </div>
+        )}
+
+        {/* Currently uploading — keeps the row visible with a phase
+            hint instead of the previous "vanishes without a trace"
+            behaviour. */}
+        {publishingRows.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Publishing ({publishingRows.length})
+            </div>
+            {publishingRows.map((clip) => renderClipRow(clip, <span style={{ fontSize: "0.72rem", color: "#a78bfa" }}>uploading…</span>))}
+          </div>
+        )}
+
+        {/* Published — visible confirmation that a clip landed on
+            YouTube, with a direct link to the live short. */}
+        {published.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--green)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Published ({published.length})
+            </div>
+            {published.map((clip) => {
+              const ytLoc = (clip.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination");
+              const publishedAt = clip.published_at
+                ? new Date(clip.published_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                : null;
+              return renderClipRow(
+                clip,
+                <>
+                  {publishedAt && <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{publishedAt}</span>}
+                  {ytLoc?.external_url && (
+                    <a
+                      href={ytLoc.external_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-sm"
+                      style={{ background: "var(--green)", borderColor: "var(--green)", color: "#000", textDecoration: "none" }}
+                    >
+                      ▶ Watch on YouTube
+                    </a>
+                  )}
+                </>,
+              );
+            })}
+          </div>
+        )}
+
+        {/* Upload failed — retry action lives here rather than in
+            the review queue, so the operator knows *which* stage
+            broke. */}
+        {failed.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--red)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Publish failed ({failed.length})
+            </div>
+            {failed.map((clip) => renderClipRow(
+              clip,
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => publishShort(clip)}
+                disabled={publishing === clip.id}
+                title="Retry the YouTube upload for this clip"
+              >
+                {publishing === clip.id ? "Publishing…" : "Retry publish"}
+              </button>,
+            ))}
           </div>
         )}
 
