@@ -143,6 +143,60 @@ function Arrow() {
   );
 }
 
+/**
+ * Renders a RealNodeCard for the parent record, then, if it has any
+ * OpusClip derivatives, nests them as compact rows below with a
+ * "✂️ N clip(s)" summary + indented list. Keeps the columnar graph
+ * layout while giving clips a legible home per parent.
+ */
+function NodeWithClips({
+  node,
+  clips,
+  onJumpTo,
+}: {
+  node: RealNode;
+  clips: Array<{ parentId: string; clip: RealNode }>;
+  onJumpTo?: (id: string) => void;
+}) {
+  if (clips.length === 0) return <RealNodeCard node={node} onJumpTo={onJumpTo} />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <RealNodeCard node={node} onJumpTo={onJumpTo} />
+      <div style={{
+        marginLeft: 16, paddingLeft: 8,
+        borderLeft: "2px solid rgba(20,184,166,0.35)",
+        display: "flex", flexDirection: "column", gap: 4,
+      }}>
+        <div style={{ fontSize: "0.62rem", color: "rgb(94,234,212)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          ✂️ {clips.length} clip{clips.length === 1 ? "" : "s"}
+        </div>
+        {clips.map(({ clip }, i) => {
+          const title = clip.record.title.length > 40 ? clip.record.title.slice(0, 39) + "…" : clip.record.title;
+          return (
+            <div
+              key={i}
+              onClick={() => onJumpTo?.(clip.record.id)}
+              title={onJumpTo ? "Click to jump to card" : undefined}
+              style={{
+                background: "rgba(20,184,166,0.08)",
+                border: "1px solid rgba(20,184,166,0.25)",
+                borderRadius: 6,
+                padding: "4px 8px",
+                fontSize: "0.72rem",
+                cursor: onJumpTo ? "pointer" : "default",
+                lineHeight: 1.3,
+                minWidth: 160,
+              }}
+            >
+              {title}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SessionRow({
   session,
   onJumpTo,
@@ -153,6 +207,14 @@ function SessionRow({
   const hasOrigins = session.origins.length > 0;
   const hasIntermediaries = session.intermediaries.length > 0;
   const hasDests = session.destinations.length > 0;
+  // Group derivatives by parentId so we can render them nested
+  // under the RealNodeCard for their parent.
+  const derivativesByParent = new Map<string, typeof session.derivatives>();
+  for (const d of session.derivatives ?? []) {
+    const bucket = derivativesByParent.get(d.parentId) ?? [];
+    bucket.push(d);
+    derivativesByParent.set(d.parentId, bucket);
+  }
 
   return (
     <div style={{
@@ -175,7 +237,7 @@ function SessionRow({
             </div>
             {session.origins.map((node, i) =>
               node.kind === "real" ? (
-                <RealNodeCard key={i} node={node} onJumpTo={onJumpTo} />
+                <NodeWithClips key={i} node={node} clips={derivativesByParent.get(node.record.id) ?? []} onJumpTo={onJumpTo} />
               ) : (
                 <PhantomNodeCard key={i} node={node} />
               )
@@ -192,7 +254,7 @@ function SessionRow({
               Intermediary
             </div>
             {session.intermediaries.map((node, i) => (
-              <RealNodeCard key={i} node={node} onJumpTo={onJumpTo} />
+              <NodeWithClips key={i} node={node} clips={derivativesByParent.get(node.record.id) ?? []} onJumpTo={onJumpTo} />
             ))}
           </div>
         )}

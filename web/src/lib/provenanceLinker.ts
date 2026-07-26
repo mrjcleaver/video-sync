@@ -191,6 +191,11 @@ export type ProvenanceSession = {
   intermediaries: RealNode[];
   /** Destination locations (YouTube, Kaltura) drawn from all records in the session */
   destinations: DestinationNode[];
+  /** OpusClip records — derivatives of the session, keyed by the
+   *  session-participant they were clipped from. Rendered nested
+   *  under their parent in ProvenanceGraph so the "many clips per
+   *  video" case is legible instead of exploding as siblings. */
+  derivatives: Array<{ parentId: string; clip: RealNode }>;
 };
 
 /** Build provenance sessions from the full catalog. */
@@ -294,6 +299,40 @@ export function buildProvenance(videos: VideoRecordJSON[]): ProvenanceSession[] 
       )
       .map((r) => ({ kind: "real" as const, record: r }));
 
+    // OpusClip records grouped by the parent they clipped. Uses the
+    // ClipOf link's video_id to attach — if a clip somehow ended up
+    // in the session via other means (SameEvent, etc.) we still
+    // surface it, defaulting to the first non-clip real record as
+    // the parent so it's never invisible.
+    const derivatives: Array<{ parentId: string; clip: RealNode }> = [];
+    const promotedParentIds = new Set<string>();
+    for (const rec of realRecords) {
+      if (rec.source_platform !== "OpusClip") continue;
+      const clipOf = (rec.upstream_links ?? []).find(l => l.relation === "ClipOf");
+      let parentId = clipOf?.video_id ?? null;
+      if (!parentId) {
+        const fallback = realRecords.find(r => r.id !== rec.id && r.source_platform !== "OpusClip");
+        parentId = fallback?.id ?? rec.id;
+      }
+      derivatives.push({ parentId, clip: { kind: "real", record: rec } });
+      promotedParentIds.add(parentId);
+    }
+    // Ensure any parent-of-a-derivative that isn't already an origin
+    // or intermediary shows up somewhere — YouTube-source parents
+    // (born-on-YouTube or channel-poll ingested) would otherwise be
+    // silently dropped by the origin=Zoom / intermediary=FF|Loom
+    // classification, and their clips would nest under nothing.
+    const alreadyRendered = new Set<string>([
+      ...origins.filter((n): n is RealNode => n.kind === "real").map(n => n.record.id),
+      ...intermediaries.map(n => n.record.id),
+    ]);
+    for (const pid of promotedParentIds) {
+      if (alreadyRendered.has(pid)) continue;
+      const parentRec = videoMap.get(pid);
+      if (!parentRec) continue;
+      intermediaries.push({ kind: "real", record: parentRec });
+    }
+
     // Collect destination locations from all records in session
     const destMap = new Map<string, DestinationNode>();
     for (const rec of realRecords) {
@@ -325,6 +364,7 @@ export function buildProvenance(videos: VideoRecordJSON[]): ProvenanceSession[] 
       origins,
       intermediaries,
       destinations: Array.from(destMap.values()),
+      derivatives,
     });
   }
 
