@@ -15,7 +15,10 @@ async function handler(req: NextRequest) {
     ? `${forwardedProto}://${forwardedHost}`
     : req.nextUrl.origin;
   const redirectUri = `${origin}/youtube-callback`;
-  const scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly";
+  // force-ssl added for ADR-029 shorts CTA autopost — commentThreads.insert
+  // needs it. Existing tokens without this scope will 403 on the CTA call;
+  // /api/youtube/post-comment surfaces that with a re-auth hint.
+  const scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl";
 
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", clientId);

@@ -202,6 +202,36 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
       onEvent(`ShortPublished: "${clip.title}" → YouTube/${result.videoId}`, { video_id: clip.id });
       onMutated();
+
+      // ADR-029 CTA autopost — best-effort. YouTube Data API v3
+      // can insert a top-level comment as the channel owner, which
+      // gets an ❤️ author badge and typically bubbles to the top.
+      // The API does NOT expose pinning, so if the operator wants
+      // it locked at position 1 they pin manually in Studio.
+      if (parentYtId) {
+        const ctaText = `▶ Watch the full recording: https://youtu.be/${parentYtId}`;
+        try {
+          const cRes = await fetch("/api/youtube/post-comment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: result.videoId,
+              text: ctaText,
+              refreshToken: ytCreds.refreshToken,
+              clientId: ytCreds.clientId,
+              clientSecret: ytCreds.clientSecret,
+            }),
+          });
+          if (cRes.ok) {
+            onEvent(`ShortCtaCommentPosted: "${clip.title}" — pin it in YouTube Studio to lock at top`, { video_id: clip.id });
+          } else {
+            const cData = await cRes.json().catch(() => ({} as { error?: string; missingScope?: boolean }));
+            onEvent(`ShortCtaCommentSkipped: "${clip.title}" — ${cData.error ?? `HTTP ${cRes.status}`}`, { video_id: clip.id });
+          }
+        } catch (err) {
+          onEvent(`ShortCtaCommentSkipped: "${clip.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: clip.id });
+        }
+      }
     } catch (err) {
       videoStore.mutate(clip.id, (r) =>
         r.mark_failed(JSON.stringify({ error_message: String(err) }))
