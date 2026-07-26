@@ -6,6 +6,10 @@ import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
 import { applyAutoLinks } from "../lib/provenanceLinker";
 import { saveSourceCheck } from "../lib/importStateClient";
+import { resolveTitleFromRegistry } from "../lib/youtubeTitleAlign";
+import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
+import { useEffect } from "react";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -29,6 +33,9 @@ interface Props {
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
+  /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
+   *  Sub-panel fires its own fetch on every value change past 0. */
+  fetchTrigger?: number;
 }
 
 function getFirefliesApiKey(): string | null {
@@ -44,9 +51,18 @@ function getFirefliesApiKey(): string | null {
   }
 }
 
-export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
+export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
   const [transcripts, setTranscripts] = useState<NormalisedTranscript[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // ADR-055/056 at ingest — cache the series registry once at mount
+  // so importSelected can rewrite generic Fireflies titles to their
+  // dated form the same way YouTube ingest already does.
+  const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getSeriesRegistry().then(r => { if (!cancelled) setSeriesRegistry(r); });
+    return () => { cancelled = true; };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
@@ -64,6 +80,13 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
   const [filterMinLen, setFilterMinLen] = useState("2");
   const [filterMaxLen, setFilterMaxLen] = useState("");
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
+
+  // ADR-058 — respond to ImportPanel's "Fetch all sources" button.
+  // Only fires past 0 so the initial mount doesn't trigger a fetch.
+  useEffect(() => {
+    if (fetchTrigger && fetchTrigger > 0) fetchTranscripts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchTrigger]);
 
   async function fetchTranscripts() {
     // ADR-042: server resolves through local override → shared default → env.
@@ -117,10 +140,22 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
       if (!selected.has(t.source_id)) continue;
       if (isExcluded("Fireflies", t.source_id)) { skipped++; continue; }
 
+      // ADR-055/056 — align generic Fireflies titles to their dated
+      // form at ingest, preserving the raw platform title in
+      // metadata_extra.fireflies_original_title (mirrors YouTube's
+      // youtube_original_title pattern).
+      const align = resolveTitleFromRegistry(t.title, t.recorded_at, seriesRegistry);
+      const finalTitle = align?.new_title ?? t.title;
+      const alignExtras = align ? {
+        fireflies_original_title: t.title,
+        title_aligned_source: align.source,
+        ...(align.matched_series ? { title_aligned_matched_series: align.matched_series } : {}),
+      } : {};
+
       const cmd: Record<string, unknown> = {
         source_id: t.source_id,
         source_platform: "Fireflies",
-        title: t.title,
+        title: finalTitle,
         description: t.description ?? undefined,
         duration_seconds: t.duration_seconds,
         participants: t.participants,
@@ -129,7 +164,8 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
         tags: t.tags,
         recorded_at: t.recorded_at,
       };
-      if (t.metadata_extra) cmd.metadata_extra = t.metadata_extra;
+      const mergedExtra = { ...(t.metadata_extra ?? {}), ...alignExtras };
+      if (Object.keys(mergedExtra).length > 0) cmd.metadata_extra = mergedExtra;
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);

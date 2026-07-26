@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
 import { saveSourceCheck } from "../lib/importStateClient";
+import { resolveTitleFromRegistry } from "../lib/youtubeTitleAlign";
+import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -26,6 +29,9 @@ interface Props {
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
+  /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
+   *  Sub-panel fires its own fetch on every value change past 0. */
+  fetchTrigger?: number;
 }
 
 function getKalturaCredentials(): { partnerId: string; adminSecret: string } | null {
@@ -55,9 +61,15 @@ function fmtDuration(secs: number): string {
     : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
+export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
   const [entries, setEntries] = useState<KalturaEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getSeriesRegistry().then(r => { if (!cancelled) setSeriesRegistry(r); });
+    return () => { cancelled = true; };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
@@ -71,6 +83,12 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   const datesAreControlled = dateFromProp !== undefined && dateToProp !== undefined;
   const [filterTitle, setFilterTitle] = useState("");
   const [liveOnly, setLiveOnly] = useState(false);
+
+  // ADR-058 — respond to ImportPanel's "Fetch all sources" button.
+  useEffect(() => {
+    if (fetchTrigger && fetchTrigger > 0) fetchEntries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchTrigger]);
 
   async function fetchEntries() {
     // ADR-042: Kaltura is shared-only — operators see no override field, so
@@ -127,10 +145,13 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
       if (!selected.has(e.id)) continue;
       if (isExcluded("Kaltura", e.id)) { skipped++; continue; }
 
+      // ADR-055/056 — apply title alignment at ingest.
+      const align = resolveTitleFromRegistry(e.name, e.createdAt, seriesRegistry);
+      const finalTitle = align?.new_title ?? e.name;
       const cmd: Record<string, unknown> = {
         source_id: e.id,
         source_platform: "Kaltura",
-        title: e.name,
+        title: finalTitle,
         description: e.description ?? undefined,
         // WASM IndexVideo.duration_seconds is a u32 — a fractional value
         // (Kaltura sometimes returns sub-second precision) makes serde
@@ -144,8 +165,13 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         tags: e.tags.length > 0 ? e.tags : ["kaltura-import"],
         recorded_at: e.createdAt,
       };
-      const meta: Record<string, string> = { player_url: e.player_url };
+      const meta: Record<string, unknown> = { player_url: e.player_url };
       if (e.is_live) meta.live = "1";
+      if (align) {
+        meta.kaltura_original_title = e.name;
+        meta.title_aligned_source = align.source;
+        if (align.matched_series) meta.title_aligned_matched_series = align.matched_series;
+      }
       cmd.metadata_extra = meta;
 
       // Wrap per-entry so one bad record doesn't silently abort the whole

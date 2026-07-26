@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
@@ -29,6 +29,9 @@ interface Props {
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
+  /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
+   *  Sub-panel fires its own fetch on every value change past 0. */
+  fetchTrigger?: number;
 }
 
 function fmtDuration(secs: number): string {
@@ -56,7 +59,7 @@ function getYouTubeCredentials(): { refreshToken: string; clientId: string; clie
   }
 }
 
-export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
+export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
   const [broadcasts, setBroadcasts] = useState<BroadcastEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -72,6 +75,12 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
   const datesAreControlled = dateFromProp !== undefined && dateToProp !== undefined;
   const [filterTitle, setFilterTitle] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "completed" | "live" | "upcoming">("all");
+
+  // ADR-058 — respond to ImportPanel's "Fetch all sources" button.
+  useEffect(() => {
+    if (fetchTrigger && fetchTrigger > 0) fetchBroadcasts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchTrigger]);
 
   async function fetchBroadcasts() {
     const creds = getYouTubeCredentials();

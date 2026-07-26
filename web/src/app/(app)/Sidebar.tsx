@@ -24,6 +24,7 @@ import { useApp } from "./AppContext";
 import { findMissingYouTubeRows } from "../../lib/youtubeIngest";
 import { findRecordsNeedingSummaryBadge } from "../../lib/summaryBadgeBackfill";
 import { findRecordsNeedingTitleAlignment } from "../../lib/youtubeTitleAlignBackfill";
+import { findOrphanClips } from "../../lib/orphanClipsRepair";
 
 const NAV = [
   { path: "/catalog",    label: "Catalog",    icon: "📚", badge: "catalog" as const },
@@ -64,7 +65,8 @@ export function Sidebar() {
     const missingYT = findMissingYouTubeRows(videos).length;
     const summariesNeeded = findRecordsNeedingSummaryBadge(videos, currentPromptVersion).length;
     const titlesNeeded = findRecordsNeedingTitleAlignment(videos, seriesRegistry).length;
-    return missingYT + summariesNeeded + titlesNeeded;
+    const orphanShorts = findOrphanClips(videos).length;
+    return missingYT + summariesNeeded + titlesNeeded + orphanShorts;
   }, [videos, currentPromptVersion, seriesRegistry]);
 
   function badgeFor(kind: "catalog" | "import" | "maintain" | null): number | null {

@@ -5,6 +5,7 @@ import { videoStore } from "../lib/store";
 import { WasmVideoRecord } from "../lib/wasm";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
+import { findOrphanClips, repairOneOrphanClip } from "../lib/orphanClipsRepair";
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -152,6 +153,13 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const parentYtId = extra.parent_youtube_id as string | undefined;
     const opusEditUrl = extra.opus_edit_url as string | undefined;
     const duration = start !== undefined && end !== undefined ? formatDuration(start, end) : "";
+    // ADR-058 follow-up — orphan clip = OpusClip source row without
+    // a ClipOf upstream link. Surface a one-click repair here so the
+    // operator can fix a single case without running the bulk
+    // Maintain card.
+    const hasClipOfLink = (clip.upstream_links ?? []).some(l => l.relation === "ClipOf");
+    const hasParentPointer = !!extra.parent_video_id || !!extra.parent_source_id;
+    const isOrphan = !hasClipOfLink && hasParentPointer;
 
     return (
       <div
@@ -218,6 +226,31 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
               >
                 ✂ edit in Opus
               </a>
+            )}
+            {isOrphan && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const orphans = findOrphanClips(videoStore.getAll());
+                  const mine = orphans.find(o => o.clip.id === clip.id);
+                  if (!mine) return;
+                  const ok = repairOneOrphanClip(mine, actorState);
+                  if (ok) {
+                    onEvent(`ShortsLinkRepaired: "${clip.title}" → parent ${mine.parent.id.slice(0, 8)}`, { video_id: clip.id });
+                    onMutated();
+                  } else {
+                    onEvent(`ShortsLinkRepairFailed: "${clip.title}"`, { video_id: clip.id });
+                  }
+                }}
+                title="This clip is missing a ClipOf link to its parent — click to write it from metadata_extra breadcrumbs (ADR-058 repair)"
+                style={{
+                  fontSize: "0.7rem", padding: "0 6px", borderRadius: 4,
+                  background: "rgba(20,184,166,0.12)", color: "#5eead4",
+                  border: "1px solid rgba(20,184,166,0.28)", fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                🔗 repair link
+              </button>
             )}
           </div>
         </div>

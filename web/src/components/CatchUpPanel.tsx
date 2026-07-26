@@ -20,6 +20,7 @@ import { getCurrentPromptVersion } from "../lib/summaryPromptClient";
 import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type TitleAlignmentProgressEvent } from "../lib/youtubeTitleAlignBackfill";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
+import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
 
 interface Props {
   open: boolean;
@@ -228,6 +229,39 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
     const registry = titleAlignWork.filter((c) => c.alignment.source === "series_registry").length;
     return { paired, registry, total: titleAlignWork.length };
   }, [titleAlignWork]);
+
+  // Orphan-clip repair (ADR-058 follow-up) — finds OpusClip source
+  // rows without a ClipOf upstream link and writes one using
+  // metadata_extra.parent_video_id. Fixes clips created before
+  // ADR-055's ClipOf link addition.
+  const [repairingClips, setRepairingClips] = useState(false);
+  const [orphanRepairSummary, setOrphanRepairSummary] = useState<{ repaired: number; errors: number } | null>(null);
+  const [orphanRepairProgress, setOrphanRepairProgress] = useState<{ index: number; total: number } | null>(null);
+  const orphanCount = useMemo(() => findOrphanClips(videos).length, [videos]);
+
+  async function runOrphanRepair() {
+    setRepairingClips(true);
+    setOrphanRepairSummary(null);
+    setOrphanRepairProgress(null);
+    try {
+      await runOrphanClipsRepair(
+        actorState,
+        (ev: OrphanRepairProgressEvent) => {
+          if (ev.type === "item_done" && ev.index) {
+            setOrphanRepairProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setOrphanRepairSummary(ev.totals);
+            setOrphanRepairProgress(null);
+          }
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Orphan-clip repair errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRepairingClips(false);
+    }
+  }
 
   async function runTitleAlignBackfill() {
     setTitleAligning(true);
@@ -772,6 +806,45 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
                 Last run: {titleAlignSummary.renamed_via_pair} via pair ·{" "}
                 {titleAlignSummary.renamed_via_registry} via registry ·{" "}
                 {titleAlignSummary.errors} error{titleAlignSummary.errors === 1 ? "" : "s"}.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Repair shorts→video links (ADR-058 follow-up). Finds
+            OpusClip source rows without a ClipOf upstream_link and
+            writes one from metadata_extra.parent_video_id — fixes
+            clips created before ADR-055's link-addition landed. */}
+        <div style={{
+          marginTop: 12, padding: 10,
+          background: "rgba(20,184,166,0.05)", border: "1px solid rgba(20,184,166,0.28)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>✂️ Shorts → video linkage repair</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            Finds OpusClip records that are missing their <code>ClipOf</code> upstream link and reconstructs it
+            from the clip's <code>metadata_extra.parent_video_id</code>. Clips created before ADR-055 shipped
+            (or from a partial ingest) show up detached in the Provenance graph — this fixes that.
+            {orphanCount > 0 ? (
+              <> <strong>{orphanCount}</strong> orphan clip{orphanCount === 1 ? "" : "s"} detected.</>
+            ) : (
+              <> No orphan clips detected.</>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={runOrphanRepair}
+              disabled={repairingClips || orphanCount === 0}
+            >
+              {repairingClips
+                ? orphanRepairProgress ? `Repairing ${orphanRepairProgress.index}/${orphanRepairProgress.total}…` : "Repairing…"
+                : `Repair links${orphanCount ? ` (${orphanCount})` : ""}`}
+            </button>
+            {orphanRepairSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {orphanRepairSummary.repaired} linked ·{" "}
+                {orphanRepairSummary.errors} error{orphanRepairSummary.errors === 1 ? "" : "s"}.
               </span>
             )}
           </div>

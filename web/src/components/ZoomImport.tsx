@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import { isExcluded } from "../lib/rules";
 import { saveSourceCheck } from "../lib/importStateClient";
+import { resolveTitleFromRegistry } from "../lib/youtubeTitleAlign";
+import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import HelpTip from "./HelpTip";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -38,6 +41,9 @@ interface Props {
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
+  /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
+   *  Sub-panel fires its own fetch on every value change past 0. */
+  fetchTrigger?: number;
 }
 
 function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {
@@ -55,9 +61,15 @@ function getZoomCredentials(): { accountId: string; clientId: string; clientSecr
   }
 }
 
-export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp }: Props) {
+export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
   const [meetings, setMeetings] = useState<ZoomMeeting[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getSeriesRegistry().then(r => { if (!cancelled) setSeriesRegistry(r); });
+    return () => { cancelled = true; };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
@@ -73,6 +85,12 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
   const [filterMinLen, setFilterMinLen] = useState("2");
   const [filterMaxLen, setFilterMaxLen] = useState("");
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
+
+  // ADR-058 — respond to ImportPanel's "Fetch all sources" button.
+  useEffect(() => {
+    if (fetchTrigger && fetchTrigger > 0) fetchRecordings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchTrigger]);
 
   async function fetchRecordings() {
     // ADR-042: don't gate on local creds — the server resolves through
@@ -199,10 +217,14 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
 
       const downloadUrl = `zoom://recording/${meeting.uuid}`;
 
+      // ADR-055/056 — apply title alignment at ingest.
+      const align = resolveTitleFromRegistry(meeting.topic, meeting.start_time, seriesRegistry);
+      const finalTitle = align?.new_title ?? meeting.topic;
+
       const cmd: Record<string, unknown> = {
         source_id: sourceId,
         source_platform: "Zoom",
-        title: meeting.topic,
+        title: finalTitle,
         description: meeting.description || undefined,
         duration_seconds: meeting.duration * 60,
         participants: [],
@@ -210,14 +232,19 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
         tags: ["zoom-import"],
         recorded_at: meeting.start_time,
       };
-      const meta: Record<string, string> = {};
+      const meta: Record<string, unknown> = {};
       if (meeting.share_url) meta.share_url = meeting.share_url;
       if (meeting.id) meta.zoom_meeting_id = String(meeting.id);
+      if (align) {
+        meta.zoom_original_title = meeting.topic;
+        meta.title_aligned_source = align.source;
+        if (align.matched_series) meta.title_aligned_matched_series = align.matched_series;
+      }
       if (Object.keys(meta).length > 0) cmd.metadata_extra = meta;
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
-      onEvent(`VideoIndexed: "${meeting.topic}" (Zoom import)`);
+      onEvent(`VideoIndexed: "${finalTitle}" (Zoom import${align ? `, retitled from "${meeting.topic}"` : ""})`);
 
       // ADR-039: capture in-meeting chat to Drive if a CHAT file exists
       if (meeting.recording_files?.some((f) => f.file_type === "CHAT")) {
