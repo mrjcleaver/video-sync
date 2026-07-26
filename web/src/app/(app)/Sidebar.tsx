@@ -95,7 +95,7 @@ export function Sidebar() {
         Video Sync
       </div>
       {NAV.map((item) => {
-        const isActive = pathname === item.path || (pathname === "/" && item.path === "/catalog");
+        const isActive = pathname === item.path || (pathname === "/" && item.path === "/overview");
         const count = badgeFor(item.badge);
         return (
           <Link

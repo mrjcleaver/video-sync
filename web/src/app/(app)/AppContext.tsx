@@ -17,6 +17,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { bootStore, videoStore } from "../../lib/store";
 import type { VideoRecordJSON } from "../../lib/wasm";
 import { loadExclusions, syncRulesFromServer, syncExclusionsFromServer } from "../../lib/rules";
@@ -85,6 +86,8 @@ export function useApp(): AppContextValue {
 /** Provider — mounts inside (app)/layout so every route beneath sees the same state. */
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const actorState = useCurrentActor();
+  const router = useRouter();
+  const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [videos, setVideos] = useState<VideoRecordJSON[]>([]);
   const [events, setEvents] = useState<string[]>([]);
@@ -199,23 +202,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Cross-page navigation used by SyncStatusPanel + card publish flow.
+  // Cross-page navigation used by SyncStatusPanel (Overview + Calendar
+  // → jump-to-catalog-item links) + card publish transitions.
+  // Bug fix 2026-07-26: jump links broke after ADR-057 landed because
+  // /overview and /calendar aren't mounted with the /catalog card grid,
+  // so document.getElementById() returned null. Now we router.push to
+  // /catalog first when the caller isn't already there.
   const ensureVideoVisible = useCallback((videoId: string, intent?: "publish") => {
     const all = videoStore.getAll();
     const status = all.find(v => v.id === videoId)?.status;
     setFilter(prev => {
       if (intent === "publish") return "Active";
       if (!status) return prev;
-      // Simple heuristic — keep the current filter if the record is still
-      // matched. If not, expand to All so it becomes visible.
+      // Prefer the wider filter that keeps the card in view.
       if (prev === "All" || prev === status) return prev;
       return "All";
     });
-    // Defer scroll — the target card might be on /catalog and we're on
-    // another route right now. router.push('/catalog') would be nicer
-    // but we don't want a full navigation just for this. If already on
-    // /catalog the scroll works; otherwise operator sees the filter
-    // updated when they navigate back.
+    const notOnCatalog = pathname !== "/catalog";
+    if (notOnCatalog) router.push("/catalog");
+    // Defer scroll long enough for the /catalog page to mount +
+    // render the video grid. 50ms is enough same-route; ~350ms
+    // covers the route transition + initial VideoCard render.
     setTimeout(() => {
       const el = document.getElementById(`video-card-${videoId}`);
       if (el) {
@@ -223,8 +230,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         el.style.outline = "2px solid var(--primary, #6366f1)";
         setTimeout(() => { el.style.outline = ""; }, 2000);
       }
-    }, 50);
-  }, []);
+    }, notOnCatalog ? 350 : 50);
+  }, [pathname, router]);
 
   const { isRunning, lastRun, matchCount, runNow } = useRuleRunner({
     onEvent: addEvent,

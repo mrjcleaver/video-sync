@@ -63,6 +63,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-055](ADR-055-youtube-title-alignment.md) | Align YouTube-Live Broadcast Titles with Dated Series Names Used Elsewhere | Proposed |
 | [ADR-056](ADR-056-widen-title-alignment-scope.md) | Widen Catalog Title Alignment Beyond YouTube | Accepted (implemented 2026-07-25) |
 | [ADR-057](ADR-057-ux-hierarchy-and-activity-split.md) | UX Hierarchy and Activity-Based Navigation Split | Proposed (exploration) |
+| [ADR-058](ADR-058-source-discovery-and-pre-import-awareness.md) | Source Discovery and Pre-Import Awareness on Overview | Proposed (exploration) |
 
 ## ADR Format
 
