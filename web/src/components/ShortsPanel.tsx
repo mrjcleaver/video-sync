@@ -337,9 +337,22 @@ export function indexShortClips(params: {
     clipUrl: string;
     thumbnailUrl: string | null;
   }>;
+  /** Present when called from a react component with actor context.
+   *  When set, each clip gets a `ClipOf` upstream_link to the parent
+   *  so the provenance graph knows the relationship — not just
+   *  metadata_extra breadcrumbs. */
+  actorState?: Parameters<typeof actorCommand>[0];
 }): number {
-  const { parentVideoId, parentSourceId, parentYouTubeId, jobId, clips } = params;
+  const { parentVideoId, parentSourceId, parentYouTubeId, jobId, clips, actorState } = params;
   let indexed = 0;
+
+  // Look up the parent for its recorded_at + source_platform. Clips
+  // are derivatives of the parent's event — sort them onto the same
+  // date, not "now" (which was the previous behaviour and put them
+  // in the wrong day when reviewed later).
+  const parent = videoStore.getAll().find((v) => v.id === parentVideoId);
+  const parentRecordedAt = parent?.recorded_at ?? parent?.indexed_at ?? new Date().toISOString();
+  const parentSourcePlatform = parent?.source_platform ?? "YouTube";
 
   for (const clip of clips) {
     const sourceId = `shorts-${jobId}-${clip.index}`;
@@ -374,11 +387,35 @@ export function indexShortClips(params: {
         thumbnail_url: clip.thumbnailUrl ?? undefined,
         tags: ["short", "opus-clip"],
         metadata_extra: metadataExtra,
-        recorded_at: new Date().toISOString(),
+        recorded_at: parentRecordedAt,
       }),
     );
 
     videoStore.add(record);
+
+    // ADR-019 provenance graph — encode the clip→parent relationship
+    // as a first-class ClipOf upstream_link so the provenance graph,
+    // dashboard groupings, and any future collapse UI can find it
+    // structurally (not just via metadata_extra breadcrumbs).
+    if (actorState) {
+      try {
+        videoStore.mutate(record.id(), (r) =>
+          r.link_upstream(actorCommand(actorState, {
+            platform: parentSourcePlatform,
+            external_id: parentSourceId,
+            video_id: parentVideoId,
+            relation: "ClipOf",
+            linked_by: "Auto",
+          })),
+        );
+      } catch {
+        // Non-fatal — clip is still in catalog. The metadata_extra
+        // breadcrumbs (parent_video_id etc.) still identify the
+        // relationship. A future Catch-Up pass could reconstruct
+        // the missing link.
+      }
+    }
+
     indexed++;
   }
 

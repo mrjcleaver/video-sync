@@ -26,6 +26,10 @@ export interface ShortsStatusResponse {
   status: "processing" | "completed" | "failed";
   clips: OpusClip[];
   error?: string;
+  /** Raw Opus stage. Exposed so the client can detect transitions
+   *  (IMPORT → CURATE, → COMPLETE, etc.) and emit per-stage events
+   *  into the catalog log. */
+  stage?: "PENDING" | "QUEUED" | "IMPORT" | "CURATE" | "REFINE" | "RENDER" | "UPLOAD" | "COMPLETE" | "STALLED";
 }
 
 /**
@@ -86,10 +90,11 @@ async function handler(req: NextRequest) {
       status: "failed",
       clips: [],
       error: proj.error ?? proj.message ?? "Job stalled",
+      stage,
     } satisfies ShortsStatusResponse);
   }
   if (stage !== "COMPLETE") {
-    return NextResponse.json({ status: "processing", clips: [] } satisfies ShortsStatusResponse);
+    return NextResponse.json({ status: "processing", clips: [], stage } satisfies ShortsStatusResponse);
   }
 
   // COMPLETE → fetch the actual clip list from /api/exportable-clips.
@@ -130,7 +135,7 @@ async function handler(req: NextRequest) {
   });
 
   serverLog("info", "shorts:status", "Opus Clip project completed", { jobId, clipCount: clips.length });
-  return NextResponse.json({ status: "completed", clips } satisfies ShortsStatusResponse);
+  return NextResponse.json({ status: "completed", clips, stage } satisfies ShortsStatusResponse);
 }
 
 export const GET = withRequestLogging("api:shorts/status", handler);

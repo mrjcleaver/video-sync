@@ -152,8 +152,14 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "No job ID returned by Opus Clip" }, { status: 502 });
   }
 
-  serverLog("info", "shorts:generate", "Opus Clip job submitted", { jobId });
-  return NextResponse.json({ jobId });
+  // Best-guess of the operator-facing Opus Clip dashboard URL.
+  // Opus's OpenAPI doesn't expose this field, so we construct it
+  // from the project id using their app subdomain. If the URL
+  // pattern ever changes, this is the single place to update.
+  const opusProjectUrl = `https://clip.opus.pro/studio/${encodeURIComponent(jobId)}`;
+
+  serverLog("info", "shorts:generate", "Opus Clip job submitted", { jobId, opusProjectUrl });
+  return NextResponse.json({ jobId, opusProjectUrl });
 }
 
 export const POST = withRequestLogging("api:shorts/generate", handler);

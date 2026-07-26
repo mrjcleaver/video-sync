@@ -210,12 +210,36 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         }),
       });
 
-      const genData = await genRes.json() as { jobId?: string; error?: string };
+      const genData = await genRes.json() as { jobId?: string; opusProjectUrl?: string; error?: string };
       if (!genRes.ok) throw new Error(genData.error ?? `Submission failed (${genRes.status})`);
       const jobId = genData.jobId!;
+      const opusProjectUrl = genData.opusProjectUrl ?? null;
 
-      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId} (${parentYouTubeUrl})`, { video_id: video.id });
+      // Persist the Opus dashboard URL on the parent record so it
+      // survives page reloads and can be surfaced from the ShortsPanel
+      // + card long after the modal closes.
+      if (opusProjectUrl) {
+        try {
+          videoStore.mutate(video.id, (r) => r.update_metadata(actorCommand(actorState, {
+            edits: {
+              metadata_extra: {
+                ...(video.metadata_extra ?? {}),
+                opus_clip_job_id: jobId,
+                opus_project_url: opusProjectUrl,
+              },
+            },
+          })));
+        } catch { /* metadata_extra not supported by update_metadata on this WASM build — non-fatal */ }
+      }
+
+      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId}${opusProjectUrl ? ` — dashboard: ${opusProjectUrl}` : ""}`, { video_id: video.id });
       setShowShortsModal(false);
+
+      // Track stage across poll iterations so we can emit per-transition
+      // events (import finished, clipping finished, etc.) into the
+      // per-video event log — the operator asked to see these
+      // milestones without watching the Opus dashboard.
+      let lastStage: string | null = null;
 
       // Poll for completion (max 10 min, every 15 s)
       const maxPolls = 40;
@@ -227,6 +251,21 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         );
         const statusData = await statusRes.json() as ShortsStatusResponse;
 
+        // Emit a per-video event whenever Opus's stage changes.
+        // Two are singled out per operator ask: "import finished"
+        // (IMPORT → next stage) and "clipping finished" (→ COMPLETE).
+        const nextStage = statusData.stage ?? null;
+        if (nextStage && nextStage !== lastStage) {
+          if (lastStage === "IMPORT" && nextStage !== "IMPORT") {
+            onEvent(`ShortsImportFinished: "${video.title}"${dateTag(video.recorded_at)} — job ${jobId} advanced to ${nextStage}`, { video_id: video.id });
+          }
+          if (nextStage === "COMPLETE") {
+            onEvent(`ShortsClippingFinished: "${video.title}"${dateTag(video.recorded_at)} — Opus finished clipping${opusProjectUrl ? ` — ${opusProjectUrl}` : ""}`, { video_id: video.id });
+          }
+          onEvent(`ShortsStage: "${video.title}"${dateTag(video.recorded_at)} — ${lastStage ?? "start"} → ${nextStage}`, { video_id: video.id });
+          lastStage = nextStage;
+        }
+
         if (statusData.status === "failed") throw new Error(statusData.error ?? "Opus Clip job failed");
         if (statusData.status === "completed") {
           const { indexShortClips: indexFn } = await import("./ShortsPanel");
@@ -236,8 +275,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             parentYouTubeId,
             jobId,
             clips: statusData.clips,
+            actorState,
           });
-          onEvent(`ShortsIndexed: ${count} clip(s) from "${video.title}"${dateTag(video.recorded_at)} — review in Shorts panel`, { video_id: video.id });
+          onEvent(`ShortsIndexed: ${count} clip(s) from "${video.title}"${dateTag(video.recorded_at)} — added to catalog with ClipOf provenance link — review in Shorts panel`, { video_id: video.id });
           onMutated();
           break;
         }
