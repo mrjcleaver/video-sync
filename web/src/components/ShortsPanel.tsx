@@ -123,11 +123,71 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
     setPublishing(clip.id);
     try {
+      // Preflight: is this clip ALREADY on YouTube? A prior publish
+      // attempt could have uploaded successfully but errored on the
+      // mark_published transition (e.g. the destination_id/url bug),
+      // leaving the record Failed locally while the short is live
+      // upstream. Re-uploading would duplicate. If we find a YouTube
+      // Destination location and YouTube confirms the video exists,
+      // we reconcile without re-uploading.
+      const existingDest = (clip.locations ?? []).find(
+        (l) => l.platform === "YouTube" && l.role === "Destination" && l.external_id,
+      );
+      let reconciledVideoId: string | null = null;
+      let reconciledVideoUrl: string | null = null;
+      if (existingDest) {
+        try {
+          const chkRes = await fetch(
+            `/api/youtube/status?videoId=${encodeURIComponent(existingDest.external_id)}`,
+            {
+              headers: {
+                "x-youtube-refresh-token": ytCreds.refreshToken,
+                "x-youtube-client-id": ytCreds.clientId,
+                "x-youtube-client-secret": ytCreds.clientSecret,
+              },
+            },
+          );
+          if (chkRes.ok) {
+            reconciledVideoId = existingDest.external_id;
+            reconciledVideoUrl =
+              existingDest.external_url
+              ?? `https://www.youtube.com/watch?v=${existingDest.external_id}`;
+            onEvent(
+              `ShortAlreadyOnYouTube: "${clip.title}" — reconciling without re-upload (YouTube/${existingDest.external_id})`,
+              { video_id: clip.id },
+            );
+          }
+        } catch { /* preflight failed — fall through to a fresh upload */ }
+      }
+
+      // Failed/ToRetry needs to walk back through Approved before we
+      // can request_publish (can_publish() only accepts Approved).
+      if (clip.status === "Failed" || clip.status === "ToRetry") {
+        videoStore.mutate(clip.id, (r) => r.approve(cmd()));
+      }
+
       // Move to Publishing state
       videoStore.mutate(clip.id, (r) =>
         r.request_publish(cmd())
       );
       onMutated();
+
+      // Fast path: video is already on YouTube — skip the upload
+      // and jump straight to mark_published with the existing IDs.
+      if (reconciledVideoId && reconciledVideoUrl) {
+        videoStore.mutate(clip.id, (r) =>
+          r.mark_published(JSON.stringify({
+            destination_id: reconciledVideoId!,
+            destination_url: reconciledVideoUrl!,
+          })),
+        );
+        onEvent(
+          `ShortReconciled: "${clip.title}" → YouTube/${reconciledVideoId}`,
+          { video_id: clip.id },
+        );
+        onMutated();
+        return; // done — no upload, no CTA autopost duplicate
+      }
 
       // NB: no trimStartSeconds — Opus already exported a trimmed
       // mp4. The upload route's trim trims the CLIP file, not the
@@ -192,15 +252,19 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
       if (!result) throw new Error(`Upload stream ended without complete event (last phase: ${lastPhase})`);
 
       // Record YouTube destination location + mark Published.
-      // MarkPublished requires `destination_id` — omitting it fails
-      // deserialization on the WASM side ("missing field
-      // `destination_id`"). Pass the YouTube video ID.
+      // MarkPublished requires BOTH destination_id AND destination_url
+      // (both non-Option in commands.rs). Missing either fails
+      // deserialization on the WASM side and the outer catch marks
+      // the record Failed even though the upload succeeded.
       videoStore.mutate(clip.id, (r) => {
         r.add_location(cmd({ platform: "YouTube",
           external_id: result!.videoId,
           external_url: result!.videoUrl,
           role: "Destination", }));
-        return r.mark_published(cmd({ destination_id: result!.videoId }));
+        return r.mark_published(JSON.stringify({
+          destination_id: result!.videoId,
+          destination_url: result!.videoUrl,
+        }));
       });
 
       onEvent(`ShortPublished: "${clip.title}" → YouTube/${result.videoId}`, { video_id: clip.id });
