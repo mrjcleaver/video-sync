@@ -234,12 +234,12 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                   const orphans = findOrphanClips(videoStore.getAll());
                   const mine = orphans.find(o => o.clip.id === clip.id);
                   if (!mine) return;
-                  const ok = repairOneOrphanClip(mine, actorState);
-                  if (ok) {
+                  const result = repairOneOrphanClip(mine, actorState);
+                  if (result.ok) {
                     onEvent(`ShortsLinkRepaired: "${clip.title}" → parent ${mine.parent.id.slice(0, 8)}`, { video_id: clip.id });
                     onMutated();
                   } else {
-                    onEvent(`ShortsLinkRepairFailed: "${clip.title}"`, { video_id: clip.id });
+                    onEvent(`ShortsLinkRepairFailed: "${clip.title}" — ${result.error}`, { video_id: clip.id });
                   }
                 }}
                 title="This clip is missing a ClipOf link to its parent — click to write it from metadata_extra breadcrumbs (ADR-058 repair)"

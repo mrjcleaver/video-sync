@@ -71,10 +71,12 @@ export function findOrphanClips(allRecords: VideoRecordJSON[]): OrphanClip[] {
  * both the per-clip "Repair link" button in ShortsPanel and by the
  * bulk backfill driver below.
  */
+export interface OrphanRepairResult { ok: boolean; error?: string }
+
 export function repairOneOrphanClip(
   orphan: OrphanClip,
   actorState: Parameters<typeof actorCommand>[0],
-): boolean {
+): OrphanRepairResult {
   try {
     videoStore.mutate(orphan.clip.id, (r) =>
       r.link_upstream(actorCommand(actorState, {
@@ -85,9 +87,9 @@ export function repairOneOrphanClip(
         linked_by: "Auto",
       })),
     );
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -119,8 +121,8 @@ export async function runOrphanClipsRepair(
   let errors = 0;
   for (let i = 0; i < work.length; i++) {
     const orphan = work[i];
-    const ok = repairOneOrphanClip(orphan, actorState);
-    if (ok) {
+    const result = repairOneOrphanClip(orphan, actorState);
+    if (result.ok) {
       repaired++;
       log?.(`Linked clip ${orphan.clip.id} → parent ${orphan.parent.id} (via ${orphan.source})`, { video_id: orphan.clip.id });
       onEvent({
@@ -132,12 +134,13 @@ export async function runOrphanClipsRepair(
       });
     } else {
       errors++;
+      log?.(`Orphan-clip repair failed for "${orphan.clip.title}" (clip=${orphan.clip.id}, parent=${orphan.parent.id}): ${result.error}`, { video_id: orphan.clip.id });
       onEvent({
         type: "item_done",
         index: i + 1,
         total: work.length,
         clipTitle: orphan.clip.title,
-        outcome: { kind: "error", error: "link_upstream threw" },
+        outcome: { kind: "error", error: result.error ?? "unknown" },
       });
     }
   }

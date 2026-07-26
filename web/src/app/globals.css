@@ -135,6 +135,9 @@ body {
 .btn-red { background: var(--red); border-color: var(--red); color: white; }
 .btn-red:hover { opacity: 0.9; }
 .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--surface); border-color: var(--border); }
+.btn-primary:disabled:hover { background: var(--accent); border-color: var(--accent); }
 
 /* Status badge */
 .status-badge {

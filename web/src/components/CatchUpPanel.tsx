@@ -649,7 +649,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={runMigration}
               disabled={migrating}
             >
@@ -689,7 +689,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={runBackfill}
               disabled={backfilling || missingYouTubeCount === 0}
             >
@@ -736,7 +736,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={runSummaryBackfill}
               disabled={summaryBackfilling || summaryWorkCounts.total === 0}
             >
@@ -793,7 +793,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={runTitleAlignBackfill}
               disabled={titleAligning || titleAlignCounts.total === 0}
             >
@@ -833,7 +833,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={runOrphanRepair}
               disabled={repairingClips || orphanCount === 0}
             >
