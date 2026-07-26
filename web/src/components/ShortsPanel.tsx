@@ -150,6 +150,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const start = extra.clip_start_seconds as number | undefined;
     const end = extra.clip_end_seconds as number | undefined;
     const parentYtId = extra.parent_youtube_id as string | undefined;
+    const opusEditUrl = extra.opus_edit_url as string | undefined;
     const duration = start !== undefined && end !== undefined ? formatDuration(start, end) : "";
 
     return (
@@ -205,6 +206,17 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                 style={{ color: "var(--text-muted)", textDecoration: "none" }}
               >
                 preview
+              </a>
+            )}
+            {opusEditUrl && (
+              <a
+                href={opusEditUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this clip in the Opus Clip editor"
+                style={{ color: "#a78bfa", textDecoration: "none" }}
+              >
+                ✂ edit in Opus
               </a>
             )}
           </div>
@@ -336,6 +348,8 @@ export function indexShortClips(params: {
     endSeconds: number;
     clipUrl: string;
     thumbnailUrl: string | null;
+    opusClipId?: string | null;
+    opusEditUrl?: string | null;
   }>;
   /** Present when called from a react component with actor context.
    *  When set, each clip gets a `ClipOf` upstream_link to the parent
@@ -371,6 +385,14 @@ export function indexShortClips(params: {
     };
     if (parentYouTubeId) {
       metadataExtra.parent_youtube_id = parentYouTubeId;
+    }
+    if (clip.opusClipId) {
+      metadataExtra.opus_clip_id = clip.opusClipId;
+    }
+    if (clip.opusEditUrl) {
+      // Deep-link to Opus's single-clip editor. Rendered as an "Edit
+      // in Opus" link on the clip card in ShortsPanel.
+      metadataExtra.opus_edit_url = clip.opusEditUrl;
     }
 
     const record = new WasmVideoRecord(

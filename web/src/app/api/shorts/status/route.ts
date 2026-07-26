@@ -20,6 +20,12 @@ export interface OpusClip {
   /** Thumbnail URL. Not returned by the new /api/exportable-clips
    *  endpoint — always null. */
   thumbnailUrl: string | null;
+  /** Opus's own clip identifier (from ExportableClipRepresentation.id).
+   *  Used to construct the per-clip editor URL. */
+  opusClipId: string | null;
+  /** Deep link to the single-clip editor in the Opus web app.
+   *  Shape: /editor-ux/<projectId>.<clipId>?clipId=<clipId>&clipRank=<n>&editType=normal */
+  opusEditUrl: string | null;
 }
 
 export interface ShortsStatusResponse {
@@ -120,6 +126,16 @@ async function handler(req: NextRequest) {
   const clips: OpusClip[] = rawClips.map((c, i) => {
     // timeRanges is [[startMs, endMs], ...] — take the first range.
     const range = (c.timeRanges && c.timeRanges[0]) || [0, 0];
+    const clipId = c.id ?? null;
+    // Per-clip Opus editor URL — the operator can't reach a read-only
+    // single-clip view (Opus's UX doesn't offer one), but the editor
+    // deep-link is useful for tweaks before publishing.
+    // Shape confirmed from the operator's browser:
+    //   https://clip.opus.pro/editor-ux/<projectId>.<clipId>?clipId=<clipId>&clipRank=<n>&editType=normal
+    const opusEditUrl = clipId
+      ? `https://clip.opus.pro/editor-ux/${encodeURIComponent(jobId)}.${encodeURIComponent(clipId)}`
+        + `?clipId=${encodeURIComponent(clipId)}&clipRank=${i + 1}&editType=normal`
+      : null;
     return {
       index: i,
       title: c.title || `Clip ${i + 1}`,
@@ -131,6 +147,8 @@ async function handler(req: NextRequest) {
       clipUrl: c.uriForExport || c.uriForPreview || "",
       // Thumbnail is a separate endpoint in v2; not fetched here.
       thumbnailUrl: null,
+      opusClipId: clipId,
+      opusEditUrl,
     };
   });
 

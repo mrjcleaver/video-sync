@@ -152,11 +152,12 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "No job ID returned by Opus Clip" }, { status: 502 });
   }
 
-  // Best-guess of the operator-facing Opus Clip dashboard URL.
-  // Opus's OpenAPI doesn't expose this field, so we construct it
-  // from the project id using their app subdomain. If the URL
-  // pattern ever changes, this is the single place to update.
-  const opusProjectUrl = `https://clip.opus.pro/studio/${encodeURIComponent(jobId)}`;
+  // Operator-facing Opus Clip project URL (clips-list view with
+  // Opus's own progress meter). Opus's OpenAPI doesn't expose one,
+  // so we construct from the project id. Per-clip edit URLs use a
+  // different shape (see shorts/status/route.ts) and require the
+  // per-clip id from ExportableClipRepresentation.id.
+  const opusProjectUrl = `https://clip.opus.pro/clip/${encodeURIComponent(jobId)}`;
 
   serverLog("info", "shorts:generate", "Opus Clip job submitted", { jobId, opusProjectUrl });
   return NextResponse.json({ jobId, opusProjectUrl });
