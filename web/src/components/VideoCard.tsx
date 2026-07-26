@@ -182,8 +182,22 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       return;
     }
 
+    // The Origin location for born-on-YouTube records sometimes carries
+    // the internal `youtube://<id>` scheme URL instead of the real
+    // watch URL. Opus rejects that as "Unsupported video link". Rewrite
+    // in-flight so the request is always a proper https:// URL.
+    if (parentYouTubeUrl.startsWith("youtube://")) {
+      const id = parentYouTubeUrl.slice("youtube://".length);
+      parentYouTubeUrl = `https://www.youtube.com/watch?v=${id}`;
+      if (!parentYouTubeId) parentYouTubeId = id;
+    }
+
     try {
       setShortsPhase("Submitting to Opus Clip…");
+      // Surface the outgoing URL in the client event log so a 4xx from
+      // Opus can be diagnosed from the dashboard without opening Cloud
+      // Logging. Paired with the ShortsError line on failure.
+      onEvent(`ShortsRequested: "${video.title}"${dateTag(video.recorded_at)} → ${parentYouTubeUrl}${shortsPrompt ? ` (prompt: ${shortsPrompt.slice(0, 40)}${shortsPrompt.length > 40 ? "…" : ""})` : ""}`, { video_id: video.id });
       const genRes = await fetch("/api/shorts/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -200,7 +214,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       if (!genRes.ok) throw new Error(genData.error ?? `Submission failed (${genRes.status})`);
       const jobId = genData.jobId!;
 
-      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId}`, { video_id: video.id });
+      onEvent(`ShortsJobSubmitted: "${video.title}"${dateTag(video.recorded_at)} → Opus Clip job ${jobId} (${parentYouTubeUrl})`, { video_id: video.id });
       setShowShortsModal(false);
 
       // Poll for completion (max 10 min, every 15 s)
@@ -230,7 +244,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
     } catch (err) {
       setShortsError(String(err));
-      onEvent(`ShortsError: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
+      onEvent(`ShortsError: "${video.title}"${dateTag(video.recorded_at)} [${parentYouTubeUrl}] — ${String(err)}`, { video_id: video.id });
     } finally {
       setShortsLoading(false);
       setShortsPhase("");

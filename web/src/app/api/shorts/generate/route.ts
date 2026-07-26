@@ -45,10 +45,20 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { parentYouTubeUrl, videoTitle, captions, prompt } = body;
+  const { videoTitle, captions, prompt } = body;
+  let { parentYouTubeUrl } = body;
 
   if (!parentYouTubeUrl) {
     return NextResponse.json({ error: "parentYouTubeUrl is required" }, { status: 400 });
+  }
+
+  // Belt-and-suspenders: Origin locations on born-on-YouTube records
+  // sometimes carry the internal `youtube://<id>` scheme URL. Opus
+  // rejects that as "Unsupported video link". Rewrite here even if
+  // the client forgot, so a stale UI still works after this fix
+  // ships.
+  if (parentYouTubeUrl.startsWith("youtube://")) {
+    parentYouTubeUrl = `https://www.youtube.com/watch?v=${parentYouTubeUrl.slice("youtube://".length)}`;
   }
 
   // ADR-042: operator override (body) → shared secret → none. Trim
