@@ -191,13 +191,16 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
       }
       if (!result) throw new Error(`Upload stream ended without complete event (last phase: ${lastPhase})`);
 
-      // Record YouTube destination location + mark Published
+      // Record YouTube destination location + mark Published.
+      // MarkPublished requires `destination_id` — omitting it fails
+      // deserialization on the WASM side ("missing field
+      // `destination_id`"). Pass the YouTube video ID.
       videoStore.mutate(clip.id, (r) => {
         r.add_location(cmd({ platform: "YouTube",
           external_id: result!.videoId,
           external_url: result!.videoUrl,
           role: "Destination", }));
-        return r.mark_published(cmd());
+        return r.mark_published(cmd({ destination_id: result!.videoId }));
       });
 
       onEvent(`ShortPublished: "${clip.title}" → YouTube/${result.videoId}`, { video_id: clip.id });
