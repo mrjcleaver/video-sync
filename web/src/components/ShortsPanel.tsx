@@ -73,9 +73,8 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
 
     const extra = clip.metadata_extra ?? {};
     const parentYtId = extra.parent_youtube_id as string | undefined;
-    const startSecs = extra.clip_start_seconds as number | undefined;
 
-    // Build description with provenance footer (ADR-022)
+    // Build description with provenance footer (ADR-022 + ADR-029 §6).
     const parentLink = parentYtId
       ? `📹 Full recording: https://www.youtube.com/watch?v=${parentYtId}`
       : "";
@@ -87,7 +86,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
     const description = `${parentLink}${provenanceFooter}`.slice(0, 5000);
 
-    // Append #Shorts to title to trigger YouTube Shorts shelf
+    // #Shorts on title triggers YouTube's Shorts shelf (ADR-029 §7).
     const shortTitle = clip.title.includes("#Shorts") ? clip.title : `${clip.title} #Shorts`;
 
     setPublishing(clip.id);
@@ -98,6 +97,9 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
       );
       onMutated();
 
+      // NB: no trimStartSeconds — Opus already exported a trimmed
+      // mp4. The upload route's trim trims the CLIP file, not the
+      // parent; setting it here would truncate the short.
       const body: Record<string, unknown> = {
         refreshToken: ytCreds.refreshToken,
         clientId: ytCreds.clientId,
@@ -109,30 +111,64 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
         privacyStatus: "public",
       };
 
-      if (startSecs && startSecs > 0) body.trimStartSeconds = startSecs;
-
       const res = await fetch("/api/youtube/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
-      const data = await res.json() as { videoId?: string; videoUrl?: string; error?: string };
-
       if (!res.ok) {
-        throw new Error(data.error ?? `Upload failed (${res.status})`);
+        let errMsg = `Upload failed (${res.status})`;
+        try { const d = await res.json(); errMsg = d.error ?? errMsg; } catch { /* ignore */ }
+        throw new Error(errMsg);
       }
+      if (!res.body) throw new Error("No response stream from upload endpoint");
 
-      // Record YouTube destination location
+      // /api/youtube/upload streams SSE (event: progress | complete | error).
+      // Read the frames — the JSON-parse path used to error on the first
+      // "event: progress" line and mark the record Failed even though the
+      // upload was completing successfully upstream.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let eventType = "";
+      let result: { videoId: string; videoUrl: string } | null = null;
+      let lastPhase = "(none)";
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const payload = JSON.parse(line.slice(6)) as Record<string, string>;
+            if (eventType === "progress" && payload.phase) {
+              lastPhase = payload.phase;
+            } else if (eventType === "complete") {
+              result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
+              break outer;
+            } else if (eventType === "error") {
+              throw new Error(payload.message ?? "Upload failed");
+            }
+            eventType = "";
+          }
+        }
+      }
+      if (!result) throw new Error(`Upload stream ended without complete event (last phase: ${lastPhase})`);
+
+      // Record YouTube destination location + mark Published
       videoStore.mutate(clip.id, (r) => {
         r.add_location(cmd({ platform: "YouTube",
-          external_id: data.videoId ?? "",
-          external_url: data.videoUrl ?? null,
+          external_id: result!.videoId,
+          external_url: result!.videoUrl,
           role: "Destination", }));
         return r.mark_published(cmd());
       });
 
-      onEvent(`ShortPublished: "${clip.title}" → YouTube/${data.videoId}`);
+      onEvent(`ShortPublished: "${clip.title}" → YouTube/${result.videoId}`, { video_id: clip.id });
       onMutated();
     } catch (err) {
       videoStore.mutate(clip.id, (r) =>
