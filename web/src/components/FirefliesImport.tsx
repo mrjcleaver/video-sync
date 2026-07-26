@@ -29,7 +29,9 @@ interface NormalisedTranscript {
 }
 
 interface Props {
-  onImported: () => void;
+  /** Optional `imported.ids` lets the caller focus the catalog on
+   *  just these records after import. */
+  onImported: (imported?: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
@@ -182,7 +184,7 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
     if (count > 0) {
       const linked = applyAutoLinks(newIds);
       if (linked > 0) onEvent(`ProvenanceLinker: auto-linked ${linked} record(s) to Zoom upstream`);
-      onImported();
+      onImported({ ids: newIds });
       setTranscripts([]);
       setSelected(new Set());
       setFetched(false);

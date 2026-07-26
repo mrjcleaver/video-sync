@@ -37,7 +37,7 @@ interface ZoomMeeting {
 }
 
 interface Props {
-  onImported: () => void;
+  onImported: (imported?: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
@@ -205,6 +205,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     let skipped = 0;
     const chatJobs: Array<() => Promise<void>> = [];
     const creds = getZoomCredentials();
+    const newIds: string[] = [];
 
     for (const meeting of meetings) {
       if (!selected.has(meeting.uuid)) continue;
@@ -244,6 +245,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
+      newIds.push(record.id());
       onEvent(`VideoIndexed: "${finalTitle}" (Zoom import${align ? `, retitled from "${meeting.topic}"` : ""})`);
 
       // ADR-039: capture in-meeting chat to Drive if a CHAT file exists
@@ -267,7 +269,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     }
 
     if (count > 0) {
-      onImported();
+      onImported({ ids: newIds });
       setMeetings([]);
       setSelected(new Set());
       setFetched(false);

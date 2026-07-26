@@ -19,7 +19,7 @@ const TABS: { id: Tab; label: string }[] = [
 const TAB_KEY = "video-sync:import-tab";
 
 interface Props {
-  onImported: () => void;
+  onImported: (imported?: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 

@@ -10,6 +10,8 @@
 import VideoCard from "../../../components/VideoCard";
 import { useApp } from "../AppContext";
 import type { VideoRecordJSON } from "../../../lib/wasm";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 const ACTIVE_STATUSES = ["Discovered", "InScope", "Approved", "Publishing", "Failed", "ToRetry"] as const;
 const DONE_STATUSES = ["Published", "Skipped", "Abandoned"] as const;
@@ -29,15 +31,42 @@ export default function CatalogPage() {
     filter, setFilter, search, setSearch, sortBy, setSortBy,
     refresh, addEvent, ensureVideoVisible, bulkApprove, exclusionCount,
   } = useApp();
+  const router = useRouter();
+
+  // ?just=id1,id2 — set after an import so the operator sees just
+  // the freshly-imported cards. Read once on mount + on-nav via
+  // window.location (avoids the useSearchParams Suspense wrapping
+  // constraint). Dismissed by the banner's "Show all" link, which
+  // clears the query string without a full nav.
+  const [justIds, setJustIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = new URLSearchParams(window.location.search).get("just");
+    if (raw) setJustIds(new Set(raw.split(",").filter(Boolean)));
+    else setJustIds(new Set());
+  }, []);
 
   // OpusClip records are rendered nested under their parent
   // VideoCard's collapsible '✂️ N clips' section — never as
   // standalone rows in the main list (a single video can have
   // 20+ clips and they'd flood the catalog).
   const catalogPool = videos.filter(v => v.source_platform !== "OpusClip");
-  const visibleVideos = showPaired
+  const catalogPoolPostPairing = showPaired
     ? catalogPool
     : catalogPool.filter(v => !broadcastPairs.destinationRecordIds.has(v.id));
+  const visibleVideos = justIds.size > 0
+    ? catalogPoolPostPairing.filter(v => justIds.has(v.id))
+    : catalogPoolPostPairing;
+
+  function clearJustFilter() {
+    setJustIds(new Set());
+    // Drop the ?just= param from the URL without a full nav.
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("just");
+      router.replace(url.pathname + (url.search ? url.search : ""));
+    }
+  }
 
   const filtered = (() => {
     const base =
@@ -77,6 +106,33 @@ export default function CatalogPage() {
           {counts["Published"] && <span className="stat-badge">{counts["Published"]} published</span>}
         </div>
       </div>
+
+      {justIds.size > 0 && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "8px 12px",
+            background: "rgba(99,102,241,0.10)",
+            border: "1px solid rgba(99,102,241,0.35)",
+            borderRadius: 6,
+            fontSize: "0.82rem",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <span>
+            ⤴ Showing <strong>{visibleVideos.length}</strong> just-imported record{visibleVideos.length === 1 ? "" : "s"}.
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={clearJustFilter}
+            title="Drop the just-imported filter and show the full catalog"
+          >
+            Show all
+          </button>
+        </div>
+      )}
 
       <div className="burndown-stats">
         <span>Total: {videos.length}</span>

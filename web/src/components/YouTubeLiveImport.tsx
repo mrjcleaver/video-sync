@@ -25,7 +25,7 @@ interface BroadcastEntry {
 }
 
 interface Props {
-  onImported: () => void;
+  onImported: (imported?: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
@@ -131,6 +131,7 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
   function importSelected() {
     let count = 0;
     let skipped = 0;
+    const newIds: string[] = [];
     const all = videoStore.getAll();
     const existing = new Set(all.map(v => `${v.source_platform}:${v.source_id}`));
     for (const b of broadcasts) {
@@ -171,12 +172,13 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
 
       const record = new WasmVideoRecord(JSON.stringify(cmd));
       videoStore.add(record);
+      newIds.push(record.id());
       onEvent(`VideoIndexed: "${b.title}" (YouTube live ${b.liveBroadcastContent})`, { video_id: record.id() });
       count++;
     }
     if (skipped > 0) onEvent(`YouTube live import: ${skipped} duplicate/excluded broadcast(s) skipped`);
     if (count > 0) {
-      onImported();
+      onImported({ ids: newIds });
       setBroadcasts([]);
       setSelected(new Set());
       setFetched(false);

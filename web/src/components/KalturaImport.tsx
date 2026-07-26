@@ -25,7 +25,7 @@ interface KalturaEntry {
 }
 
 interface Props {
-  onImported: () => void;
+  onImported: (imported?: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   dateFrom?: string;
   dateTo?: string;
@@ -138,6 +138,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   }
 
   function importSelected() {
+    const newIds: string[] = [];
     let count = 0;
     let skipped = 0;
     let failed = 0;
@@ -183,6 +184,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         // Overview should light up immediately.
         videoStore.add(record);
         const recordId = record.id();
+        newIds.push(recordId);
         onEvent(`VideoIndexed: "${e.name}" (Kaltura import${e.is_live ? ", live broadcast" : ""})`, { video_id: recordId });
         count++;
 
@@ -224,7 +226,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
     if (skipped > 0) onEvent(`Kaltura import: ${skipped} excluded entr${skipped === 1 ? "y" : "ies"} skipped`);
     if (failed > 0) onEvent(`Kaltura import: ${failed} entr${failed === 1 ? "y" : "ies"} failed to index`);
     if (count > 0) {
-      onImported();
+      onImported({ ids: newIds });
       setEntries([]);
       setSelected(new Set());
       setFetched(false);

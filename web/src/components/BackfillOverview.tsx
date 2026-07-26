@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { VideoRecordJSON } from "../lib/wasm";
 import {
   type BackfillProfile,
@@ -674,7 +675,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
                     Option D via a small icon when the day is inside
                     a known-checked range for any source. */}
                 {slot.is_target && (
-                  <a
+                  <Link
                     href={`/import?from=${slot.date}&to=${slot.date}`}
                     onClick={e => e.stopPropagation()}
                     title={`Open the Import panel prefilled to ${slot.date} — check Zoom / Fireflies / YouTube / Kaltura for recordings on this day`}
@@ -690,7 +691,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
                     }}
                   >
                     ⬇ import
-                  </a>
+                  </Link>
                 )}
               </span>
             )}
