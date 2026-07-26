@@ -1,0 +1,181 @@
+"use client";
+
+/**
+ * ADR-055 — operator-editable series registry.
+ *
+ * A {series_name, pattern} table for the title-alignment resolver.
+ * When ingest sees a Zoom/Fireflies/Kaltura/YouTube-Live title that
+ * matches one of these patterns, it rewrites the local catalog
+ * title to `{series_name} - {D MMM YYYY}`. This surface exists so
+ * the operator can add new series or tighten a pattern without
+ * SSHing into a JSON file on the FUSE bucket.
+ */
+
+import { useEffect, useState } from "react";
+import { getSeriesRegistry, refreshSeriesRegistry, saveSeriesRegistry } from "../lib/seriesRegistryClient";
+import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
+
+interface RowState extends SeriesRegistryEntry {
+  /** Local-only key so React can reorder rows when the operator
+   *  edits the series_name in place. */
+  _uid: number;
+  /** Cached compile error message so the operator sees it while
+   *  typing; the /api/series-registry POST is the ultimate gate. */
+  regexError?: string;
+}
+
+let uidCounter = 1;
+
+export default function SeriesRegistryPanel() {
+  const [rows, setRows] = useState<RowState[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    refreshSeriesRegistry();
+    getSeriesRegistry().then((entries) => {
+      if (cancelled) return;
+      setRows(entries.map((e) => ({ ...e, _uid: uidCounter++ })));
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  function validateRegex(pattern: string): string | undefined {
+    try { new RegExp(pattern, "i"); return undefined; }
+    catch (err) { return err instanceof Error ? err.message : String(err); }
+  }
+
+  function updateRow(uid: number, patch: Partial<SeriesRegistryEntry>) {
+    setDirty(true);
+    setStatus(null);
+    setRows((prev) => prev.map((r) => {
+      if (r._uid !== uid) return r;
+      const next = { ...r, ...patch };
+      if (typeof patch.pattern === "string") next.regexError = validateRegex(patch.pattern);
+      return next;
+    }));
+  }
+
+  function addRow() {
+    setDirty(true);
+    setStatus(null);
+    setRows((prev) => [...prev, { _uid: uidCounter++, series_name: "", pattern: "", regexError: "empty pattern" }]);
+  }
+
+  function removeRow(uid: number) {
+    setDirty(true);
+    setStatus(null);
+    setRows((prev) => prev.filter((r) => r._uid !== uid));
+  }
+
+  async function save() {
+    // Client-side validation first — cheap, and the POST validates
+    // again on the server so we can trust either way.
+    const cleaned = rows
+      .map((r) => ({ series_name: r.series_name.trim(), pattern: r.pattern.trim() }))
+      .filter((r) => r.series_name.length > 0);
+    for (const [i, r] of cleaned.entries()) {
+      if (!r.pattern) {
+        setStatus(`Row ${i + 1} ("${r.series_name}") — pattern is required`);
+        return;
+      }
+      const err = validateRegex(r.pattern);
+      if (err) {
+        setStatus(`Row ${i + 1} ("${r.series_name}") — invalid regex: ${err}`);
+        return;
+      }
+    }
+    setSaving(true);
+    setStatus(null);
+    const result = await saveSeriesRegistry(cleaned);
+    setSaving(false);
+    if (!result.ok) {
+      setStatus(`Save failed: ${result.error}`);
+      return;
+    }
+    // Reload local rows from the server-canonical shape.
+    refreshSeriesRegistry();
+    const fresh = await getSeriesRegistry();
+    setRows(fresh.map((e) => ({ ...e, _uid: uidCounter++ })));
+    setDirty(false);
+    setStatus(`Saved ${cleaned.length} entr${cleaned.length === 1 ? "y" : "ies"}.`);
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: 16 }}>
+      <h2 style={{ marginTop: 0 }}>Series Registry</h2>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 0 }}>
+        Named series patterns used by ADR-055 title alignment. When an ingest title matches a pattern, the catalog title is rewritten to <code>{"{series_name} - D MMM YYYY"}</code>.
+        <br />
+        Patterns are JavaScript regex, matched case-insensitively. Longest matching series wins on ties.
+      </p>
+
+      {loading ? (
+        <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Loading…</div>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Series name</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pattern</th>
+                  <th style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r._uid}>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top" }}>
+                      <input
+                        value={r.series_name}
+                        onChange={(e) => updateRow(r._uid, { series_name: e.target.value })}
+                        placeholder="e.g. Hackerspace Agentics Foundation"
+                        style={{ width: "100%", padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.82rem" }}
+                      />
+                    </td>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top" }}>
+                      <input
+                        value={r.pattern}
+                        onChange={(e) => updateRow(r._uid, { pattern: e.target.value })}
+                        placeholder="e.g. ^Hackerspace Agentics Foundation"
+                        style={{ width: "100%", padding: "4px 6px", background: "var(--bg)", border: r.regexError ? "1px solid var(--red)" : "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.82rem", fontFamily: "monospace" }}
+                      />
+                      {r.regexError && <div style={{ color: "var(--red)", fontSize: "0.7rem", marginTop: 2 }}>{r.regexError}</div>}
+                    </td>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top", textAlign: "right" }}>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => removeRow(r._uid)}
+                        title="Remove this entry"
+                        style={{ padding: "2px 8px" }}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="btn btn-sm" onClick={addRow}>+ Add entry</button>
+            <button className="btn btn-sm btn-primary" onClick={save} disabled={!dirty || saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            {status && (
+              <span style={{ color: status.startsWith("Saved") ? "var(--green)" : "var(--red)", fontSize: "0.78rem" }}>
+                {status}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

@@ -12,6 +12,7 @@ import ConnectionsPanel from "../../../components/ConnectionsPanel";
 import RulesPanel from "../../../components/RulesPanel";
 import ProcessingRulesPanel from "../../../components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../../../components/PostProcessingRulesPanel";
+import SeriesRegistryPanel from "../../../components/SeriesRegistryPanel";
 import { useApp } from "../AppContext";
 import { useState } from "react";
 
@@ -32,6 +33,7 @@ export default function ConfigPage() {
       />
       <ProcessingRulesPanel />
       <PostProcessingRulesPanel />
+      <SeriesRegistryPanel />
     </>
   );
 }

@@ -212,7 +212,8 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   // (paired-canonical inheritance > series-registry template).
   const [titleAligning, setTitleAligning] = useState(false);
   const [titleAlignProgress, setTitleAlignProgress] = useState<{ index: number; total: number } | null>(null);
-  const [titleAlignSummary, setTitleAlignSummary] = useState<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number } | null>(null);
+  const [titleAlignSummary, setTitleAlignSummary] = useState<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number; youtube_pushed: number; youtube_noop: number; youtube_errors: number } | null>(null);
+  const [alignPushToYouTube, setAlignPushToYouTube] = useState(false);
   const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
 
   useEffect(() => {
@@ -346,6 +347,22 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
     setTitleAligning(true);
     setTitleAlignProgress(null);
     setTitleAlignSummary(null);
+    // Pull YouTube credentials from localStorage when the operator
+    // opted into pushing to YouTube — the backfill needs them per
+    // record to call videos.update.
+    let pushToYouTube: { refreshToken: string; clientId: string; clientSecret: string } | undefined;
+    if (alignPushToYouTube) {
+      try {
+        const raw = localStorage.getItem("video-sync:connections");
+        const conns = raw ? JSON.parse(raw) as Record<string, { credentials?: Record<string, string> }> : {};
+        const yt = conns["YouTube"]?.credentials;
+        if (yt?.refreshToken && yt?.clientId && yt?.clientSecret) {
+          pushToYouTube = { refreshToken: yt.refreshToken, clientId: yt.clientId, clientSecret: yt.clientSecret };
+        } else {
+          onEvent?.("Title alignment: YouTube push requested but no YouTube credentials configured. Skipping push.");
+        }
+      } catch { /* leave undefined */ }
+    }
     try {
       await runYouTubeTitleAlignBackfill(
         actorState,
@@ -358,6 +375,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           }
         },
         onEvent,
+        { pushToYouTube },
       );
     } catch (err) {
       onEvent?.(`Title alignment errored: ${err instanceof Error ? err.message : String(err)}`);
@@ -880,11 +898,30 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
                 ? titleAlignProgress ? `Renaming ${titleAlignProgress.index}/${titleAlignProgress.total}…` : "Renaming…"
                 : `Run alignment${titleAlignCounts.total ? ` (${titleAlignCounts.total})` : ""}`}
             </button>
+            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}
+              title="For every record whose local title is rewritten, also PUT the new title to the actual YouTube video via videos.update. Requires the youtube.force-ssl OAuth scope — if the operator authorised YouTube before ADR-029 landed, re-connect in Connections."
+            >
+              <input
+                type="checkbox"
+                checked={alignPushToYouTube}
+                onChange={(e) => setAlignPushToYouTube(e.target.checked)}
+                disabled={titleAligning}
+              />
+              Also push to YouTube
+            </label>
             {titleAlignSummary && (
               <span style={{ color: "var(--text-muted)" }}>
                 Last run: {titleAlignSummary.renamed_via_pair} via pair ·{" "}
                 {titleAlignSummary.renamed_via_registry} via registry ·{" "}
-                {titleAlignSummary.errors} error{titleAlignSummary.errors === 1 ? "" : "s"}.
+                {titleAlignSummary.errors} error{titleAlignSummary.errors === 1 ? "" : "s"}
+                {(titleAlignSummary.youtube_pushed + titleAlignSummary.youtube_noop + titleAlignSummary.youtube_errors) > 0 && (
+                  <>
+                    {" · "}YouTube: {titleAlignSummary.youtube_pushed} pushed
+                    {titleAlignSummary.youtube_noop > 0 && <>, {titleAlignSummary.youtube_noop} already matched</>}
+                    {titleAlignSummary.youtube_errors > 0 && <>, {titleAlignSummary.youtube_errors} error{titleAlignSummary.youtube_errors === 1 ? "" : "s"}</>}
+                  </>
+                )}
+                .
               </span>
             )}
           </div>

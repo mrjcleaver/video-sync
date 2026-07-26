@@ -51,7 +51,7 @@ export interface TitleAlignmentProgressEvent {
   total: number;
   recordTitle?: string;
   outcome?:
-    | { kind: "renamed"; recordId: string; new_title: string; source: AlignedTitle["source"]; original_title: string }
+    | { kind: "renamed"; recordId: string; new_title: string; source: AlignedTitle["source"]; original_title: string; youtubePushed?: "ok" | "noop" | "skipped" | "error"; youtubeError?: string }
     | { kind: "skipped"; reason: string }
     | { kind: "error"; error: string };
   totals?: {
@@ -59,7 +59,16 @@ export interface TitleAlignmentProgressEvent {
     renamed_via_registry: number;
     skipped: number;
     errors: number;
+    youtube_pushed: number;
+    youtube_noop: number;
+    youtube_errors: number;
   };
+}
+
+export interface YouTubePushCreds {
+  refreshToken: string;
+  clientId: string;
+  clientSecret: string;
 }
 
 const DEFAULT_DELAY_MS = 100;
@@ -72,22 +81,26 @@ export async function runYouTubeTitleAlignBackfill(
   actorState: Parameters<typeof actorCommand>[0],
   onEvent: (ev: TitleAlignmentProgressEvent) => void,
   log?: (msg: string, ctx?: Record<string, unknown>) => void,
-  opts?: { delayMs?: number; signal?: AbortSignal },
-): Promise<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number }> {
+  opts?: { delayMs?: number; signal?: AbortSignal; pushToYouTube?: YouTubePushCreds },
+): Promise<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number; youtube_pushed: number; youtube_noop: number; youtube_errors: number }> {
   const delayMs = opts?.delayMs ?? DEFAULT_DELAY_MS;
   const signal = opts?.signal ?? new AbortController().signal;
+  const pushCreds = opts?.pushToYouTube;
 
   const registry = await getSeriesRegistry();
   const allRecords = videoStore.getAll();
   const work = findRecordsNeedingTitleAlignment(allRecords, registry);
 
   onEvent({ type: "started", total: work.length });
-  log?.(`YouTube title alignment backfill started — ${work.length} record${work.length === 1 ? "" : "s"} eligible`);
+  log?.(`YouTube title alignment backfill started — ${work.length} record${work.length === 1 ? "" : "s"} eligible${pushCreds ? " (also pushing to YouTube)" : ""}`);
 
   let renamed_via_pair = 0;
   let renamed_via_registry = 0;
   let skipped = 0;
   let errors = 0;
+  let youtube_pushed = 0;
+  let youtube_noop = 0;
+  let youtube_errors = 0;
 
   for (let i = 0; i < work.length; i++) {
     if (signal.aborted) break;
@@ -101,17 +114,64 @@ export async function runYouTubeTitleAlignBackfill(
       videoStore.mutate(record.id, (r) => r.update_metadata(cmdJson));
       if (alignment.source === "paired_canonical") renamed_via_pair++;
       else renamed_via_registry++;
+      log?.(
+        `Retitled ${record.id} via ${alignment.source} — "${alignment.original_title}" → "${alignment.new_title}"`,
+        { video_id: record.id },
+      );
+
+      // Optional: push the new title to YouTube via videos.update.
+      // Best-effort — a push failure never rolls back the local
+      // rename. We only push for records where we can identify a
+      // YouTube video: either source_platform=YouTube (source_id is
+      // the ID) or any YouTube location (Origin/Destination).
+      let youtubePushed: "ok" | "noop" | "skipped" | "error" | undefined;
+      let youtubeError: string | undefined;
+      if (pushCreds) {
+        const ytVideoId = extractYouTubeVideoId(record);
+        if (!ytVideoId) {
+          youtubePushed = "skipped";
+        } else {
+          try {
+            const res = await fetch("/api/youtube/update-title", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                videoId: ytVideoId,
+                title: alignment.new_title,
+                refreshToken: pushCreds.refreshToken,
+                clientId: pushCreds.clientId,
+                clientSecret: pushCreds.clientSecret,
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json() as { updated?: boolean };
+              if (data.updated) { youtubePushed = "ok"; youtube_pushed++; }
+              else { youtubePushed = "noop"; youtube_noop++; }
+            } else {
+              const data = await res.json().catch(() => ({} as { error?: string }));
+              youtubePushed = "error";
+              youtubeError = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+              youtube_errors++;
+              log?.(`YouTube update-title failed for ${record.id} (video ${ytVideoId}): ${youtubeError}`, { video_id: record.id });
+            }
+          } catch (err) {
+            youtubePushed = "error";
+            youtubeError = err instanceof Error ? err.message : String(err);
+            youtube_errors++;
+            log?.(`YouTube update-title errored for ${record.id}: ${youtubeError}`, { video_id: record.id });
+          }
+        }
+      }
+
       outcome = {
         kind: "renamed",
         recordId: record.id,
         new_title: alignment.new_title,
         source: alignment.source,
         original_title: alignment.original_title,
+        ...(youtubePushed ? { youtubePushed } : {}),
+        ...(youtubeError ? { youtubeError } : {}),
       };
-      log?.(
-        `Retitled ${record.id} via ${alignment.source} — "${alignment.original_title}" → "${alignment.new_title}"`,
-        { video_id: record.id },
-      );
     } catch (err) {
       errors++;
       const msg = err instanceof Error ? err.message : String(err);
@@ -132,10 +192,29 @@ export async function runYouTubeTitleAlignBackfill(
     }
   }
 
-  const totals = { renamed_via_pair, renamed_via_registry, skipped, errors };
+  const totals = { renamed_via_pair, renamed_via_registry, skipped, errors, youtube_pushed, youtube_noop, youtube_errors };
   onEvent({ type: "complete", total: work.length, totals });
   log?.(
-    `YouTube title alignment complete — ${renamed_via_pair} via pair, ${renamed_via_registry} via registry, ${errors} error(s)`,
+    `YouTube title alignment complete — ${renamed_via_pair} via pair, ${renamed_via_registry} via registry, ${errors} local error(s)${pushCreds ? `; YouTube pushed ${youtube_pushed}, ${youtube_noop} noop, ${youtube_errors} error(s)` : ""}`,
   );
   return totals;
+}
+
+/**
+ * Resolve a YouTube video ID from a catalog record. Prefers a
+ * YouTube location (Destination first, then Origin); falls back to
+ * a plain `youtube-<ID>` source_id.
+ */
+function extractYouTubeVideoId(rec: VideoRecordJSON): string | null {
+  const locs = (rec.locations ?? []).filter((l) => l.platform === "YouTube" && l.external_id);
+  const dest = locs.find((l) => l.role === "Destination");
+  if (dest) return normalizeYouTubeId(dest.external_id);
+  const origin = locs.find((l) => l.role === "Origin");
+  if (origin) return normalizeYouTubeId(origin.external_id);
+  if (rec.source_platform === "YouTube") return normalizeYouTubeId(rec.source_id);
+  return null;
+}
+
+function normalizeYouTubeId(id: string): string {
+  return id.startsWith("youtube-") ? id.slice("youtube-".length) : id;
 }
