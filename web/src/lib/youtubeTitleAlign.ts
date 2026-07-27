@@ -147,8 +147,15 @@ export function resolveTitleFromRegistry(
   title: string,
   recordedAt: string,
   registry: SeriesRegistryEntry[],
+  opts?: { force?: boolean },
 ): AlignedTitle | null {
-  if (titleContainsDate(title)) return null;
+  // In default mode we skip already-dated titles — the primary
+  // ingest resolver wants a clean gate so records aren't churned
+  // between series each time an alias fires. In force mode
+  // (per-record realign, bulk "include already-dated") we skip
+  // the gate so an operator can retire an old series_name in
+  // favour of a newly-added alias.
+  if (!opts?.force && titleContainsDate(title)) return null;
   // Prefer the longest series_name on match — a longer name is
   // more specific, so it wins when multiple patterns fire.
   const sorted = [...registry].sort((a, b) => b.series_name.length - a.series_name.length);
@@ -219,6 +226,11 @@ export function resolveAlignedTitleForced(
   const primary = resolveAlignedTitle(record, allRecords, registry);
   if (primary) return primary;
   if (!record.recorded_at) return null;
+  // Force-run the registry against the current title even if it's
+  // already dated. Handles "operator added a new alias and wants
+  // records renamed to the new canonical name."
+  const directForced = resolveTitleFromRegistry(record.title, record.recorded_at, registry, { force: true });
+  if (directForced && directForced.new_title !== record.title) return directForced;
   const meta = (record.metadata_extra ?? {}) as Record<string, unknown>;
   const KEYS = [
     "youtube_original_title",
@@ -229,7 +241,7 @@ export function resolveAlignedTitleForced(
   for (const key of KEYS) {
     const raw = meta[key];
     if (typeof raw !== "string" || !raw.trim() || raw === record.title) continue;
-    const attempt = resolveTitleFromRegistry(raw, record.recorded_at, registry);
+    const attempt = resolveTitleFromRegistry(raw, record.recorded_at, registry, { force: true });
     if (attempt && attempt.new_title !== record.title) return attempt;
   }
   return null;

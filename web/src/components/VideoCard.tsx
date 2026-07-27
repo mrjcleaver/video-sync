@@ -31,7 +31,7 @@ import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatc
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
 import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
-import { resolveTitleFromRegistry, resolveAlignedTitle } from "../lib/youtubeTitleAlign";
+import { resolveAlignedTitle, resolveAlignedTitleForced } from "../lib/youtubeTitleAlign";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
@@ -1492,27 +1492,13 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     try {
       const registry = await getSeriesRegistry();
       const all = videoStore.getAll();
-      let alignment = resolveAlignedTitle(video, all, registry);
-      if (!alignment && video.recorded_at) {
-        // Try the raw platform-supplied title from metadata_extra —
-        // covers the case where the current title has already been
-        // dated under an old alias and we want to re-run resolution
-        // against the raw source-of-truth.
-        const meta = (video.metadata_extra ?? {}) as Record<string, unknown>;
-        const originalCandidates = [
-          "youtube_original_title",
-          "zoom_original_title",
-          "fireflies_original_title",
-          "kaltura_original_title",
-        ];
-        for (const key of originalCandidates) {
-          const raw = meta[key];
-          if (typeof raw === "string" && raw.length > 0 && raw !== video.title) {
-            const attempt = resolveTitleFromRegistry(raw, video.recorded_at, registry);
-            if (attempt) { alignment = attempt; break; }
-          }
-        }
-      }
+      // Per-record realign uses the "forced" resolver: after the
+      // usual paired-canonical + registry pass, ALSO re-run the
+      // registry against the current title (even when already
+      // dated) so newly-added aliases can retitle records that
+      // were previously dated under an older canonical name.
+      // See resolveAlignedTitleForced.
+      const alignment = resolveAlignedTitleForced(video, all, registry);
 
       // The title we'll ultimately push to YouTube.
       // Priority: newly-computed alignment > current local title.
