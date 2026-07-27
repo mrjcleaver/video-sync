@@ -1513,33 +1513,54 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           }
         }
       }
-      if (!alignment) {
-        onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — no rewrite (no matching pair, no registry pattern)`, { video_id: video.id });
-        return;
-      }
-      if (alignment.new_title === video.title) {
-        onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — already aligned`, { video_id: video.id });
-        return;
-      }
-      try {
-        videoStore.mutate(video.id, (r) =>
-          r.update_metadata(actorCommand(actorState, { edits: { title: alignment!.new_title } })),
+
+      // The title we'll ultimately push to YouTube.
+      // Priority: newly-computed alignment > current local title.
+      // If we're in push-only mode (already aligned), the current
+      // local title IS the source of truth we want mirrored upstream.
+      let finalTitle = alignment?.new_title ?? video.title;
+
+      if (alignment && alignment.new_title !== video.title) {
+        try {
+          videoStore.mutate(video.id, (r) =>
+            r.update_metadata(actorCommand(actorState, { edits: { title: alignment!.new_title } })),
+          );
+        } catch (err) {
+          onEvent(`RealignTitleFailed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+          return;
+        }
+        onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} → "${alignment.new_title}" (via ${alignment.source})`, { video_id: video.id });
+        onMutated();
+      } else if (!pushToYouTube) {
+        // Realign-only clicked but nothing to change locally.
+        onEvent(
+          alignment
+            ? `RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — already aligned`
+            : `RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — no rewrite (no matching pair, no registry pattern)`,
+          { video_id: video.id },
         );
-      } catch (err) {
-        onEvent(`RealignTitleFailed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
         return;
+      } else {
+        // Realign + push clicked; local is already correct. Fall
+        // through to the YouTube-push block below so YouTube gets
+        // synced to the current local title even when nothing
+        // changed locally. This is the "I already realigned, now
+        // sync to YouTube" flow the operator hit.
+        finalTitle = video.title;
       }
-      onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} → "${alignment.new_title}" (via ${alignment.source})`, { video_id: video.id });
-      onMutated();
 
       if (pushToYouTube) {
+        // At this point finalTitle is the local-authoritative title
+        // we want live on YouTube. May equal the current YouTube
+        // title — /api/youtube/update-title returns updated:false
+        // in that case and we log accordingly.
         // Resolve a YouTube video ID: Destination > Origin > youtube-<id>.
         const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
                    ?? (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Origin" && l.external_id);
         const ytId = ytLoc?.external_id
                   ?? (video.source_platform === "YouTube" ? video.source_id.replace(/^youtube-/, "") : null);
         if (!ytId) {
-          onEvent(`RealignTitle push skipped: "${alignment.new_title}" — no YouTube video ID on record`, { video_id: video.id });
+          onEvent(`RealignTitle push skipped: "${finalTitle}" — no YouTube video ID on record`, { video_id: video.id });
           return;
         }
         let connections: Record<string, { credentials?: Record<string, string> }> = {};
@@ -1549,7 +1570,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         } catch { /* ignore */ }
         const yt = connections["YouTube"]?.credentials;
         if (!yt?.refreshToken || !yt?.clientId || !yt?.clientSecret) {
-          onEvent(`RealignTitle push skipped: "${alignment.new_title}" — YouTube not authorised`, { video_id: video.id });
+          onEvent(`RealignTitle push skipped: "${finalTitle}" — YouTube not authorised`, { video_id: video.id });
           return;
         }
         try {
@@ -1558,7 +1579,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               videoId: ytId.replace(/^youtube-/, ""),
-              title: alignment.new_title,
+              title: finalTitle,
               refreshToken: yt.refreshToken,
               clientId: yt.clientId,
               clientSecret: yt.clientSecret,
@@ -1569,8 +1590,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             const d = data as { updated?: boolean };
             onEvent(
               d.updated
-                ? `RealignTitle pushed to YouTube/${ytId}: "${alignment.new_title}"`
-                : `RealignTitle YouTube already matched YouTube/${ytId}`,
+                ? `RealignTitle pushed to YouTube/${ytId}: "${finalTitle}"`
+                : `RealignTitle YouTube already matched YouTube/${ytId}: "${finalTitle}"`,
               { video_id: video.id },
             );
           } else {
