@@ -115,6 +115,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // flood of standalone VideoCards it used to be.
   const [showClips, setShowClips] = useState(false);
   const [realigning, setRealigning] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
   const [shortsCaption, setShortsCaption] = useState(true);
   const [shortsPrompt, setShortsPrompt] = useState("");
   const [shortsLoading, setShortsLoading] = useState(false);
@@ -1593,6 +1596,86 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     }
   }
 
+  /**
+   * Manual title override. Persists via update_metadata; optionally
+   * also PUTs the new title to YouTube via videos.update. Falls
+   * through silently on YouTube auth failure (event log records
+   * the reason) — the local rename always wins.
+   */
+  async function saveTitleEdit(pushToYouTube: boolean) {
+    const draft = titleDraft.trim();
+    if (!draft || draft === video.title) {
+      setEditingTitle(false);
+      return;
+    }
+    setSavingTitle(true);
+    const oldTitle = video.title;
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.update_metadata(actorCommand(actorState, { edits: { title: draft } })),
+      );
+    } catch (err) {
+      onEvent(`TitleEditFailed: "${oldTitle}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+      setSavingTitle(false);
+      return;
+    }
+    onEvent(`TitleEdited: "${oldTitle}"${dateTag(video.recorded_at)} → "${draft}"`, { video_id: video.id });
+    onMutated();
+    setEditingTitle(false);
+
+    if (pushToYouTube) {
+      const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
+                 ?? (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Origin" && l.external_id);
+      const ytId = ytLoc?.external_id
+                ?? (video.source_platform === "YouTube" ? video.source_id.replace(/^youtube-/, "") : null);
+      if (!ytId) {
+        onEvent(`TitleEdit push skipped: no YouTube video ID on record`, { video_id: video.id });
+        setSavingTitle(false);
+        return;
+      }
+      let connections: Record<string, { credentials?: Record<string, string> }> = {};
+      try {
+        const raw = localStorage.getItem("video-sync:connections");
+        if (raw) connections = JSON.parse(raw);
+      } catch { /* ignore */ }
+      const yt = connections["YouTube"]?.credentials;
+      if (!yt?.refreshToken || !yt?.clientId || !yt?.clientSecret) {
+        onEvent(`TitleEdit push skipped: YouTube not authorised`, { video_id: video.id });
+        setSavingTitle(false);
+        return;
+      }
+      try {
+        const res = await fetch("/api/youtube/update-title", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            videoId: ytId.replace(/^youtube-/, ""),
+            title: draft,
+            refreshToken: yt.refreshToken,
+            clientId: yt.clientId,
+            clientSecret: yt.clientSecret,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          const d = data as { updated?: boolean };
+          onEvent(
+            d.updated
+              ? `TitleEdit pushed to YouTube/${ytId}: "${draft}"`
+              : `TitleEdit YouTube already matched YouTube/${ytId}: "${draft}"`,
+            { video_id: video.id },
+          );
+        } else {
+          const err = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+          onEvent(`TitleEdit push failed for YouTube/${ytId}: ${err}`, { video_id: video.id });
+        }
+      } catch (err) {
+        onEvent(`TitleEdit push errored: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+      }
+    }
+    setSavingTitle(false);
+  }
+
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
@@ -1642,8 +1725,67 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     <div className="video-card" id={`video-card-${video.id}`}>
       <div className="video-card-header">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0 }}>{previewTitle ?? video.title}</h3>
-          {previewTitle && (
+          {editingTitle ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void saveTitleEdit(false); }
+                  else if (e.key === "Escape") { e.preventDefault(); setEditingTitle(false); }
+                }}
+                disabled={savingTitle}
+                style={{
+                  width: "100%", padding: "4px 6px",
+                  background: "var(--bg)", border: "1px solid var(--border)",
+                  borderRadius: 4, color: "var(--text)",
+                  fontSize: "1rem", fontWeight: 600,
+                }}
+              />
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => saveTitleEdit(false)}
+                  disabled={savingTitle || !titleDraft.trim() || titleDraft.trim() === video.title}
+                >
+                  {savingTitle ? "Saving…" : "Save"}
+                </button>
+                {(video.locations ?? []).some(l => l.platform === "YouTube" && l.external_id) && (
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => saveTitleEdit(true)}
+                    disabled={savingTitle || !titleDraft.trim() || titleDraft.trim() === video.title}
+                    title="Save the new title locally AND push it to the actual YouTube video via videos.update"
+                  >
+                    {savingTitle ? "Saving…" : "Save + push to YouTube"}
+                  </button>
+                )}
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setEditingTitle(false)}
+                  disabled={savingTitle}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <h3 style={{ margin: 0, flex: 1, minWidth: 0 }}>{previewTitle ?? video.title}</h3>
+              <button
+                onClick={() => { setTitleDraft(video.title); setEditingTitle(true); }}
+                title="Edit title"
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "var(--text-muted)", padding: "0 4px", fontSize: "0.9rem",
+                }}
+              >
+                ✏️
+              </button>
+            </div>
+          )}
+          {previewTitle && !editingTitle && (
             <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>
               {video.title}
             </div>

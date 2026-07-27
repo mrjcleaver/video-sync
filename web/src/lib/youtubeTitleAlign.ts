@@ -62,6 +62,35 @@ export function titleContainsDate(title: string): boolean {
 }
 
 /**
+ * Extract a "D MMM YYYY" date string from a title. Returns null
+ * when no recognised date is present. Force-mode realign uses this
+ * so a rename doesn't accidentally shift the date on records whose
+ * recorded_at disagrees with the title-embedded date (a common
+ * artifact of legacy ingests where recorded_at was the wall-clock
+ * import time instead of the actual recording day).
+ */
+export function extractDateFromTitle(title: string): string | null {
+  if (!title) return null;
+  const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const dmyRe = new RegExp(`\\b(\\d{1,2})\\s+(${monthNames.join("|")})\\s+(\\d{4})\\b`, "i");
+  const dmy = title.match(dmyRe);
+  if (dmy) {
+    // Normalise month capitalisation to match formatDMMMYYYY output.
+    const monthLower = dmy[2].toLowerCase();
+    const monthCanon = monthNames.find(m => m.toLowerCase() === monthLower)!;
+    return `${Number(dmy[1])} ${monthCanon} ${dmy[3]}`;
+  }
+  const iso = title.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) {
+    const day = Number(iso[3]);
+    const month = monthNames[Number(iso[2]) - 1];
+    if (!month) return null;
+    return `${day} ${month} ${iso[1]}`;
+  }
+  return null;
+}
+
+/**
  * Format an ISO timestamp (or ISO date) as "D MMM YYYY" — matches
  * ADR-014's default `{{date:D MMM YYYY}}` output.
  */
@@ -167,7 +196,18 @@ export function resolveTitleFromRegistry(
       continue; // malformed pattern — skip
     }
     if (!re.test(title)) continue;
-    const dated = formatDMMMYYYY(recordedAt);
+    // Date-picking rule: in force mode, if the current title
+    // already carries a date, PRESERVE it — the operator asked to
+    // rename the series, not shift the date. Some legacy records
+    // have `recorded_at` = ingest day, not recording day; using it
+    // here would silently corrupt otherwise-correct titles. Only
+    // fall back to recorded_at when no date is embedded (which is
+    // the normal case for undated ingest titles).
+    let dated: string | null = null;
+    if (opts?.force) {
+      dated = extractDateFromTitle(title);
+    }
+    if (!dated) dated = formatDMMMYYYY(recordedAt) || null;
     if (!dated) return null;
     const newTitle = `${entry.series_name} - ${dated}`;
     if (newTitle === title) return null;
