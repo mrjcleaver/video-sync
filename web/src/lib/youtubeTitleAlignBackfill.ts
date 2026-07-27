@@ -18,7 +18,7 @@
 
 import type { VideoRecordJSON } from "./wasm";
 import { videoStore } from "./store";
-import { resolveAlignedTitle, type AlignedTitle, type SeriesRegistryEntry } from "./youtubeTitleAlign";
+import { resolveAlignedTitle, resolveAlignedTitleForced, type AlignedTitle, type SeriesRegistryEntry } from "./youtubeTitleAlign";
 import { getSeriesRegistry } from "./seriesRegistryClient";
 import type { actorCommand } from "./useCurrentActor";
 import { actorCommand as buildActorCommand } from "./useCurrentActor";
@@ -36,10 +36,12 @@ export interface TitleAlignmentCandidate {
 export function findRecordsNeedingTitleAlignment(
   allRecords: VideoRecordJSON[],
   registry: SeriesRegistryEntry[],
+  opts?: { force?: boolean },
 ): TitleAlignmentCandidate[] {
+  const resolver = opts?.force ? resolveAlignedTitleForced : resolveAlignedTitle;
   const out: TitleAlignmentCandidate[] = [];
   for (const rec of allRecords) {
-    const alignment = resolveAlignedTitle(rec, allRecords, registry);
+    const alignment = resolver(rec, allRecords, registry);
     if (alignment) out.push({ record: rec, alignment });
   }
   return out;
@@ -81,15 +83,16 @@ export async function runYouTubeTitleAlignBackfill(
   actorState: Parameters<typeof actorCommand>[0],
   onEvent: (ev: TitleAlignmentProgressEvent) => void,
   log?: (msg: string, ctx?: Record<string, unknown>) => void,
-  opts?: { delayMs?: number; signal?: AbortSignal; pushToYouTube?: YouTubePushCreds },
+  opts?: { delayMs?: number; signal?: AbortSignal; pushToYouTube?: YouTubePushCreds; force?: boolean },
 ): Promise<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number; youtube_pushed: number; youtube_noop: number; youtube_errors: number }> {
   const delayMs = opts?.delayMs ?? DEFAULT_DELAY_MS;
   const signal = opts?.signal ?? new AbortController().signal;
   const pushCreds = opts?.pushToYouTube;
+  const force = opts?.force ?? false;
 
   const registry = await getSeriesRegistry();
   const allRecords = videoStore.getAll();
-  const work = findRecordsNeedingTitleAlignment(allRecords, registry);
+  const work = findRecordsNeedingTitleAlignment(allRecords, registry, { force });
 
   onEvent({ type: "started", total: work.length });
   log?.(`YouTube title alignment backfill started — ${work.length} record${work.length === 1 ? "" : "s"} eligible${pushCreds ? " (also pushing to YouTube)" : ""}`);

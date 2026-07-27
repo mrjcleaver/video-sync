@@ -199,3 +199,38 @@ export function resolveAlignedTitle(
   return tryStrategyPairedCanonical(record, allRecords)
       ?? tryStrategyRegistry(record, registry);
 }
+
+/**
+ * "Force" variant used by the per-record realign button and the
+ * bulk maintenance card in alias-widen mode. In addition to the
+ * regular resolver, this ALSO tries the raw platform-supplied
+ * title (metadata_extra.<platform>_original_title) even when the
+ * current title is already dated — the "operator just added a new
+ * alias and wants the existing dated titles switched to the new
+ * canonical name" case that the primary resolver deliberately
+ * skips. Returns null when no proposal differs from the current
+ * title.
+ */
+export function resolveAlignedTitleForced(
+  record: VideoRecordJSON,
+  allRecords: VideoRecordJSON[],
+  registry: SeriesRegistryEntry[],
+): AlignedTitle | null {
+  const primary = resolveAlignedTitle(record, allRecords, registry);
+  if (primary) return primary;
+  if (!record.recorded_at) return null;
+  const meta = (record.metadata_extra ?? {}) as Record<string, unknown>;
+  const KEYS = [
+    "youtube_original_title",
+    "zoom_original_title",
+    "fireflies_original_title",
+    "kaltura_original_title",
+  ];
+  for (const key of KEYS) {
+    const raw = meta[key];
+    if (typeof raw !== "string" || !raw.trim() || raw === record.title) continue;
+    const attempt = resolveTitleFromRegistry(raw, record.recorded_at, registry);
+    if (attempt && attempt.new_title !== record.title) return attempt;
+  }
+  return null;
+}

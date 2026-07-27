@@ -31,6 +31,8 @@ import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatc
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
 import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
+import { resolveTitleFromRegistry, resolveAlignedTitle } from "../lib/youtubeTitleAlign";
+import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -112,6 +114,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // and the operator asked for a compact nested list instead of the
   // flood of standalone VideoCards it used to be.
   const [showClips, setShowClips] = useState(false);
+  const [realigning, setRealigning] = useState(false);
   const [shortsCaption, setShortsCaption] = useState(true);
   const [shortsPrompt, setShortsPrompt] = useState("");
   const [shortsLoading, setShortsLoading] = useState(false);
@@ -1472,6 +1475,117 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     return out;
   }, [allVideos, video.id, video.source_platform]);
 
+  /**
+   * Per-card title realignment.
+   * Tries three sources of truth in order:
+   *   1. resolveAlignedTitle on the current record — fires for
+   *      undated titles when a pair or registry entry matches.
+   *   2. resolveTitleFromRegistry on metadata_extra.<platform>_original_title
+   *      — handles the alias case: title is already dated but the
+   *      operator has just added a canonical name they'd rather see.
+   *   3. Nothing — nothing changed, inform the operator.
+   * Optionally pushes to YouTube if we can resolve a YouTube video
+   * ID (Destination location > Origin > youtube-<id> source_id).
+   */
+  async function realignTitle(pushToYouTube: boolean) {
+    setRealigning(true);
+    try {
+      const registry = await getSeriesRegistry();
+      const all = videoStore.getAll();
+      let alignment = resolveAlignedTitle(video, all, registry);
+      if (!alignment && video.recorded_at) {
+        // Try the raw platform-supplied title from metadata_extra —
+        // covers the case where the current title has already been
+        // dated under an old alias and we want to re-run resolution
+        // against the raw source-of-truth.
+        const meta = (video.metadata_extra ?? {}) as Record<string, unknown>;
+        const originalCandidates = [
+          "youtube_original_title",
+          "zoom_original_title",
+          "fireflies_original_title",
+          "kaltura_original_title",
+        ];
+        for (const key of originalCandidates) {
+          const raw = meta[key];
+          if (typeof raw === "string" && raw.length > 0 && raw !== video.title) {
+            const attempt = resolveTitleFromRegistry(raw, video.recorded_at, registry);
+            if (attempt) { alignment = attempt; break; }
+          }
+        }
+      }
+      if (!alignment) {
+        onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — no rewrite (no matching pair, no registry pattern)`, { video_id: video.id });
+        return;
+      }
+      if (alignment.new_title === video.title) {
+        onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} — already aligned`, { video_id: video.id });
+        return;
+      }
+      try {
+        videoStore.mutate(video.id, (r) =>
+          r.update_metadata(actorCommand(actorState, { edits: { title: alignment!.new_title } })),
+        );
+      } catch (err) {
+        onEvent(`RealignTitleFailed: "${video.title}"${dateTag(video.recorded_at)} — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+        return;
+      }
+      onEvent(`RealignTitle: "${video.title}"${dateTag(video.recorded_at)} → "${alignment.new_title}" (via ${alignment.source})`, { video_id: video.id });
+      onMutated();
+
+      if (pushToYouTube) {
+        // Resolve a YouTube video ID: Destination > Origin > youtube-<id>.
+        const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
+                   ?? (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Origin" && l.external_id);
+        const ytId = ytLoc?.external_id
+                  ?? (video.source_platform === "YouTube" ? video.source_id.replace(/^youtube-/, "") : null);
+        if (!ytId) {
+          onEvent(`RealignTitle push skipped: "${alignment.new_title}" — no YouTube video ID on record`, { video_id: video.id });
+          return;
+        }
+        let connections: Record<string, { credentials?: Record<string, string> }> = {};
+        try {
+          const raw = localStorage.getItem("video-sync:connections");
+          if (raw) connections = JSON.parse(raw);
+        } catch { /* ignore */ }
+        const yt = connections["YouTube"]?.credentials;
+        if (!yt?.refreshToken || !yt?.clientId || !yt?.clientSecret) {
+          onEvent(`RealignTitle push skipped: "${alignment.new_title}" — YouTube not authorised`, { video_id: video.id });
+          return;
+        }
+        try {
+          const res = await fetch("/api/youtube/update-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: ytId.replace(/^youtube-/, ""),
+              title: alignment.new_title,
+              refreshToken: yt.refreshToken,
+              clientId: yt.clientId,
+              clientSecret: yt.clientSecret,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            const d = data as { updated?: boolean };
+            onEvent(
+              d.updated
+                ? `RealignTitle pushed to YouTube/${ytId}: "${alignment.new_title}"`
+                : `RealignTitle YouTube already matched YouTube/${ytId}`,
+              { video_id: video.id },
+            );
+          } else {
+            const err = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+            onEvent(`RealignTitle push failed for YouTube/${ytId}: ${err}`, { video_id: video.id });
+          }
+        } catch (err) {
+          onEvent(`RealignTitle push errored: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+        }
+      }
+    } finally {
+      setRealigning(false);
+    }
+  }
+
   const status = video.status;
   const canApprove = status === "Discovered" || status === "InScope" || status === "Failed" || status === "ToRetry";
   const canSkip = status === "Discovered" || status === "InScope";
@@ -2509,6 +2623,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       )}
 
       <div className="video-card-actions">
+        {video.source_platform !== "OpusClip" && (
+          <button
+            className="btn btn-sm"
+            onClick={() => realignTitle(false)}
+            disabled={realigning}
+            style={{ fontSize: "0.72rem" }}
+            title="Re-run ADR-055 title alignment on this record (paired-canonical → series-registry → alias against the original title). No YouTube push."
+          >
+            {realigning ? "Realigning…" : "🏷 Realign title"}
+          </button>
+        )}
+        {video.source_platform !== "OpusClip" && (video.locations ?? []).some(l => l.platform === "YouTube" && l.external_id) && (
+          <button
+            className="btn btn-sm"
+            onClick={() => realignTitle(true)}
+            disabled={realigning}
+            style={{ fontSize: "0.72rem" }}
+            title="Realign this record's title and also PUT the new title to the actual YouTube video via videos.update. Requires the youtube.force-ssl OAuth scope — reconnect YouTube in Connections if you see a 'scope missing' event."
+          >
+            {realigning ? "Realigning…" : "🏷↗ Realign + push to YouTube"}
+          </button>
+        )}
         {canApprove && (
           <button className="btn btn-sm btn-green" onClick={approve}>
             Approve

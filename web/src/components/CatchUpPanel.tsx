@@ -214,6 +214,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   const [titleAlignProgress, setTitleAlignProgress] = useState<{ index: number; total: number } | null>(null);
   const [titleAlignSummary, setTitleAlignSummary] = useState<{ renamed_via_pair: number; renamed_via_registry: number; skipped: number; errors: number; youtube_pushed: number; youtube_noop: number; youtube_errors: number } | null>(null);
   const [alignPushToYouTube, setAlignPushToYouTube] = useState(false);
+  const [alignForce, setAlignForce] = useState(false);
   const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
 
   useEffect(() => {
@@ -223,7 +224,11 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   }, []);
 
   const titleAlignWork = useMemo(
-    () => findRecordsNeedingTitleAlignment(videos, seriesRegistry),
+    () => findRecordsNeedingTitleAlignment(videos, seriesRegistry, { force: false }),
+    [videos, seriesRegistry],
+  );
+  const titleAlignWorkForced = useMemo(
+    () => findRecordsNeedingTitleAlignment(videos, seriesRegistry, { force: true }),
     [videos, seriesRegistry],
   );
   const titleAlignCounts = useMemo(() => {
@@ -231,6 +236,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
     const registry = titleAlignWork.filter((c) => c.alignment.source === "series_registry").length;
     return { paired, registry, total: titleAlignWork.length };
   }, [titleAlignWork]);
+  const titleAlignCountForced = titleAlignWorkForced.length;
 
   // Orphan-clip repair (ADR-058 follow-up) — finds OpusClip source
   // rows without a ClipOf upstream link and writes one using
@@ -375,7 +381,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           }
         },
         onEvent,
-        { pushToYouTube },
+        { pushToYouTube, force: alignForce },
       );
     } catch (err) {
       onEvent?.(`Title alignment errored: ${err instanceof Error ? err.message : String(err)}`);
@@ -892,12 +898,23 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             <button
               className="btn btn-sm btn-primary"
               onClick={runTitleAlignBackfill}
-              disabled={titleAligning || titleAlignCounts.total === 0}
+              disabled={titleAligning || (alignForce ? titleAlignCountForced === 0 : titleAlignCounts.total === 0)}
             >
               {titleAligning
                 ? titleAlignProgress ? `Renaming ${titleAlignProgress.index}/${titleAlignProgress.total}…` : "Renaming…"
-                : `Run alignment${titleAlignCounts.total ? ` (${titleAlignCounts.total})` : ""}`}
+                : `Run alignment${(alignForce ? titleAlignCountForced : titleAlignCounts.total) ? ` (${alignForce ? titleAlignCountForced : titleAlignCounts.total})` : ""}`}
             </button>
+            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}
+              title="Widen the sweep to already-dated records so newly-added series aliases can reshape their titles. Uses metadata_extra.<platform>_original_title (populated at ingest) to re-run resolution."
+            >
+              <input
+                type="checkbox"
+                checked={alignForce}
+                onChange={(e) => setAlignForce(e.target.checked)}
+                disabled={titleAligning}
+              />
+              Include already-dated titles ({titleAlignCountForced})
+            </label>
             <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}
               title="For every record whose local title is rewritten, also PUT the new title to the actual YouTube video via videos.update. Requires the youtube.force-ssl OAuth scope — if the operator authorised YouTube before ADR-029 landed, re-connect in Connections."
             >
