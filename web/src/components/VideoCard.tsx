@@ -2290,6 +2290,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 const length = Math.max(0, end - start);
                 const kw = Array.isArray(extra.keywords) ? (extra.keywords as string[]) : [];
                 const editUrl = typeof extra.opus_edit_url === "string" ? extra.opus_edit_url : null;
+                const isPublished = c.status === "Published";
+                const isFailed = c.status === "Failed";
+                const ytLoc = (c.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url);
                 const fmt = (s: number) => {
                   const m = Math.floor(s / 60);
                   const sec = Math.floor(s % 60);
@@ -2312,6 +2315,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                         ? kw.slice(0, 6).join(" · ")
                         : (c.title.length > 60 ? c.title.slice(0, 59) + "…" : c.title)}
                     </span>
+                    {isPublished && ytLoc?.external_url ? (
+                      <a
+                        href={ytLoc.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: "0.65rem", color: "#000",
+                          background: "var(--green)",
+                          borderRadius: 3, padding: "0 6px",
+                          textDecoration: "none", fontWeight: 600,
+                        }}
+                        title="Watch the published short on YouTube"
+                      >
+                        ▶ live
+                      </a>
+                    ) : isPublished ? (
+                      <span style={{ fontSize: "0.65rem", color: "var(--green)", fontWeight: 600 }}>✓ published</span>
+                    ) : isFailed ? (
+                      <span style={{ fontSize: "0.65rem", color: "var(--red)", fontWeight: 600 }}>× failed</span>
+                    ) : (
+                      <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{c.status.toLowerCase()}</span>
+                    )}
                     {editUrl && (
                       <a
                         href={editUrl}

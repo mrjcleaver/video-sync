@@ -180,6 +180,12 @@ export type DestinationNode = {
   platform: string;
   external_id: string;
   external_url: string | null;
+  /** When a Destination is the published Short of an OpusClip
+   *  record, we carry the clip's title + record id so the graph
+   *  can render "▶ <short title>" instead of the plain "YouTube"
+   *  label. Absent for regular Zoom/Fireflies → YouTube publishes. */
+  short_title?: string;
+  short_record_id?: string;
 };
 
 export type ProvenanceSession = {
@@ -299,12 +305,15 @@ export function buildProvenance(videos: VideoRecordJSON[]): ProvenanceSession[] 
       )
       .map((r) => ({ kind: "real" as const, record: r }));
 
-    // OpusClip records grouped by the parent they clipped. Uses the
-    // ClipOf link's video_id to attach — if a clip somehow ended up
-    // in the session via other means (SameEvent, etc.) we still
-    // surface it, defaulting to the first non-clip real record as
-    // the parent so it's never invisible.
+    // OpusClip records split into two buckets:
+    //   - derivatives: unpublished clips nested under their parent.
+    //   - published shorts go straight to the destinations column
+    //     (below) with the clip's title + a "short" marker, so the
+    //     graph shows publish outcomes at a glance instead of
+    //     duplicating the clip under the intermediary column and
+    //     the plain "YouTube" destination.
     const derivatives: Array<{ parentId: string; clip: RealNode }> = [];
+    const publishedShortDestIds = new Set<string>();
     const promotedParentIds = new Set<string>();
     for (const rec of realRecords) {
       if (rec.source_platform !== "OpusClip") continue;
@@ -314,8 +323,22 @@ export function buildProvenance(videos: VideoRecordJSON[]): ProvenanceSession[] 
         const fallback = realRecords.find(r => r.id !== rec.id && r.source_platform !== "OpusClip");
         parentId = fallback?.id ?? rec.id;
       }
-      derivatives.push({ parentId, clip: { kind: "real", record: rec } });
-      promotedParentIds.add(parentId);
+      const isPublished = rec.status === "Published";
+      if (isPublished) {
+        // Track its YouTube destination location(s) so the
+        // destMap loop below can decorate them with the clip
+        // title. We DO still promote the parent so the graph
+        // renders it (useful when the parent isn't Zoom/FF/Loom).
+        for (const loc of (rec.locations ?? [])) {
+          if (loc.role === "Destination" && loc.platform === "YouTube" && loc.external_id) {
+            publishedShortDestIds.add(`${loc.platform}:${loc.external_id}`);
+          }
+        }
+        promotedParentIds.add(parentId);
+      } else {
+        derivatives.push({ parentId, clip: { kind: "real", record: rec } });
+        promotedParentIds.add(parentId);
+      }
     }
     // Ensure any parent-of-a-derivative that isn't already an origin
     // or intermediary shows up somewhere — YouTube-source parents
@@ -340,10 +363,12 @@ export function buildProvenance(videos: VideoRecordJSON[]): ProvenanceSession[] 
         if (loc.role === "Destination") {
           const key = `${loc.platform}:${loc.external_id}`;
           if (!destMap.has(key)) {
+            const isPublishedShort = rec.source_platform === "OpusClip" && publishedShortDestIds.has(key);
             destMap.set(key, {
               platform: loc.platform,
               external_id: loc.external_id,
               external_url: loc.external_url,
+              ...(isPublishedShort ? { short_title: rec.title, short_record_id: rec.id } : {}),
             });
           }
         }

@@ -95,21 +95,34 @@ function PhantomNodeCard({ node }: { node: Extract<GraphNode, { kind: "phantom" 
   );
 }
 
-function DestCard({ dest }: { dest: DestinationNode }) {
+function DestCard({ dest, onJumpTo }: { dest: DestinationNode; onJumpTo?: (id: string) => void }) {
+  const isShort = !!dest.short_title;
   return (
     <div
       style={{
         background: "var(--bg-card)",
-        border: "1px solid var(--border)",
+        border: isShort ? "1px solid rgba(20,184,166,0.45)" : "1px solid var(--border)",
         borderRadius: 8,
         padding: "8px 10px",
         minWidth: 160,
-        maxWidth: 200,
+        maxWidth: 220,
+        cursor: isShort && onJumpTo ? "pointer" : "default",
       }}
+      onClick={() => { if (isShort && onJumpTo && dest.short_record_id) onJumpTo(dest.short_record_id); }}
+      title={isShort && onJumpTo ? "Click to jump to the clip card" : undefined}
     >
-      <div style={{ fontSize: "0.65rem", color: "var(--green)", fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-        {platformLabel(dest.platform)}
+      <div style={{
+        fontSize: "0.65rem",
+        color: isShort ? "rgb(94,234,212)" : "var(--green)",
+        fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.04em",
+      }}>
+        {isShort ? `✂ Short · ${platformLabel(dest.platform)}` : platformLabel(dest.platform)}
       </div>
+      {isShort && (
+        <div style={{ fontSize: "0.75rem", fontWeight: 500, lineHeight: 1.3, marginBottom: 4 }}>
+          {dest.short_title!.length > 40 ? dest.short_title!.slice(0, 39) + "…" : dest.short_title}
+        </div>
+      )}
       {dest.external_url ? (
         <a
           href={dest.external_url}
@@ -118,7 +131,7 @@ function DestCard({ dest }: { dest: DestinationNode }) {
           style={{ fontSize: "0.72rem", color: "var(--accent)", wordBreak: "break-all" }}
           onClick={(e) => e.stopPropagation()}
         >
-          {dest.external_id}
+          {isShort ? "▶ watch on YouTube" : dest.external_id}
         </a>
       ) : (
         <div style={{ fontSize: "0.72rem", fontFamily: "monospace", wordBreak: "break-all" }}>{dest.external_id}</div>
@@ -269,7 +282,7 @@ function SessionRow({
               Published
             </div>
             {session.destinations.map((dest, i) => (
-              <DestCard key={i} dest={dest} />
+              <DestCard key={i} dest={dest} onJumpTo={onJumpTo} />
             ))}
           </div>
         )}

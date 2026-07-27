@@ -28,6 +28,11 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
   const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<Record<string, string>>({});
+  // Toggle-open inline players so the operator can watch a clip
+  // straight from the queue without a round-trip to opus.pro. One
+  // player mounted per open clip; collapsed players don't keep the
+  // <video> element in memory.
+  const [openPlayer, setOpenPlayer] = useState<Record<string, boolean>>({});
 
   const shorts = useMemo(
     () => videos.filter((v) => v.source_platform === "OpusClip"),
@@ -325,16 +330,24 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const hasClipOfLink = (clip.upstream_links ?? []).some(l => l.relation === "ClipOf");
     const hasParentPointer = !!extra.parent_video_id || !!extra.parent_source_id;
     const isOrphan = !hasClipOfLink && hasParentPointer;
+    const canPlayInline = clip.download_url.startsWith("http");
+    const isPlayerOpen = !!openPlayer[clip.id];
 
     return (
       <div
         key={clip.id}
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: 10,
+          flexDirection: "column",
           padding: "6px 0",
           borderBottom: "1px solid var(--border)",
+        }}
+      >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
           flexWrap: "wrap",
         }}
       >
@@ -376,15 +389,21 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                 ▶ source
               </a>
             )}
-            {clip.download_url.startsWith("http") && (
-              <a
-                href={clip.download_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "var(--text-muted)", textDecoration: "none" }}
+            {canPlayInline && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenPlayer(prev => ({ ...prev, [clip.id]: !prev[clip.id] }));
+                }}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: isPlayerOpen ? "#a78bfa" : "var(--text-muted)",
+                  padding: 0, fontSize: "0.7rem", textDecoration: "underline",
+                }}
+                title={isPlayerOpen ? "Collapse the inline player" : "Play the clip directly here — no round-trip to opus.pro"}
               >
-                preview
-              </a>
+                {isPlayerOpen ? "▾ hide" : "▶ play"}
+              </button>
             )}
             {opusEditUrl && (
               <a
@@ -437,6 +456,21 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
             <span style={{ fontSize: "0.7rem", color: "var(--red)" }}>{publishError[clip.id]}</span>
           )}
         </div>
+      </div>
+      {isPlayerOpen && canPlayInline && (
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-start" }}>
+          <video
+            controls
+            preload="metadata"
+            src={clip.download_url}
+            style={{
+              maxWidth: 280, maxHeight: 500,
+              width: "100%", height: "auto",
+              background: "#000", borderRadius: 6,
+            }}
+          />
+        </div>
+      )}
       </div>
     );
   }
