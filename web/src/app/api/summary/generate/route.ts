@@ -32,6 +32,10 @@ interface GenerateBody {
    *  record has no own transcript, a donor's text is passed inline). */
   transcript_override?: string;
   transcript_source_record_id?: string;
+  /** ADR-059 — trim the pre-show off the transcript before
+   *  summarising. Value comes from ADR-014 processing rules,
+   *  matching what the video upload path uses. */
+  trim_start_seconds?: number;
 }
 
 async function handler(req: NextRequest) {
@@ -51,7 +55,7 @@ async function handler(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { record_id, title, source_platform, source_id, recorded_at, transcript_override, transcript_source_record_id } = body;
+  const { record_id, title, source_platform, source_id, recorded_at, transcript_override, transcript_source_record_id, trim_start_seconds } = body;
   if (!record_id || !title || !source_platform || !source_id || !recorded_at) {
     return NextResponse.json(
       { error: "record_id, title, source_platform, source_id, recorded_at all required" },
@@ -67,6 +71,7 @@ async function handler(req: NextRequest) {
       rid,
       transcriptOverride: transcript_override,
       transcriptSourceRecordId: transcript_source_record_id,
+      trimStartSeconds: trim_start_seconds,
     });
     return NextResponse.json(result);
   } catch (err) {

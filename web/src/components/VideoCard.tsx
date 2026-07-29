@@ -367,6 +367,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       // the per-record Summarise button with "No transcript on Drive."
       const resolved = resolveTranscriptForOperation(video, allVideos ?? [video]);
       const isBorrowed = resolved?.source.kind === "borrowed";
+      // ADR-059 — reuse the ADR-014 publish trim for the transcript
+      // slice. The processing-rule-derived value is authoritative;
+      // if the operator has overridden it in the publish preview
+      // (publishAttrs state), prefer that override.
+      const ruleAttrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+      const trimStartSeconds = Math.max(0, Math.floor(ruleAttrs.trim_start_seconds ?? 0));
       const res = await fetch("/api/summary/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -376,6 +382,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           source_platform: video.source_platform,
           source_id: video.source_id,
           recorded_at: video.recorded_at ?? video.indexed_at,
+          ...(trimStartSeconds > 0 ? { trim_start_seconds: trimStartSeconds } : {}),
           // Pass the resolved transcript inline whenever we have one
           // client-side. For own-transcript records this is redundant
           // with the Drive read but harmless; for borrowed-transcript

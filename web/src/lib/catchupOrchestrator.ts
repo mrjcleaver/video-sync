@@ -31,7 +31,7 @@ import { actorCommand } from "./useCurrentActor";
 import { rankSiblingCandidates } from "./siblingMatcher";
 import { getCurrentPromptVersion } from "./summaryPromptClient";
 import { estimatePerRecordCost } from "./llmCost";
-import { getDisplayTitle } from "./processingRules";
+import { getDisplayTitle, loadProcessingRules, applyProcessingRules } from "./processingRules";
 import { resolveTranscriptForOperation } from "./transcriptProvenance";
 
 /** ADR-049 — broadcaster source platforms (must match siblingMatcher's set). */
@@ -330,6 +330,17 @@ export async function tryEnsureSummary({ record, currentPromptVersion, actorStat
   }
 
   const isBorrowed = resolved.source.kind === "borrowed";
+  // ADR-059 — per-record trim inherited from ADR-014 processing
+  // rules. Same value the publish path uses for ffmpeg trimming;
+  // reused here so summarisation ignores the pre-show window. The
+  // rules are cheap to load per record — client-side, localStorage-
+  // backed. `applyProcessingRules` returns 0 when nothing matches.
+  const trimStartSeconds = (() => {
+    try {
+      const attrs = applyProcessingRules(loadProcessingRules(), record);
+      return Math.max(0, Math.floor(attrs.trim_start_seconds ?? 0));
+    } catch { return 0; }
+  })();
   const res = await fetch("/api/summary/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -339,6 +350,7 @@ export async function tryEnsureSummary({ record, currentPromptVersion, actorStat
       source_platform: record.source_platform,
       source_id: record.source_id,
       recorded_at: record.recorded_at ?? record.indexed_at,
+      ...(trimStartSeconds > 0 ? { trim_start_seconds: trimStartSeconds } : {}),
       // ADR-053 — when transcript is borrowed from a paired record,
       // send the text inline so the server doesn't try (and fail) to
       // read the target's own Drive transcript artifact. Also record

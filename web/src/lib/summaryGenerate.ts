@@ -26,6 +26,11 @@ export interface GenerateRecordResult {
   model: string;
   generated_at: string;
   duration_ms: number;
+  /** ADR-059 — the trim window applied to the transcript before
+   *  the LLM saw it. 0 = no trim (or the record's processing rule
+   *  produced 0). Recorded so a rule change can be detected as
+   *  staleness later. */
+  trim_start_seconds: number;
 }
 
 export class GenerateError extends Error {
@@ -81,6 +86,12 @@ export async function generateRecordSummary(
     transcriptOverride?: string;
     /** Audit trail — donor record_id when transcriptOverride is set. */
     transcriptSourceRecordId?: string;
+    /** ADR-059 — drop transcript lines whose [HH:MM:SS] marker
+     *  precedes this offset, so summary generation ignores the
+     *  pre-show warm-up window. Same value the publish path uses
+     *  for ffmpeg trimming, sourced from ADR-014 processing rules.
+     *  0 or undefined ⇒ no slice. */
+    trimStartSeconds?: number;
   } = {},
 ): Promise<GenerateRecordResult> {
   const rid = opts.rid ?? "n/a";
@@ -96,9 +107,18 @@ export async function generateRecordSummary(
     }
     rawTranscript = transcriptArtifact.content;
   }
-  const transcript = rawTranscript.length > MAX_TRANSCRIPT_CHARS
-    ? rawTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + "\n\n[transcript truncated]"
+  // ADR-059 — slice the transcript at trim_start_seconds. Applied
+  // BEFORE the size-cap truncation so the trim recovers head-of-
+  // transcript budget that was previously lost to pre-show content.
+  // Sidecar records the trim value so a change becomes a
+  // regeneration trigger.
+  const trimSecs = Math.max(0, Math.floor(opts.trimStartSeconds ?? 0));
+  const trimmedTranscript = trimSecs > 0
+    ? sliceTranscriptFromSeconds(rawTranscript, trimSecs)
     : rawTranscript;
+  const transcript = trimmedTranscript.length > MAX_TRANSCRIPT_CHARS
+    ? trimmedTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + "\n\n[transcript truncated]"
+    : trimmedTranscript;
 
   const chatArtifact = await getArtifact(ctx.record_id, "chat").catch(() => null);
   const chat = chatArtifact?.content && chatArtifact.content.length > 0
@@ -204,5 +224,31 @@ ${markdown}`;
     model: usedModel,
     generated_at: generatedAt,
     duration_ms: durationMs,
+    trim_start_seconds: trimSecs,
   };
+}
+
+/**
+ * ADR-059 helper — return the transcript from the first line whose
+ * leading [HH:MM:SS] marker is at or after `startSecs`. If no line
+ * matches (or the transcript has no markers), returns the original
+ * transcript unchanged so we never over-truncate. Marker forms
+ * accepted: [HH:MM:SS], [H:MM:SS], [MM:SS], [M:SS] — matching what
+ * Kaltura caption import / Fireflies fetch / Zoom VTT flatten emit.
+ */
+export function sliceTranscriptFromSeconds(text: string, startSecs: number): string {
+  if (!text || startSecs <= 0) return text;
+  const lines = text.split("\n");
+  const markerRe = /^\s*\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(markerRe);
+    if (!m) continue;
+    const secs = m[3] !== undefined
+      ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+      : Number(m[1]) * 60 + Number(m[2]);
+    if (secs >= startSecs) {
+      return lines.slice(i).join("\n");
+    }
+  }
+  return text;
 }
