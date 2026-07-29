@@ -20,6 +20,9 @@ const REGISTRY_FILE = join(process.cwd(), "data", "series-registry.json");
 interface RegistryEntry {
   series_name: string;
   pattern: string;
+  /** Optional per-series Discord webhook URL used by the
+   *  "Push to Discord" affordance on VideoCard clips + summaries. */
+  discord_channel?: string;
 }
 
 interface RegistryStore {
@@ -68,6 +71,15 @@ async function postHandler(req: NextRequest) {
       new RegExp(entry.pattern, "i");
     } catch (err) {
       return NextResponse.json({ error: `entry[${i}].pattern is not a valid regex: ${err instanceof Error ? err.message : String(err)}` }, { status: 400 });
+    }
+    if (entry.discord_channel != null) {
+      if (typeof entry.discord_channel !== "string") {
+        return NextResponse.json({ error: `entry[${i}].discord_channel must be a string` }, { status: 400 });
+      }
+      const trimmed = entry.discord_channel.trim();
+      if (trimmed.length > 0 && !/^https:\/\/(?:.*\.)?discord(?:app)?\.com\//i.test(trimmed)) {
+        return NextResponse.json({ error: `entry[${i}].discord_channel must be a Discord webhook URL (starts with https://discord.com/ or https://discordapp.com/)` }, { status: 400 });
+      }
     }
   }
   const store: RegistryStore = { entries: body.entries };

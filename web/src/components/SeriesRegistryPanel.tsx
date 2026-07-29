@@ -76,7 +76,15 @@ export default function SeriesRegistryPanel() {
     // Client-side validation first — cheap, and the POST validates
     // again on the server so we can trust either way.
     const cleaned = rows
-      .map((r) => ({ series_name: r.series_name.trim(), pattern: r.pattern.trim() }))
+      .map((r) => {
+        const out: { series_name: string; pattern: string; discord_channel?: string } = {
+          series_name: r.series_name.trim(),
+          pattern: r.pattern.trim(),
+        };
+        const dc = (r.discord_channel ?? "").trim();
+        if (dc) out.discord_channel = dc;
+        return out;
+      })
       .filter((r) => r.series_name.length > 0);
     for (const [i, r] of cleaned.entries()) {
       if (!r.pattern) {
@@ -86,6 +94,10 @@ export default function SeriesRegistryPanel() {
       const err = validateRegex(r.pattern);
       if (err) {
         setStatus(`Row ${i + 1} ("${r.series_name}") — invalid regex: ${err}`);
+        return;
+      }
+      if (r.discord_channel && !/^https:\/\/(?:.*\.)?discord(?:app)?\.com\//i.test(r.discord_channel)) {
+        setStatus(`Row ${i + 1} ("${r.series_name}") — discord_channel must be a Discord webhook URL`);
         return;
       }
     }
@@ -124,6 +136,7 @@ export default function SeriesRegistryPanel() {
                 <tr>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Series name</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pattern</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="Optional Discord webhook URL. When set, VideoCard shows Push-to-Discord affordances for clips + summaries in this series.">Discord channel</th>
                   <th style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}></th>
                 </tr>
               </thead>
@@ -146,6 +159,14 @@ export default function SeriesRegistryPanel() {
                         style={{ width: "100%", padding: "4px 6px", background: "var(--bg)", border: r.regexError ? "1px solid var(--red)" : "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.82rem", fontFamily: "monospace" }}
                       />
                       {r.regexError && <div style={{ color: "var(--red)", fontSize: "0.7rem", marginTop: 2 }}>{r.regexError}</div>}
+                    </td>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top" }}>
+                      <input
+                        value={r.discord_channel ?? ""}
+                        onChange={(e) => updateRow(r._uid, { discord_channel: e.target.value })}
+                        placeholder="https://discord.com/api/webhooks/…"
+                        style={{ width: "100%", padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.78rem", fontFamily: "monospace" }}
+                      />
                     </td>
                     <td style={{ padding: "4px 8px", verticalAlign: "top", textAlign: "right" }}>
                       <button

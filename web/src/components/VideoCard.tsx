@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { VideoRecordJSON, PlatformLocationJSON, UpstreamLinkJSON } from "../lib/wasm";
 import type { LoomMetadata } from "../app/api/loom/metadata/route";
 import { videoStore, bootStore } from "../lib/store";
@@ -31,8 +31,9 @@ import { rankSiblingCandidates, type SiblingCandidate } from "../lib/siblingMatc
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
 import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
-import { resolveAlignedTitle, resolveAlignedTitleForced } from "../lib/youtubeTitleAlign";
+import { resolveAlignedTitle, resolveAlignedTitleForced, resolveDiscordChannel } from "../lib/youtubeTitleAlign";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import { formatDateHover } from "../lib/dateHover";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -118,6 +119,47 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
+  // Per-series Discord webhook — resolved once against the record's
+  // current title. Null when the record's series has no webhook set
+  // (or the record doesn't match any registered series).
+  const [discordChannel, setDiscordChannel] = useState<string | null>(null);
+  const [pushingDiscord, setPushingDiscord] = useState<null | "summary" | string>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getSeriesRegistry().then((registry) => {
+      if (cancelled) return;
+      const rawTitle = (video.metadata_extra as { youtube_original_title?: string; zoom_original_title?: string; fireflies_original_title?: string; kaltura_original_title?: string } | null) ?? {};
+      const titles = [video.title, rawTitle.youtube_original_title, rawTitle.zoom_original_title, rawTitle.fireflies_original_title, rawTitle.kaltura_original_title].filter((t): t is string => typeof t === "string" && t.length > 0);
+      for (const t of titles) {
+        const ch = resolveDiscordChannel(t, registry);
+        if (ch) { setDiscordChannel(ch); return; }
+      }
+      setDiscordChannel(null);
+    });
+    return () => { cancelled = true; };
+  }, [video.id, video.title, video.metadata_extra]);
+
+  async function pushToDiscord(kind: "summary" | "clip", args: { clipId?: string; content: string }) {
+    if (!discordChannel) return;
+    setPushingDiscord(kind === "summary" ? "summary" : (args.clipId ?? "clip"));
+    try {
+      const res = await fetch("/api/discord/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhook_url: discordChannel, content: args.content }),
+      });
+      if (res.ok) {
+        onEvent(`DiscordPushed${kind === "summary" ? "Summary" : "Clip"}: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        onEvent(`DiscordPushFailed: ${(data as { error?: string }).error ?? `HTTP ${res.status}`}`, { video_id: video.id });
+      }
+    } catch (err) {
+      onEvent(`DiscordPushErrored: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+    } finally {
+      setPushingDiscord(null);
+    }
+  }
   const [shortsCaption, setShortsCaption] = useState(true);
   const [shortsPrompt, setShortsPrompt] = useState("");
   const [shortsLoading, setShortsLoading] = useState(false);
@@ -1912,7 +1954,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           );
         })()}
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
-        <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
+        <span title={formatDateHover(video.recorded_at || video.indexed_at)} style={{ cursor: "help" }}>
+          {formatDate(video.recorded_at || video.indexed_at)}
+        </span>
         {video.participants.length > 0 && (
           <span
             onClick={() => setShowParticipants(v => !v)}
@@ -2336,6 +2380,26 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                       <span style={{ fontSize: "0.65rem", color: "var(--red)", fontWeight: 600 }}>× failed</span>
                     ) : (
                       <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{c.status.toLowerCase()}</span>
+                    )}
+                    {isPublished && ytLoc?.external_url && discordChannel && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void pushToDiscord("clip", {
+                            clipId: c.id,
+                            content: `**${c.title}** (short from **${video.title}**${dateTag(video.recorded_at)})\n▶ ${ytLoc.external_url}`,
+                          });
+                        }}
+                        disabled={pushingDiscord === c.id}
+                        title="Post this published short to the series Discord channel"
+                        style={{
+                          fontSize: "0.62rem", padding: "0 6px", borderRadius: 3,
+                          background: "rgba(88,101,242,0.12)", color: "#a5b4fc",
+                          border: "1px solid rgba(88,101,242,0.28)", fontWeight: 600, cursor: "pointer",
+                        }}
+                      >
+                        {pushingDiscord === c.id ? "💬 …" : "💬 Discord"}
+                      </button>
                     )}
                     {editUrl && (
                       <a
@@ -2914,17 +2978,49 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             ✂ Shorts
           </button>
         )}
-        {(video.transcript_text && video.transcript_text.length > 200) && (
+        {(() => {
+          const hasTranscript = !!video.transcript_text && video.transcript_text.length > 200;
+          const disabled = summarising || !hasTranscript;
+          // ADR-053 — if the record itself has no transcript, another
+          // paired record (Fireflies via TranscribedFrom, or a Zoom
+          // canonical via SameEvent) may have one. Surface a hint
+          // instead of hiding the button so the operator can act.
+          const noTranscriptHint = "This record has no transcript ≥200 chars. Fix by: (1) hydrating a paired Fireflies/Kaltura record via Import, (2) linking a SameEvent sibling on this card's Provenance panel that has one, or (3) uploading a transcript manually (see docs).";
+          return (
+            <button
+              className="btn btn-sm"
+              style={{ fontSize: "0.72rem", ...(disabled && !summarising ? { opacity: 0.55 } : {}) }}
+              onClick={generateSummary}
+              disabled={disabled}
+              title={hasTranscript
+                ? (video.summary_doc_id
+                    ? `Regenerate summary (current: prompt v${video.summary_prompt_version ?? "?"})`
+                    : "Generate a chapter-oriented summary on Drive (ADR-046)")
+                : noTranscriptHint}
+            >
+              {summarising
+                ? "📄 Summarising…"
+                : hasTranscript
+                  ? (video.summary_doc_id ? "📄 Re-summarise" : "📄 Summarise")
+                  : "📄 Summarise (no transcript — hover)"}
+            </button>
+          );
+        })()}
+        {video.summary_doc_id && discordChannel && (
           <button
             className="btn btn-sm"
             style={{ fontSize: "0.72rem" }}
-            onClick={generateSummary}
-            disabled={summarising}
-            title={video.summary_doc_id
-              ? `Regenerate summary (current: prompt v${video.summary_prompt_version ?? "?"})`
-              : "Generate a chapter-oriented summary on Drive (ADR-046)"}
+            onClick={() => pushToDiscord("summary", {
+              content: `**${video.title}**${dateTag(video.recorded_at)}\n📄 Summary: https://docs.google.com/document/d/${video.summary_doc_id}${
+                (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url)?.external_url
+                  ? `\n▶ Watch: ${(video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url)!.external_url}`
+                  : ""
+              }`,
+            })}
+            disabled={pushingDiscord === "summary"}
+            title={`Post this record's summary link to the series Discord channel (${discordChannel.replace(/https:\/\/(?:.*\.)?discord(?:app)?\.com\/api\/webhooks\//i, "…/")})`}
           >
-            {summarising ? "📄 Summarising…" : (video.summary_doc_id ? "📄 Re-summarise" : "📄 Summarise")}
+            {pushingDiscord === "summary" ? "💬 Pushing…" : "💬 Push summary to Discord"}
           </button>
         )}
         {/* ADR-046 slice 5 — Lock toggle. Only relevant once a summary

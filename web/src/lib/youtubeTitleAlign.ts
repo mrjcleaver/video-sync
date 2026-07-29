@@ -32,7 +32,12 @@ export interface SeriesRegistryEntry {
   /** Regex source string that matches the raw YouTube title. Kept
    *  as a string (not a RegExp) so it can round-trip through JSON
    *  storage (ADR-031 pattern). Constructed with the 'i' flag. */
-  pattern: string;
+   pattern: string;
+  /** Discord webhook URL to post to when the operator taps the
+   *  "Push to Discord" affordance on a clip/summary for a record
+   *  that matches this series. Blank/omitted disables the button
+   *  for the series. */
+  discord_channel?: string;
 }
 
 export interface AlignedTitle {
@@ -59,6 +64,26 @@ export function titleContainsDate(title: string): boolean {
   const dmy = new RegExp(`\\b\\d{1,2}\\s+${monthNames}\\s+\\d{4}\\b`, "i");
   const iso = /\b\d{4}-\d{2}-\d{2}\b/;
   return dmy.test(title) || iso.test(title);
+}
+
+/**
+ * Given a title (raw or aligned), return the Discord webhook URL
+ * of the first matching series in the registry — or null. Uses
+ * the same longest-name-wins ordering as resolveTitleFromRegistry
+ * so a title that matches multiple aliases picks the most-specific
+ * series's channel. Empty/absent discord_channel counts as null.
+ */
+export function resolveDiscordChannel(title: string, registry: SeriesRegistryEntry[]): string | null {
+  if (!title) return null;
+  const sorted = [...registry].sort((a, b) => b.series_name.length - a.series_name.length);
+  for (const entry of sorted) {
+    let re: RegExp;
+    try { re = new RegExp(entry.pattern, "i"); } catch { continue; }
+    if (!re.test(title)) continue;
+    const dc = (entry.discord_channel ?? "").trim();
+    return dc.length > 0 ? dc : null;
+  }
+  return null;
 }
 
 /**

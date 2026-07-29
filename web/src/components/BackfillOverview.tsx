@@ -633,7 +633,17 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
             }}
           >
             {/* Date */}
-            <span style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            <span
+              style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "var(--text-muted)", whiteSpace: "nowrap", cursor: "help" }}
+              title={(() => {
+                const [yy, mm, dd] = slot.date.split("-").map(Number);
+                const dt = new Date(Date.UTC(yy, mm - 1, dd));
+                if (isNaN(dt.getTime())) return slot.date;
+                const dayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][dt.getUTCDay()];
+                const monthName = ["January","February","March","April","May","June","July","August","September","October","November","December"][dt.getUTCMonth()];
+                return `${dayName}, ${dt.getUTCDate()} ${monthName} ${dt.getUTCFullYear()}`;
+              })()}
+            >
               {shortDate(slot.date)}
             </span>
 
