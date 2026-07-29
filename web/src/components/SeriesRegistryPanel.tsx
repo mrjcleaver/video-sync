@@ -35,11 +35,26 @@ export default function SeriesRegistryPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    refreshSeriesRegistry();
+    // Show the cached copy immediately if we have one — first paint
+    // shouldn't wait for a GCS-backed round-trip. Then refresh in
+    // the background and replace the rows if the server disagrees.
     getSeriesRegistry().then((entries) => {
       if (cancelled) return;
       setRows(entries.map((e) => ({ ...e, _uid: uidCounter++ })));
       setLoading(false);
+      // Force a background refetch so the editor eventually shows
+      // any out-of-band writes; but only if there's more than a
+      // handful of ms of network idle so we don't block first paint.
+      setTimeout(() => {
+        if (cancelled) return;
+        refreshSeriesRegistry();
+        getSeriesRegistry().then((fresh) => {
+          if (cancelled) return;
+          if (JSON.stringify(fresh) !== JSON.stringify(entries)) {
+            setRows(fresh.map((e) => ({ ...e, _uid: uidCounter++ })));
+          }
+        });
+      }, 400);
     });
     return () => { cancelled = true; };
   }, []);

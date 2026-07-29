@@ -124,6 +124,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // (or the record doesn't match any registered series).
   const [discordChannel, setDiscordChannel] = useState<string | null>(null);
   const [pushingDiscord, setPushingDiscord] = useState<null | "summary" | string>(null);
+  // Per-clip preview toggle — keyed by clip.id. Mounts a <video>
+  // controls element under the row when the operator clicks
+  // "▶ preview" so they can watch without opening a new tab.
+  const [openClipPreview, setOpenClipPreview] = useState<Record<string, boolean>>({});
   useEffect(() => {
     let cancelled = false;
     getSeriesRegistry().then((registry) => {
@@ -2337,14 +2341,16 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 const isPublished = c.status === "Published";
                 const isFailed = c.status === "Failed";
                 const ytLoc = (c.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url);
+                const canPreview = c.download_url.startsWith("http");
+                const previewOpen = !!openClipPreview[c.id];
                 const fmt = (s: number) => {
                   const m = Math.floor(s / 60);
                   const sec = Math.floor(s % 60);
                   return `${m}:${String(sec).padStart(2, "0")}`;
                 };
                 return (
+                  <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <div
-                    key={c.id}
                     style={{
                       display: "flex", gap: 8, alignItems: "baseline",
                       fontSize: "0.75rem", padding: "2px 4px",
@@ -2401,6 +2407,22 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                         {pushingDiscord === c.id ? "💬 …" : "💬 Discord"}
                       </button>
                     )}
+                    {canPreview && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenClipPreview(prev => ({ ...prev, [c.id]: !prev[c.id] }));
+                        }}
+                        style={{
+                          background: "none", border: "none", cursor: "pointer",
+                          color: previewOpen ? "#a78bfa" : "var(--text-muted)",
+                          padding: 0, fontSize: "0.65rem", textDecoration: "underline",
+                        }}
+                        title={previewOpen ? "Collapse the inline player" : "Play the clip inline (no round-trip to opus.pro)"}
+                      >
+                        {previewOpen ? "▾ hide" : "▶ preview"}
+                      </button>
+                    )}
                     {editUrl && (
                       <a
                         href={editUrl}
@@ -2412,6 +2434,21 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                         ↗
                       </a>
                     )}
+                  </div>
+                  {previewOpen && canPreview && (
+                    <div style={{ padding: "4px 4px 4px 0" }}>
+                      <video
+                        controls
+                        preload="metadata"
+                        src={c.download_url}
+                        style={{
+                          maxWidth: 260, maxHeight: 460,
+                          width: "100%", height: "auto",
+                          background: "#000", borderRadius: 6,
+                        }}
+                      />
+                    </div>
+                  )}
                   </div>
                 );
               })}
