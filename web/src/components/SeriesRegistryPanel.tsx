@@ -92,12 +92,27 @@ export default function SeriesRegistryPanel() {
     // again on the server so we can trust either way.
     const cleaned = rows
       .map((r) => {
-        const out: { series_name: string; pattern: string; discord_channel?: string } = {
+        const out: {
+          series_name: string;
+          pattern: string;
+          discord_channel?: string;
+          scheduled_start_local?: string;
+          scheduled_end_local?: string;
+          scheduled_timezone?: string;
+        } = {
           series_name: r.series_name.trim(),
           pattern: r.pattern.trim(),
         };
         const dc = (r.discord_channel ?? "").trim();
         if (dc) out.discord_channel = dc;
+        const s = (r.scheduled_start_local ?? "").trim();
+        const e = (r.scheduled_end_local ?? "").trim();
+        const tz = (r.scheduled_timezone ?? "").trim();
+        if (s || e || tz) {
+          out.scheduled_start_local = s;
+          out.scheduled_end_local = e;
+          out.scheduled_timezone = tz;
+        }
         return out;
       })
       .filter((r) => r.series_name.length > 0);
@@ -114,6 +129,19 @@ export default function SeriesRegistryPanel() {
       if (r.discord_channel && !/^https:\/\/(?:.*\.)?discord(?:app)?\.com\//i.test(r.discord_channel)) {
         setStatus(`Row ${i + 1} ("${r.series_name}") — discord_channel must be a Discord webhook URL`);
         return;
+      }
+      const anyScheduled = r.scheduled_start_local || r.scheduled_end_local || r.scheduled_timezone;
+      const allScheduled = r.scheduled_start_local && r.scheduled_end_local && r.scheduled_timezone;
+      if (anyScheduled && !allScheduled) {
+        setStatus(`Row ${i + 1} ("${r.series_name}") — set all three scheduled fields (start / end / timezone) or leave them all blank`);
+        return;
+      }
+      if (allScheduled) {
+        const hhmm = /^([01]?\d|2[0-3]):[0-5]\d$/;
+        if (!hhmm.test(r.scheduled_start_local!)) { setStatus(`Row ${i + 1} — scheduled_start_local must be "HH:MM"`); return; }
+        if (!hhmm.test(r.scheduled_end_local!))   { setStatus(`Row ${i + 1} — scheduled_end_local must be "HH:MM"`); return; }
+        try { new Intl.DateTimeFormat("en-US", { timeZone: r.scheduled_timezone! }); }
+        catch { setStatus(`Row ${i + 1} — scheduled_timezone must be a valid IANA zone (e.g. "America/New_York")`); return; }
       }
     }
     setSaving(true);
@@ -152,6 +180,7 @@ export default function SeriesRegistryPanel() {
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Series name</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pattern</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="Optional Discord webhook URL. When set, VideoCard shows Push-to-Discord affordances for clips + summaries in this series.">Discord channel</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="ADR-060: scheduled show window. Used to derive pre/post-show trim automatically. Leave blank if the show doesn't run to a fixed schedule.">Show window (start · end · TZ)</th>
                   <th style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}></th>
                 </tr>
               </thead>
@@ -182,6 +211,32 @@ export default function SeriesRegistryPanel() {
                         placeholder="https://discord.com/api/webhooks/…"
                         style={{ width: "100%", padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.78rem", fontFamily: "monospace" }}
                       />
+                    </td>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top" }}>
+                      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                        <input
+                          value={r.scheduled_start_local ?? ""}
+                          onChange={(e) => updateRow(r._uid, { scheduled_start_local: e.target.value })}
+                          placeholder="12:00"
+                          style={{ width: 62, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.78rem", fontFamily: "monospace" }}
+                          title="Local wall-clock start, HH:MM 24-hour"
+                        />
+                        <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>→</span>
+                        <input
+                          value={r.scheduled_end_local ?? ""}
+                          onChange={(e) => updateRow(r._uid, { scheduled_end_local: e.target.value })}
+                          placeholder="13:30"
+                          style={{ width: 62, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.78rem", fontFamily: "monospace" }}
+                          title="Local wall-clock end, HH:MM 24-hour"
+                        />
+                        <input
+                          value={r.scheduled_timezone ?? ""}
+                          onChange={(e) => updateRow(r._uid, { scheduled_timezone: e.target.value })}
+                          placeholder="America/New_York"
+                          style={{ flex: "1 1 130px", minWidth: 130, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", fontSize: "0.78rem", fontFamily: "monospace" }}
+                          title="IANA zone (e.g. America/New_York, Europe/London)"
+                        />
+                      </div>
                     </td>
                     <td style={{ padding: "4px 8px", verticalAlign: "top", textAlign: "right" }}>
                       <button

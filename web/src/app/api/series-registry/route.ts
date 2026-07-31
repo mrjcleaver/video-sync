@@ -23,6 +23,10 @@ interface RegistryEntry {
   /** Optional per-series Discord webhook URL used by the
    *  "Push to Discord" affordance on VideoCard clips + summaries. */
   discord_channel?: string;
+  /** ADR-060 — scheduled show window (all three or none). */
+  scheduled_start_local?: string;
+  scheduled_end_local?: string;
+  scheduled_timezone?: string;
 }
 
 interface RegistryStore {
@@ -79,6 +83,28 @@ async function postHandler(req: NextRequest) {
       const trimmed = entry.discord_channel.trim();
       if (trimmed.length > 0 && !/^https:\/\/(?:.*\.)?discord(?:app)?\.com\//i.test(trimmed)) {
         return NextResponse.json({ error: `entry[${i}].discord_channel must be a Discord webhook URL (starts with https://discord.com/ or https://discordapp.com/)` }, { status: 400 });
+      }
+    }
+    // ADR-060 — either all three scheduled_* fields are set or none.
+    // Enforcing here saves the derivation code from partial state.
+    const scheduledCount = (["scheduled_start_local","scheduled_end_local","scheduled_timezone"] as const)
+      .filter(k => typeof entry[k] === "string" && (entry[k] as string).trim().length > 0).length;
+    if (scheduledCount > 0 && scheduledCount < 3) {
+      return NextResponse.json({ error: `entry[${i}] — scheduled_start_local, scheduled_end_local, and scheduled_timezone must all be set together (or all left blank)` }, { status: 400 });
+    }
+    if (scheduledCount === 3) {
+      const hhmmRe = /^([01]?\d|2[0-3]):[0-5]\d$/;
+      if (!hhmmRe.test(entry.scheduled_start_local!.trim())) {
+        return NextResponse.json({ error: `entry[${i}].scheduled_start_local must be "HH:MM" 24-hour (e.g. "12:00")` }, { status: 400 });
+      }
+      if (!hhmmRe.test(entry.scheduled_end_local!.trim())) {
+        return NextResponse.json({ error: `entry[${i}].scheduled_end_local must be "HH:MM" 24-hour (e.g. "13:30")` }, { status: 400 });
+      }
+      // Best-effort IANA validation via Intl. Bad zone → catch, reject.
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: entry.scheduled_timezone!.trim() });
+      } catch {
+        return NextResponse.json({ error: `entry[${i}].scheduled_timezone must be a valid IANA zone (e.g. "America/New_York")` }, { status: 400 });
       }
     }
   }

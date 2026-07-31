@@ -39,18 +39,30 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     [videos],
   );
 
-  const pending = shorts.filter((v) => v.status === "Discovered" || v.status === "InScope");
-  const approved = shorts.filter((v) => v.status === "Approved");
-  const publishingRows = shorts.filter((v) => v.status === "Publishing");
-  // Published — most-recent first, so a fresh upload lands at the
-  // top of its section and the operator sees it acknowledged.
+  // ADR-061 — sort each band by virality descending (tie-break on
+  // clip_start_seconds ascending) so the reviewer's eye lands on
+  // the strongest proposals first. Rows without a score sink to
+  // the bottom. Published stays most-recent-first because
+  // ordering irrelevance turns into "did that just publish?"
+  // once a clip is Live.
+  function byVirality(a: VideoRecordJSON, b: VideoRecordJSON): number {
+    const sa = ((a.metadata_extra as { virality_score?: number } | null)?.virality_score ?? 0);
+    const sb = ((b.metadata_extra as { virality_score?: number } | null)?.virality_score ?? 0);
+    if (sb !== sa) return sb - sa;
+    const oa = ((a.metadata_extra as { clip_start_seconds?: number } | null)?.clip_start_seconds ?? 0);
+    const ob = ((b.metadata_extra as { clip_start_seconds?: number } | null)?.clip_start_seconds ?? 0);
+    return oa - ob;
+  }
+  const pending = shorts.filter((v) => v.status === "Discovered" || v.status === "InScope").sort(byVirality);
+  const approved = shorts.filter((v) => v.status === "Approved").sort(byVirality);
+  const publishingRows = shorts.filter((v) => v.status === "Publishing").sort(byVirality);
   const published = shorts
     .filter((v) => v.status === "Published")
     .sort((a, b) =>
       new Date(b.published_at ?? b.indexed_at).getTime() -
       new Date(a.published_at ?? a.indexed_at).getTime(),
     );
-  const failed = shorts.filter((v) => v.status === "Failed" || v.status === "ToRetry");
+  const failed = shorts.filter((v) => v.status === "Failed" || v.status === "ToRetry").sort(byVirality);
   const rejected = shorts.filter((v) => v.status === "Abandoned");
 
   // Look up parent title (and YouTube ID) for every clip so the row
@@ -351,27 +363,59 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
           flexWrap: "wrap",
         }}
       >
-        {/* Virality score badge */}
+        {/* ADR-061 — Virality score badge, promoted to a large,
+            scannable "N/100" affordance. Zero-signal (score == 0
+            or missing) renders "—/100" so the operator can tell
+            "no signal" from "low signal". */}
         <span
-          title="Virality score (Opus Clip)"
+          title={score ? `Opus Clip virality score: ${Math.round(score)}/100` : "Opus Clip virality score not returned for this clip (Opus v2 sometimes omits it — a re-Discover from Maintain can refetch)."}
           style={{
-            minWidth: 36,
+            minWidth: 58,
             textAlign: "center",
-            fontWeight: 700,
-            fontSize: "0.8rem",
+            fontWeight: 800,
+            fontSize: "0.95rem",
+            fontFamily: "monospace",
             color: score && score >= 70 ? "var(--green)" : score && score >= 40 ? "#f5a623" : "var(--text-muted)",
             background: "var(--bg)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "1px 5px",
+            border: `1px solid ${score && score >= 70 ? "var(--green)" : score && score >= 40 ? "#f5a623" : "var(--border)"}`,
+            borderRadius: 6,
+            padding: "3px 8px",
+            lineHeight: 1.15,
           }}
         >
-          {formatScore(score ?? 0)}
+          {score ? Math.round(score) : "—"}
+          <span style={{ fontSize: "0.65rem", opacity: 0.65, marginLeft: 2 }}>/100</span>
         </span>
 
         {/* Title + duration + parent */}
         <div style={{ flex: 1, minWidth: 160 }}>
           <div style={{ fontSize: "0.85rem", fontWeight: 500 }}>{clip.title}</div>
+          {/* ADR-061 — Virality breakdown chips. When Opus returns
+              per-axis grades (Hook / Emotion / Payoff / Clarity /
+              Flow), each renders as a compact chip. Absent when
+              Opus's payload has no breakdown — no empty scaffolding. */}
+          {Array.isArray(extra.virality_breakdown) && extra.virality_breakdown.length > 0 && (
+            <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {(extra.virality_breakdown as Array<{ axis?: string; grade?: string }>)
+                .slice(0, 6)
+                .filter(b => b && typeof b.axis === "string" && typeof b.grade === "string")
+                .map((b, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      fontSize: "0.62rem", fontWeight: 600,
+                      padding: "0 5px", borderRadius: 3,
+                      background: "rgba(99,102,241,0.10)",
+                      color: "#a5b4fc",
+                      border: "1px solid rgba(99,102,241,0.28)",
+                    }}
+                    title={`Opus virality dimension: ${b.axis}`}
+                  >
+                    {b.grade} {b.axis}
+                  </span>
+                ))}
+            </div>
+          )}
           {parentByClipId.get(clip.id) && (
             <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 1 }}>
               from <span style={{ color: "var(--text)" }}>{parentByClipId.get(clip.id)!.title}</span>

@@ -38,6 +38,15 @@ export interface SeriesRegistryEntry {
    *  that matches this series. Blank/omitted disables the button
    *  for the series. */
   discord_channel?: string;
+  /** ADR-060 — scheduled show window. Local wall-clock start
+   *  time in the show's timezone, e.g. "12:00". */
+  scheduled_start_local?: string;
+  /** ADR-060 — scheduled show window end, e.g. "13:30". */
+  scheduled_end_local?: string;
+  /** ADR-060 — IANA zone for the two wall-clock times above,
+   *  e.g. "America/New_York". All three must be set for the
+   *  window to take effect. */
+  scheduled_timezone?: string;
 }
 
 export interface AlignedTitle {
