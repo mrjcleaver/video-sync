@@ -240,3 +240,55 @@ export async function getFolderWebUrl(folderId: string): Promise<string | undefi
   });
   return res.data.webViewLink ?? undefined;
 }
+
+/**
+ * ADR-062 — upload a binary file from disk to Drive. Streams the
+ * on-disk file into the Drive create call; used by the
+ * stitched-source builder to publish the concat'd mp4.
+ * Returns the created Drive file's id, webContentLink (direct
+ * download URL Opus can fetch), and webViewLink (browser open).
+ */
+export async function uploadBinaryFile(
+  name: string,
+  parentId: string,
+  filePath: string,
+  mimeType: string,
+): Promise<{ id: string; webContentLink?: string; webViewLink?: string }> {
+  const drive = getDrive();
+  const { createReadStream } = await import("fs");
+  const res = await drive.files.create({
+    requestBody: { name, parents: [parentId] },
+    media: { mimeType, body: createReadStream(filePath) },
+    fields: "id, webContentLink, webViewLink",
+    supportsAllDrives: true,
+  });
+  if (!res.data.id) throw new Error(`uploadBinaryFile: no id returned for ${name}`);
+  return {
+    id: res.data.id,
+    webContentLink: res.data.webContentLink ?? undefined,
+    webViewLink: res.data.webViewLink ?? undefined,
+  };
+}
+
+/**
+ * ADR-062 — make an existing Drive file readable to anyone with
+ * the link. Used by the stitched-source builder so Opus (which
+ * has no OAuth into our Drive) can fetch the mp4 via a plain
+ * URL. Idempotent — succeeds even if the permission already
+ * exists on the file.
+ */
+export async function shareAnyoneWithLink(fileId: string): Promise<void> {
+  const drive = getDrive();
+  try {
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role: "reader", type: "anyone" },
+      supportsAllDrives: true,
+    });
+  } catch (err) {
+    // Already-shared / same-permission errors bubble as 409/400 —
+    // treat them as success. Anything else re-throws.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/already exists|duplicate/i.test(msg)) throw err;
+  }
+}

@@ -169,6 +169,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [shortsLoading, setShortsLoading] = useState(false);
   const [shortsError, setShortsError] = useState<string | null>(null);
   const [shortsPhase, setShortsPhase] = useState("");
+  // ADR-062 — default to the summary-highlights + main-show
+  // stitched source when a current summary exists. Falls back to
+  // the full YouTube URL when disabled.
+  const [shortsUseStitched, setShortsUseStitched] = useState(true);
+  const [stitchPreview, setStitchPreview] = useState<{ regions: number; totalSec: number; highlights: number } | null>(null);
   // ADR-046 — summary generation state.
   const [summarising, setSummarising] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -250,16 +255,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     try {
       setShortsPhase("Submitting to Opus Clip…");
-      // ADR-060 — narrow Opus's ingest window to the scheduled main
-      // show. Without this, a 5-hour raw capture is sent whole; even
-      // if we only want clips from the middle 1.5 hours Opus (per
-      // its own docs) uses curationPref.range as "the range of the
-      // original long-form video to generate clips from", so the
-      // pre-show + post-show never enter clip candidacy AND — if
-      // Opus's billing follows the range they process rather than
-      // the source file's total length — we pay for 1.5 hours of
-      // credits, not 5. Fed the same trim_{start,end}_seconds that
-      // ADR-014 processing rules already emit.
+      // ADR-060 — main-show trim window used by both curationPref.range
+      // (Opus candidate selection) and, when enabled, the ADR-062
+      // stitched-source builder.
       const opusRuleAttrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
       const clipTrimStart = Math.max(0, Math.floor(opusRuleAttrs.trim_start_seconds ?? 0));
       const clipTrimEnd = Math.max(0, Math.floor((opusRuleAttrs as { trim_end_seconds?: number }).trim_end_seconds ?? 0));
@@ -270,6 +268,62 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       const rangeSuffix = (clipRangeStartSec != null && clipRangeEndSec != null && clipRangeEndSec > clipRangeStartSec)
         ? ` [${Math.round(clipRangeStartSec)}s→${Math.round(clipRangeEndSec)}s = ${Math.round((clipRangeEndSec - clipRangeStartSec) / 60)}m window]`
         : "";
+
+      // ADR-062 — if the operator opted into the stitched source
+      // AND we have a summary, build the stitched mp4 first and
+      // hand Opus THAT URL. This is the only path that actually
+      // reduces credit spend (Opus bills by source duration).
+      let useStitchedUrl: string | null = null;
+      if (shortsUseStitched && video.summary_doc_id) {
+        setShortsPhase("Stitching main-show + summary highlights…");
+        onEvent(`ShortsStitchStart: "${video.title}"${dateTag(video.recorded_at)} — building main-show + highlights source for Opus`, { video_id: video.id });
+        try {
+          let connections: Record<string, { credentials?: Record<string, string> }> = {};
+          try {
+            const raw = localStorage.getItem("video-sync:connections");
+            if (raw) connections = JSON.parse(raw);
+          } catch { /* ignore */ }
+          const stitchRes = await fetch("/api/shorts/build-stitched-source", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              record_id: video.id,
+              download_url: video.download_url,
+              summary_doc_id: video.summary_doc_id,
+              source_duration_sec: video.duration_seconds,
+              main_show_start_sec: clipRangeStartSec ?? undefined,
+              main_show_end_sec: clipRangeEndSec ?? undefined,
+              // Pass creds inline so the server doesn't have to
+              // resolve them for the download step — same pattern
+              // /api/youtube/upload uses.
+              zoom_creds: connections["Zoom"]?.credentials ? {
+                accountId: connections["Zoom"].credentials.accountId,
+                clientId: connections["Zoom"].credentials.clientId,
+                clientSecret: connections["Zoom"].credentials.clientSecret,
+              } : undefined,
+              fireflies_api_key: connections["Fireflies"]?.credentials?.apiKey,
+              kaltura_creds: connections["Kaltura"]?.credentials ? {
+                partnerId: connections["Kaltura"].credentials.partnerId,
+                adminSecret: connections["Kaltura"].credentials.adminSecret,
+              } : undefined,
+              yt_cookies: connections["YouTube"]?.credentials?.ytCookies,
+            }),
+          });
+          if (!stitchRes.ok) {
+            const d = await stitchRes.json().catch(() => ({} as { error?: string }));
+            const err = (d as { error?: string }).error ?? `HTTP ${stitchRes.status}`;
+            onEvent(`ShortsStitchFailed: "${video.title}"${dateTag(video.recorded_at)} — ${err}. Falling back to full-source URL.`, { video_id: video.id });
+          } else {
+            const stitchData = await stitchRes.json() as { opus_video_url: string; total_stitched_sec: number; extracted_highlights: number; region_manifest?: unknown };
+            useStitchedUrl = stitchData.opus_video_url;
+            onEvent(`ShortsStitchReady: "${video.title}"${dateTag(video.recorded_at)} — ${stitchData.extracted_highlights} highlights + main show = ${Math.round(stitchData.total_stitched_sec / 60)}m stitched (vs ${Math.round(video.duration_seconds / 60)}m source). URL: ${stitchData.opus_video_url}`, { video_id: video.id });
+          }
+        } catch (err) {
+          onEvent(`ShortsStitchErrored: ${err instanceof Error ? err.message : String(err)}. Falling back to full-source URL.`, { video_id: video.id });
+        }
+      }
+
+      const opusVideoUrl = useStitchedUrl ?? parentYouTubeUrl;
       // Surface the outgoing URL in the client event log so a 4xx from
       // Opus can be diagnosed from the dashboard without opening Cloud
       // Logging. Paired with the ShortsError line on failure.
@@ -296,12 +350,17 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          parentYouTubeUrl,
+          // If we built a stitched source, hand Opus that Drive URL
+          // instead of the raw YouTube URL. Opus fetches directly.
+          parentYouTubeUrl: opusVideoUrl,
           videoTitle: video.title,
           captions: shortsCaption,
           prompt: shortsPrompt || undefined,
           apiKey: opusApiKey,
-          ...(clipRangeStartSec != null && clipRangeEndSec != null && clipRangeEndSec > clipRangeStartSec
+          // curationPref.range only applies to the raw-YouTube path
+          // — a stitched source's regions ARE the range, so we skip
+          // range constraints when we've already stitched.
+          ...(useStitchedUrl == null && clipRangeStartSec != null && clipRangeEndSec != null && clipRangeEndSec > clipRangeStartSec
             ? { clipRangeStartSec, clipRangeEndSec }
             : {}),
         }),
@@ -2782,6 +2841,62 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "12px 14px", marginBottom: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 8, fontSize: "0.9rem" }}>Generate Shorts via Opus Clip</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* ADR-062 — stitched source toggle. When on AND the
+                record has a current summary, we build a mp4 of
+                (main-show window + each summary highlight) and hand
+                Opus THAT URL. Only this actually reduces credit
+                spend — curationPref.range narrows candidates but
+                Opus still bills by source duration. */}
+            {video.summary_doc_id ? (
+              <label
+                style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: "0.85rem", padding: "6px 8px", background: "rgba(20,184,166,0.06)", border: "1px solid rgba(20,184,166,0.28)", borderRadius: 4 }}
+                title="ADR-062: build a source that is (main-show window) + (summary highlights, ±30s / +90s each). Opus bills by source duration so this is the only way to cut credit spend without losing post-show gems."
+              >
+                <input type="checkbox" checked={shortsUseStitched} onChange={(e) => setShortsUseStitched(e.target.checked)} style={{ marginTop: 3 }} />
+                <span>
+                  <strong>✂️ Stitched source</strong> (main show + summary highlights)
+                  {stitchPreview
+                    ? <> · preview: {stitchPreview.regions} region{stitchPreview.regions === 1 ? "" : "s"} = {Math.round(stitchPreview.totalSec / 60)}m (vs source {Math.round(video.duration_seconds / 60)}m)</>
+                    : <> · click "Preview regions" for the region count</>}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const opusRule = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+                      const trimS = Math.max(0, Math.floor(opusRule.trim_start_seconds ?? 0));
+                      const trimE = Math.max(0, Math.floor((opusRule as { trim_end_seconds?: number }).trim_end_seconds ?? 0));
+                      const msStart = trimS > 0 ? trimS : 0;
+                      const msEnd = trimE > 0 && video.duration_seconds > trimE ? video.duration_seconds - trimE : video.duration_seconds;
+                      const res = await fetch("/api/shorts/preview-regions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          record_id: video.id,
+                          summary_doc_id: video.summary_doc_id,
+                          source_duration_sec: video.duration_seconds,
+                          main_show_start_sec: msStart,
+                          main_show_end_sec: msEnd,
+                        }),
+                      });
+                      if (res.ok) {
+                        const d = await res.json() as { regions: unknown[]; total_stitched_sec: number; extracted_highlights: number };
+                        setStitchPreview({ regions: d.regions.length, totalSec: d.total_stitched_sec, highlights: d.extracted_highlights });
+                      } else {
+                        const d = await res.json().catch(() => ({} as { error?: string }));
+                        onEvent(`StitchPreviewFailed: ${(d as { error?: string }).error ?? `HTTP ${res.status}`}`, { video_id: video.id });
+                      }
+                    }}
+                    disabled={shortsLoading}
+                    style={{ marginLeft: 8, background: "none", border: "none", color: "#a5b4fc", cursor: "pointer", padding: 0, textDecoration: "underline", fontSize: "0.72rem" }}
+                  >
+                    Preview regions
+                  </button>
+                </span>
+              </label>
+            ) : (
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", padding: "4px 0" }}>
+                ✂️ Stitched source unavailable — generate a summary first to enable "main show + highlights" mode. (Falling back to full-source URL; Opus will bill for the entire {Math.round(video.duration_seconds / 60)}m recording.)
+              </div>
+            )}
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem" }}>
               <input type="checkbox" checked={shortsCaption} onChange={(e) => setShortsCaption(e.target.checked)} />
               Burn captions into clips
