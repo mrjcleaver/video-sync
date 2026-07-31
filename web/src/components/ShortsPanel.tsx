@@ -158,7 +158,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
             or missing) renders "—/100" so the operator can tell
             "no signal" from "low signal". */}
         <span
-          title={score ? `Opus Clip virality score: ${Math.round(score)}/100` : "Opus Clip virality score not returned for this clip (Opus v2 sometimes omits it — a re-Discover from Maintain can refetch)."}
+          title={score ? `Opus Clip virality score: ${Math.round(score)}/100` : "No score — Opus Clip's public v2 API doesn't expose the virality score field (dashboard-only). Confirmed against help.opus.pro OpenAPI on 2026-07-27; there is no /virality or /insights endpoint either. See ADR-061 §4."}
           style={{
             minWidth: 58,
             textAlign: "center",

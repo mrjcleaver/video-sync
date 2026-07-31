@@ -2493,7 +2493,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                         border: `1px solid ${score >= 70 ? "var(--green)" : score >= 40 ? "#f5a623" : "var(--border)"}`,
                         borderRadius: 4, padding: "1px 4px",
                       }}
-                      title={score ? `Opus virality: ${Math.round(score)}/100` : "No virality score yet — refresh from Opus on preview to fetch"}
+                      title={score ? `Opus virality: ${Math.round(score)}/100` : "No score — Opus Clip's public v2 API doesn't expose the virality score field (dashboard-only). Confirmed against their OpenAPI 2026-07-27; the on-preview refresh can't retrieve what the API doesn't return."}
                     >
                       {score ? Math.round(score) : "—"}
                     </span>
