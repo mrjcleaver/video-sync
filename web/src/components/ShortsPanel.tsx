@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { videoStore } from "../lib/store";
 import { WasmVideoRecord } from "../lib/wasm";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { findOrphanClips, repairOneOrphanClip } from "../lib/orphanClipsRepair";
+import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
+import { refreshShortsFromOpus, refreshOneShortFromOpus } from "../lib/shortsRefresh";
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -25,7 +27,6 @@ function formatDuration(start: number, end: number): string {
 
 export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
   const actorState = useCurrentActor();
-  const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<Record<string, string>>({});
   // Toggle-open inline players so the operator can watch a clip
@@ -82,250 +83,39 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     return out;
   }, [videos, shorts]);
 
+  // Refresh Opus metadata (virality score, keywords, breakdown)
+  // once on mount. Silent, best-effort; failures are ignored. This
+  // is what surfaces newly-computed virality scores after Opus
+  // reprocesses a clip project.
+  useEffect(() => {
+    if (shorts.length === 0) return;
+    void refreshShortsFromOpus(shorts, { actorState, onEvent, onMutated });
+    // Intentionally shorts.length in deps — a stable identity for
+    // the batch so we don't refetch on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shorts.length]);
+
   if (shorts.length === 0) return null;
 
-  function approveclip(clip: VideoRecordJSON) {
-    videoStore.mutate(clip.id, (r) =>
-      r.approve(cmd())
-    );
-    onEvent(`ShortApproved: "${clip.title}"`);
-    onMutated();
-  }
+  const actionCtx = {
+    actorState,
+    onEvent,
+    onMutated,
+    onPublishError: (id: string, err: string | null) => setPublishError(prev => ({ ...prev, [id]: err ?? "" })),
+    onPublishingStart: (id: string) => setPublishing(id),
+    onPublishingEnd: () => setPublishing(null),
+  };
 
-  function rejectClip(clip: VideoRecordJSON) {
-    videoStore.mutate(clip.id, (r) =>
-      r.abandon(cmd())
-    );
-    onEvent(`ShortRejected: "${clip.title}"`);
-    onMutated();
-  }
+  function approveclip(clip: VideoRecordJSON) { approveShort(clip, actionCtx); }
+  function rejectClip(clip: VideoRecordJSON) { rejectShort(clip, actionCtx); }
 
   async function publishShort(clip: VideoRecordJSON) {
-    setPublishError((prev) => ({ ...prev, [clip.id]: "" }));
-
-    let connections: Record<string, { credentials?: Record<string, string> }> = {};
-    try {
-      const raw = localStorage.getItem("video-sync:connections");
-      if (raw) connections = JSON.parse(raw);
-    } catch { /* ignore */ }
-
-    const ytCreds = connections["YouTube"]?.credentials;
-    if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      setPublishError((prev) => ({ ...prev, [clip.id]: "YouTube not authorized" }));
-      return;
-    }
-
-    const extra = clip.metadata_extra ?? {};
-    const parentYtId = extra.parent_youtube_id as string | undefined;
-
-    // Build description with provenance footer (ADR-022 + ADR-029 §6).
-    // The URL sits on its own line at the very top with a leading
-    // blank line — YouTube's auto-linkifier is happier with a URL
-    // preceded by whitespace than one wrapped in emoji + text on the
-    // same line, and the operator wants viewers to be able to tap
-    // through to the full recording.
-    const parentBlock = parentYtId
-      ? `▶ Watch the full recording:\nhttps://youtu.be/${parentYtId}\n\n`
-      : "";
-    const footerParts = [
-      `catalog:${clip.id}`,
-      `source:OpusClip:${clip.source_id}`,
-      clip.metadata_extra?.parent_source_id ? `parent:${clip.metadata_extra.parent_source_id}` : null,
-    ].filter(Boolean);
-    const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
-    const description = `${parentBlock}${provenanceFooter}`.slice(0, 5000);
-
-    // #Shorts on title triggers YouTube's Shorts shelf (ADR-029 §7).
-    const shortTitle = clip.title.includes("#Shorts") ? clip.title : `${clip.title} #Shorts`;
-
-    setPublishing(clip.id);
-    try {
-      // Preflight: is this clip ALREADY on YouTube? A prior publish
-      // attempt could have uploaded successfully but errored on the
-      // mark_published transition (e.g. the destination_id/url bug),
-      // leaving the record Failed locally while the short is live
-      // upstream. Re-uploading would duplicate. If we find a YouTube
-      // Destination location and YouTube confirms the video exists,
-      // we reconcile without re-uploading.
-      const existingDest = (clip.locations ?? []).find(
-        (l) => l.platform === "YouTube" && l.role === "Destination" && l.external_id,
-      );
-      let reconciledVideoId: string | null = null;
-      let reconciledVideoUrl: string | null = null;
-      if (existingDest) {
-        try {
-          const chkRes = await fetch(
-            `/api/youtube/status?videoId=${encodeURIComponent(existingDest.external_id)}`,
-            {
-              headers: {
-                "x-youtube-refresh-token": ytCreds.refreshToken,
-                "x-youtube-client-id": ytCreds.clientId,
-                "x-youtube-client-secret": ytCreds.clientSecret,
-              },
-            },
-          );
-          if (chkRes.ok) {
-            reconciledVideoId = existingDest.external_id;
-            reconciledVideoUrl =
-              existingDest.external_url
-              ?? `https://www.youtube.com/watch?v=${existingDest.external_id}`;
-            onEvent(
-              `ShortAlreadyOnYouTube: "${clip.title}" — reconciling without re-upload (YouTube/${existingDest.external_id})`,
-              { video_id: clip.id },
-            );
-          }
-        } catch { /* preflight failed — fall through to a fresh upload */ }
-      }
-
-      // Failed/ToRetry needs to walk back through Approved before we
-      // can request_publish (can_publish() only accepts Approved).
-      if (clip.status === "Failed" || clip.status === "ToRetry") {
-        videoStore.mutate(clip.id, (r) => r.approve(cmd()));
-      }
-
-      // Move to Publishing state
-      videoStore.mutate(clip.id, (r) =>
-        r.request_publish(cmd())
-      );
-      onMutated();
-
-      // Fast path: video is already on YouTube — skip the upload
-      // and jump straight to mark_published with the existing IDs.
-      if (reconciledVideoId && reconciledVideoUrl) {
-        videoStore.mutate(clip.id, (r) =>
-          r.mark_published(JSON.stringify({
-            destination_id: reconciledVideoId!,
-            destination_url: reconciledVideoUrl!,
-          })),
-        );
-        onEvent(
-          `ShortReconciled: "${clip.title}" → YouTube/${reconciledVideoId}`,
-          { video_id: clip.id },
-        );
-        onMutated();
-        return; // done — no upload, no CTA autopost duplicate
-      }
-
-      // NB: no trimStartSeconds — Opus already exported a trimmed
-      // mp4. The upload route's trim trims the CLIP file, not the
-      // parent; setting it here would truncate the short.
-      const body: Record<string, unknown> = {
-        refreshToken: ytCreds.refreshToken,
-        clientId: ytCreds.clientId,
-        clientSecret: ytCreds.clientSecret,
-        title: shortTitle,
-        description,
-        tags: [...(clip.tags ?? []), "Shorts"],
-        downloadUrl: clip.download_url,
-        privacyStatus: "public",
-      };
-
-      const res = await fetch("/api/youtube/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        let errMsg = `Upload failed (${res.status})`;
-        try { const d = await res.json(); errMsg = d.error ?? errMsg; } catch { /* ignore */ }
-        throw new Error(errMsg);
-      }
-      if (!res.body) throw new Error("No response stream from upload endpoint");
-
-      // /api/youtube/upload streams SSE (event: progress | complete | error).
-      // Read the frames — the JSON-parse path used to error on the first
-      // "event: progress" line and mark the record Failed even though the
-      // upload was completing successfully upstream.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let eventType = "";
-      let result: { videoId: string; videoUrl: string } | null = null;
-      let lastPhase = "(none)";
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            const payload = JSON.parse(line.slice(6)) as Record<string, string>;
-            if (eventType === "progress" && payload.phase) {
-              lastPhase = payload.phase;
-            } else if (eventType === "complete") {
-              result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
-              break outer;
-            } else if (eventType === "error") {
-              throw new Error(payload.message ?? "Upload failed");
-            }
-            eventType = "";
-          }
-        }
-      }
-      if (!result) throw new Error(`Upload stream ended without complete event (last phase: ${lastPhase})`);
-
-      // Record YouTube destination location + mark Published.
-      // MarkPublished requires BOTH destination_id AND destination_url
-      // (both non-Option in commands.rs). Missing either fails
-      // deserialization on the WASM side and the outer catch marks
-      // the record Failed even though the upload succeeded.
-      videoStore.mutate(clip.id, (r) => {
-        r.add_location(cmd({ platform: "YouTube",
-          external_id: result!.videoId,
-          external_url: result!.videoUrl,
-          role: "Destination", }));
-        return r.mark_published(JSON.stringify({
-          destination_id: result!.videoId,
-          destination_url: result!.videoUrl,
-        }));
-      });
-
-      onEvent(`ShortPublished: "${clip.title}" → YouTube/${result.videoId}`, { video_id: clip.id });
-      onMutated();
-
-      // ADR-029 CTA autopost — best-effort. YouTube Data API v3
-      // can insert a top-level comment as the channel owner, which
-      // gets an ❤️ author badge and typically bubbles to the top.
-      // The API does NOT expose pinning, so if the operator wants
-      // it locked at position 1 they pin manually in Studio.
-      if (parentYtId) {
-        const ctaText = `▶ Watch the full recording: https://youtu.be/${parentYtId}`;
-        try {
-          const cRes = await fetch("/api/youtube/post-comment", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              videoId: result.videoId,
-              text: ctaText,
-              refreshToken: ytCreds.refreshToken,
-              clientId: ytCreds.clientId,
-              clientSecret: ytCreds.clientSecret,
-            }),
-          });
-          if (cRes.ok) {
-            onEvent(`ShortCtaCommentPosted: "${clip.title}" — pin it in YouTube Studio to lock at top`, { video_id: clip.id });
-          } else {
-            const cData = await cRes.json().catch(() => ({} as { error?: string; missingScope?: boolean }));
-            onEvent(`ShortCtaCommentSkipped: "${clip.title}" — ${cData.error ?? `HTTP ${cRes.status}`}`, { video_id: clip.id });
-          }
-        } catch (err) {
-          onEvent(`ShortCtaCommentSkipped: "${clip.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: clip.id });
-        }
-      }
-    } catch (err) {
-      videoStore.mutate(clip.id, (r) =>
-        r.mark_failed(JSON.stringify({ error_message: String(err) }))
-      );
-      setPublishError((prev) => ({ ...prev, [clip.id]: String(err) }));
-      onMutated();
-    } finally {
-      setPublishing(null);
-    }
+    // Delegates to lib/shortsPublish so VideoCard's inline actions
+    // can share the exact same flow. Local state (publishing +
+    // publishError) is threaded via the shared action context.
+    await publishShortLib(clip, actionCtx);
   }
+
 
   function renderClipRow(clip: VideoRecordJSON, actions: React.ReactNode) {
     const extra = clip.metadata_extra ?? {};
@@ -437,7 +227,14 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setOpenPlayer(prev => ({ ...prev, [clip.id]: !prev[clip.id] }));
+                  setOpenPlayer(prev => {
+                    const next = !prev[clip.id];
+                    // On open, fire an Opus metadata refresh for
+                    // just this clip so the virality / keywords
+                    // shown next to the player are fresh.
+                    if (next) void refreshOneShortFromOpus(clip, { actorState, onEvent, onMutated });
+                    return { ...prev, [clip.id]: next };
+                  });
                 }}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
@@ -551,80 +348,70 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
           AI-generated short clips from Opus Clip. Review and approve before publishing to YouTube Shorts.
         </p>
 
-        {/* Pending clips */}
-        {pending.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Pending Review ({pending.length})
-            </div>
-            {pending.map((clip) =>
-              renderClipRow(
-                clip,
+        {/* Group clips by parent session — the operator wants to
+            see the dated context each clip originates from, not a
+            flat status-only list. Sessions sorted newest first;
+            within a session, clips ordered by status priority
+            then virality desc. */}
+        {(() => {
+          type SessionGroup = { parent: VideoRecordJSON | null; parentId: string; clips: VideoRecordJSON[] };
+          const grouped = new Map<string, SessionGroup>();
+          for (const c of shorts) {
+            if (c.status === "Abandoned") continue; // rejected rendered separately at the bottom
+            const parent = parentByClipId.get(c.id) ?? null;
+            const key = parent?.id ?? "unknown";
+            const g = grouped.get(key) ?? { parent, parentId: key, clips: [] };
+            g.clips.push(c);
+            grouped.set(key, g);
+          }
+          const sessions = [...grouped.values()].sort((a, b) => {
+            const ta = new Date(a.parent?.recorded_at ?? a.parent?.indexed_at ?? 0).getTime();
+            const tb = new Date(b.parent?.recorded_at ?? b.parent?.indexed_at ?? 0).getTime();
+            return tb - ta;
+          });
+          const statusOrder: Record<string, number> = {
+            "Discovered": 0, "InScope": 0,
+            "Approved": 1,
+            "Publishing": 2,
+            "Published": 3,
+            "Failed": 4, "ToRetry": 4,
+          };
+          for (const s of sessions) {
+            s.clips.sort((a, b) => {
+              const sa = statusOrder[a.status] ?? 99;
+              const sb = statusOrder[b.status] ?? 99;
+              if (sa !== sb) return sa - sb;
+              return byVirality(a, b);
+            });
+          }
+          const actionsFor = (clip: VideoRecordJSON): React.ReactNode => {
+            if (clip.status === "Discovered" || clip.status === "InScope") {
+              return (
                 <>
-                  <button className="btn btn-sm btn-green" onClick={() => approveclip(clip)}>
-                    Approve
-                  </button>
-                  <button className="btn btn-sm btn-red" onClick={() => rejectClip(clip)}>
-                    Reject
-                  </button>
-                </>,
-              )
-            )}
-          </div>
-        )}
-
-        {/* Approved clips (awaiting publish) */}
-        {approved.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Approved — Ready to Publish ({approved.length})
-            </div>
-            {approved.map((clip) =>
-              renderClipRow(
-                clip,
+                  <button className="btn btn-sm btn-green" onClick={() => approveclip(clip)}>Approve</button>
+                  <button className="btn btn-sm btn-red" onClick={() => rejectClip(clip)}>Reject</button>
+                </>
+              );
+            }
+            if (clip.status === "Approved") {
+              return (
                 <>
-                  <button
-                    className="btn btn-sm btn-primary"
-                    onClick={() => publishShort(clip)}
-                    disabled={publishing === clip.id}
-                  >
+                  <button className="btn btn-sm btn-primary" onClick={() => publishShort(clip)} disabled={publishing === clip.id}>
                     {publishing === clip.id ? "Publishing…" : "Publish to YouTube"}
                   </button>
-                  <button className="btn btn-sm btn-red" onClick={() => rejectClip(clip)}>
-                    Reject
-                  </button>
-                </>,
-              )
-            )}
-          </div>
-        )}
-
-        {/* Currently uploading — keeps the row visible with a phase
-            hint instead of the previous "vanishes without a trace"
-            behaviour. */}
-        {publishingRows.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Publishing ({publishingRows.length})
-            </div>
-            {publishingRows.map((clip) => renderClipRow(clip, <span style={{ fontSize: "0.72rem", color: "#a78bfa" }}>uploading…</span>))}
-          </div>
-        )}
-
-        {/* Published — visible confirmation that a clip landed on
-            YouTube, with a direct link to the live short. */}
-        {published.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--green)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Published ({published.length})
-            </div>
-            {published.map((clip) => {
+                  <button className="btn btn-sm btn-red" onClick={() => rejectClip(clip)}>Reject</button>
+                </>
+              );
+            }
+            if (clip.status === "Publishing") {
+              return <span style={{ fontSize: "0.72rem", color: "#a78bfa" }}>uploading…</span>;
+            }
+            if (clip.status === "Published") {
               const ytLoc = (clip.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination");
               const publishedAt = clip.published_at
                 ? new Date(clip.published_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
                 : null;
-              return renderClipRow(
-                clip,
+              return (
                 <>
                   {publishedAt && <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{publishedAt}</span>}
                   {ytLoc?.external_url && (
@@ -635,38 +422,56 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                       className="btn btn-sm"
                       style={{ background: "var(--green)", borderColor: "var(--green)", color: "#000", textDecoration: "none" }}
                     >
-                      ▶ Watch on YouTube
+                      ▶ Watch
                     </a>
                   )}
-                </>,
+                </>
               );
-            })}
-          </div>
-        )}
+            }
+            if (clip.status === "Failed" || clip.status === "ToRetry") {
+              return (
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => publishShort(clip)}
+                  disabled={publishing === clip.id}
+                  title="Retry the YouTube upload for this clip"
+                >
+                  {publishing === clip.id ? "Publishing…" : "Retry publish"}
+                </button>
+              );
+            }
+            return null;
+          };
+          return sessions.map((s) => {
+            const dated = s.parent?.recorded_at
+              ? new Date(s.parent.recorded_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+              : null;
+            const pubCount = s.clips.filter(c => c.status === "Published").length;
+            const pendingCount = s.clips.filter(c => c.status === "Discovered" || c.status === "InScope").length;
+            const failedCount = s.clips.filter(c => c.status === "Failed" || c.status === "ToRetry").length;
+            return (
+              <div key={s.parentId} style={{ marginBottom: 20, paddingBottom: 12, borderBottom: "2px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>
+                    {s.parent?.title ?? "Unknown parent"}
+                  </div>
+                  {dated && (
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{dated}</div>
+                  )}
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "auto", display: "flex", gap: 8 }}>
+                    <span>{s.clips.length} clip{s.clips.length === 1 ? "" : "s"}</span>
+                    {pendingCount > 0 && <span style={{ color: "#f5a623" }}>{pendingCount} pending</span>}
+                    {pubCount > 0 && <span style={{ color: "var(--green)" }}>{pubCount} live</span>}
+                    {failedCount > 0 && <span style={{ color: "var(--red)" }}>{failedCount} failed</span>}
+                  </div>
+                </div>
+                {s.clips.map(c => renderClipRow(c, actionsFor(c)))}
+              </div>
+            );
+          });
+        })()}
 
-        {/* Upload failed — retry action lives here rather than in
-            the review queue, so the operator knows *which* stage
-            broke. */}
-        {failed.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--red)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Publish failed ({failed.length})
-            </div>
-            {failed.map((clip) => renderClipRow(
-              clip,
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => publishShort(clip)}
-                disabled={publishing === clip.id}
-                title="Retry the YouTube upload for this clip"
-              >
-                {publishing === clip.id ? "Publishing…" : "Retry publish"}
-              </button>,
-            ))}
-          </div>
-        )}
-
-        {/* Rejected clips (collapsed) */}
+        {/* Rejected clips (collapsed, global) */}
         {rejected.length > 0 && (
           <details style={{ marginTop: 8 }}>
             <summary style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>

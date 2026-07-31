@@ -34,6 +34,8 @@ import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
 import { resolveAlignedTitle, resolveAlignedTitleForced, resolveDiscordChannel } from "../lib/youtubeTitleAlign";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import { formatDateHover } from "../lib/dateHover";
+import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
+import { refreshOneShortFromOpus } from "../lib/shortsRefresh";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -128,6 +130,17 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // controls element under the row when the operator clicks
   // "▶ preview" so they can watch without opening a new tab.
   const [openClipPreview, setOpenClipPreview] = useState<Record<string, boolean>>({});
+  const [clipActionBusy, setClipActionBusy] = useState<string | null>(null);
+  const shortsActionCtx = useMemo(() => ({
+    actorState,
+    onEvent,
+    onMutated,
+    onPublishingStart: (id: string) => setClipActionBusy(id),
+    onPublishingEnd: () => setClipActionBusy(null),
+    onPublishError: (id: string, err: string | null) => {
+      if (err) onEvent(`ShortPublishError: ${err}`, { video_id: id });
+    },
+  }), [actorState, onEvent, onMutated]);
   useEffect(() => {
     let cancelled = false;
     getSeriesRegistry().then((registry) => {
@@ -2445,11 +2458,16 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 const length = Math.max(0, end - start);
                 const kw = Array.isArray(extra.keywords) ? (extra.keywords as string[]) : [];
                 const editUrl = typeof extra.opus_edit_url === "string" ? extra.opus_edit_url : null;
+                const score = typeof extra.virality_score === "number" ? extra.virality_score : 0;
                 const isPublished = c.status === "Published";
                 const isFailed = c.status === "Failed";
+                const isApproved = c.status === "Approved";
+                const isPending = c.status === "Discovered" || c.status === "InScope";
+                const isPublishing = c.status === "Publishing";
                 const ytLoc = (c.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url);
                 const canPreview = c.download_url.startsWith("http");
                 const previewOpen = !!openClipPreview[c.id];
+                const clipPublishing = clipActionBusy === c.id;
                 const fmt = (s: number) => {
                   const m = Math.floor(s / 60);
                   const sec = Math.floor(s % 60);
@@ -2459,12 +2477,26 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                   <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <div
                     style={{
-                      display: "flex", gap: 8, alignItems: "baseline",
+                      display: "flex", gap: 8, alignItems: "center",
                       fontSize: "0.75rem", padding: "2px 4px",
-                      borderRadius: 4,
+                      borderRadius: 4, flexWrap: "wrap",
                     }}
                     title={c.title}
                   >
+                    {/* ADR-061 — virality badge N/100 with colour bands. */}
+                    <span
+                      style={{
+                        minWidth: 44, textAlign: "center", fontWeight: 700,
+                        fontSize: "0.72rem", fontFamily: "monospace",
+                        color: score >= 70 ? "var(--green)" : score >= 40 ? "#f5a623" : "var(--text-muted)",
+                        background: "var(--bg)",
+                        border: `1px solid ${score >= 70 ? "var(--green)" : score >= 40 ? "#f5a623" : "var(--border)"}`,
+                        borderRadius: 4, padding: "1px 4px",
+                      }}
+                      title={score ? `Opus virality: ${Math.round(score)}/100` : "No virality score yet — refresh from Opus on preview to fetch"}
+                    >
+                      {score ? Math.round(score) : "—"}
+                    </span>
                     <span style={{ fontFamily: "monospace", color: "var(--text-muted)", minWidth: 42 }}>@{fmt(start)}</span>
                     <span style={{ fontFamily: "monospace", color: "var(--text-muted)", minWidth: 34 }}>{fmt(length)}</span>
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
@@ -2494,6 +2526,33 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                     ) : (
                       <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{c.status.toLowerCase()}</span>
                     )}
+                    {isPending && (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); approveShort(c, shortsActionCtx); }}
+                          disabled={clipPublishing}
+                          title="Approve this clip so it moves to the publish queue"
+                          style={{ fontSize: "0.62rem", padding: "0 6px", borderRadius: 3, background: "var(--green)", color: "#000", border: "1px solid var(--green)", fontWeight: 700, cursor: "pointer" }}
+                        >Approve</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); rejectShort(c, shortsActionCtx); }}
+                          disabled={clipPublishing}
+                          title="Reject this clip; retained in the catalog for audit but never published"
+                          style={{ fontSize: "0.62rem", padding: "0 6px", borderRadius: 3, background: "var(--red)", color: "#fff", border: "1px solid var(--red)", fontWeight: 700, cursor: "pointer" }}
+                        >Reject</button>
+                      </>
+                    )}
+                    {(isApproved || isFailed) && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void publishShortLib(c, shortsActionCtx); }}
+                        disabled={clipPublishing}
+                        title={isFailed ? "Retry the YouTube upload for this clip" : "Publish this Approved clip to YouTube Shorts"}
+                        style={{ fontSize: "0.62rem", padding: "0 6px", borderRadius: 3, background: "var(--accent, #6366f1)", color: "#fff", border: "1px solid var(--accent, #6366f1)", fontWeight: 700, cursor: "pointer" }}
+                      >{clipPublishing ? "…" : (isFailed ? "Retry" : "Publish")}</button>
+                    )}
+                    {isPublishing && (
+                      <span style={{ fontSize: "0.62rem", color: "#a78bfa" }}>uploading…</span>
+                    )}
                     {isPublished && ytLoc?.external_url && discordChannel && (
                       <button
                         onClick={(e) => {
@@ -2518,7 +2577,14 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setOpenClipPreview(prev => ({ ...prev, [c.id]: !prev[c.id] }));
+                          setOpenClipPreview(prev => {
+                            const next = !prev[c.id];
+                            // On open, refresh Opus metadata for this
+                            // clip so virality + keywords reflect any
+                            // updates since the clip was indexed.
+                            if (next) void refreshOneShortFromOpus(c, { actorState, onEvent, onMutated });
+                            return { ...prev, [c.id]: next };
+                          });
                         }}
                         style={{
                           background: "none", border: "none", cursor: "pointer",
