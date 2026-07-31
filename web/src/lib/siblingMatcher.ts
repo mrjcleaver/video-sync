@@ -219,11 +219,22 @@ export function rankSiblingCandidates(
   const targetRecorded = target.recorded_at ?? target.indexed_at;
   const candidates: SiblingCandidate[] = [];
 
+  // Clips (target itself is an OpusClip child) never look for
+  // SameEvent siblings — ClipOf is the only provenance relation
+  // that applies to them.
+  if (target.source_platform === "OpusClip") return [];
+
   for (const v of all) {
     if (v.id === target.id) continue;
     if (v.source_platform === target.source_platform) continue;
     // Published-to-YouTube matches belong to the ADR-016 Recover flow, not here
     if (v.source_platform === "YouTube") continue;
+    // Never propose an OpusClip child as a SameEvent sibling of any
+    // recording — a clip IS-DERIVED-FROM its parent (ClipOf), not
+    // co-occurring with it. Surfacing them here polluted the
+    // "Link as same event" affordance on main recordings with the
+    // hundreds of shorts they've produced.
+    if (v.source_platform === "OpusClip") continue;
 
     const candidateRecorded = v.recorded_at ?? v.indexed_at;
     const participant_overlap = participantJaccard(target.participants ?? [], v.participants ?? []);

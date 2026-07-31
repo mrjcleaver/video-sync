@@ -11,6 +11,16 @@ interface GenerateRequest {
   captions: boolean | "srt";
   prompt?: string;
   apiKey: string;
+  /** ADR-060 — window (in seconds, from the source video's t=0)
+   *  passed through to Opus as curationPref.range. When set,
+   *  Opus's own docs say it constrains "the range of the original
+   *  long-form video to generate clips from" — meaning a
+   *  5-hour recording sent with { startSec: 3600, endSec: 9000 }
+   *  bills based on the 1.5-hour window, not the whole file
+   *  (per Opus's OpenAPI; billing behaviour flagged in ADR-060
+   *  as needing operator confirmation with Opus support). */
+  clipRangeStartSec?: number;
+  clipRangeEndSec?: number;
 }
 
 // Opus Clip API v2 (2026 rewrite of /v1/create → /clip-projects)
@@ -45,7 +55,7 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { videoTitle, captions, prompt } = body;
+  const { videoTitle, captions, prompt, clipRangeStartSec, clipRangeEndSec } = body;
   let { parentYouTubeUrl } = body;
 
   if (!parentYouTubeUrl) {
@@ -82,6 +92,22 @@ async function handler(req: NextRequest) {
   // "Cannot POST /api/v1/create". The new schema is camelCase and
   // groups options under curationPref + renderPref instead of the
   // flat top-level fields. See help.opus.pro/api-reference/openapi.json.
+  // Build curationPref: topicKeywords from prompt + optional range
+  // window (ADR-060). Opus's own docs describe range as "the range
+  // of the original long-form video to generate clips from" —
+  // sending it means Opus should only ingest/process the specified
+  // seconds, so a 5-hour raw recording with a 1.5-hour scheduled
+  // main show doesn't pay the full 5 hours of credits.
+  const curationPref: Record<string, unknown> = {};
+  if (prompt) curationPref.topicKeywords = [prompt];
+  const rangeStart = Number.isFinite(clipRangeStartSec) ? Math.max(0, Math.floor(clipRangeStartSec as number)) : null;
+  const rangeEnd = Number.isFinite(clipRangeEndSec) ? Math.max(0, Math.floor(clipRangeEndSec as number)) : null;
+  if (rangeStart != null && rangeEnd != null && rangeEnd > rangeStart) {
+    curationPref.range = { startSec: rangeStart, endSec: rangeEnd };
+    serverLog("info", "shorts:generate", "clip range constrained", {
+      startSec: rangeStart, endSec: rangeEnd, windowSec: rangeEnd - rangeStart,
+    });
+  }
   const opusPayload: Record<string, unknown> = {
     videoUrl: parentYouTubeUrl,
     // Portrait aspect ratio for Shorts / Reels (was: aspect_ratio "9:16").
@@ -90,10 +116,8 @@ async function handler(req: NextRequest) {
       layoutAspectRatio: "portrait",
     },
     // Empty curationPref lets Opus decide clip count/durations, matching
-    // the old num_clips: 0 semantics. Prompt maps to topicKeywords.
-    ...(prompt
-      ? { curationPref: { topicKeywords: [prompt] } }
-      : {}),
+    // the old num_clips: 0 semantics.
+    ...(Object.keys(curationPref).length > 0 ? { curationPref } : {}),
   };
   // videoTitle is no longer settable via the create endpoint — kept
   // as a log-only breadcrumb so the server-side audit trail still

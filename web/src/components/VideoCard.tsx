@@ -250,10 +250,30 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     try {
       setShortsPhase("Submitting to Opus Clip…");
+      // ADR-060 — narrow Opus's ingest window to the scheduled main
+      // show. Without this, a 5-hour raw capture is sent whole; even
+      // if we only want clips from the middle 1.5 hours Opus (per
+      // its own docs) uses curationPref.range as "the range of the
+      // original long-form video to generate clips from", so the
+      // pre-show + post-show never enter clip candidacy AND — if
+      // Opus's billing follows the range they process rather than
+      // the source file's total length — we pay for 1.5 hours of
+      // credits, not 5. Fed the same trim_{start,end}_seconds that
+      // ADR-014 processing rules already emit.
+      const opusRuleAttrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+      const clipTrimStart = Math.max(0, Math.floor(opusRuleAttrs.trim_start_seconds ?? 0));
+      const clipTrimEnd = Math.max(0, Math.floor((opusRuleAttrs as { trim_end_seconds?: number }).trim_end_seconds ?? 0));
+      const clipRangeEndSec = clipTrimEnd > 0 && video.duration_seconds > clipTrimEnd
+        ? video.duration_seconds - clipTrimEnd
+        : (clipTrimStart > 0 && video.duration_seconds > clipTrimStart ? video.duration_seconds : null);
+      const clipRangeStartSec = clipTrimStart > 0 ? clipTrimStart : (clipRangeEndSec != null ? 0 : null);
+      const rangeSuffix = (clipRangeStartSec != null && clipRangeEndSec != null && clipRangeEndSec > clipRangeStartSec)
+        ? ` [${Math.round(clipRangeStartSec)}s→${Math.round(clipRangeEndSec)}s = ${Math.round((clipRangeEndSec - clipRangeStartSec) / 60)}m window]`
+        : "";
       // Surface the outgoing URL in the client event log so a 4xx from
       // Opus can be diagnosed from the dashboard without opening Cloud
       // Logging. Paired with the ShortsError line on failure.
-      onEvent(`ShortsRequested: "${video.title}"${dateTag(video.recorded_at)} → ${parentYouTubeUrl}${shortsPrompt ? ` (prompt: ${shortsPrompt.slice(0, 40)}${shortsPrompt.length > 40 ? "…" : ""})` : ""}`, { video_id: video.id });
+      onEvent(`ShortsRequested: "${video.title}"${dateTag(video.recorded_at)} → ${parentYouTubeUrl}${shortsPrompt ? ` (prompt: ${shortsPrompt.slice(0, 40)}${shortsPrompt.length > 40 ? "…" : ""})` : ""}${rangeSuffix}`, { video_id: video.id });
       const genRes = await fetch("/api/shorts/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -263,6 +283,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           captions: shortsCaption,
           prompt: shortsPrompt || undefined,
           apiKey: opusApiKey,
+          ...(clipRangeStartSec != null && clipRangeEndSec != null && clipRangeEndSec > clipRangeStartSec
+            ? { clipRangeStartSec, clipRangeEndSec }
+            : {}),
         }),
       });
 
