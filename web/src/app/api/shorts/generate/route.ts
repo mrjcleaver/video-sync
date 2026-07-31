@@ -12,13 +12,14 @@ interface GenerateRequest {
   prompt?: string;
   apiKey: string;
   /** ADR-060 — window (in seconds, from the source video's t=0)
-   *  passed through to Opus as curationPref.range. When set,
-   *  Opus's own docs say it constrains "the range of the original
-   *  long-form video to generate clips from" — meaning a
-   *  5-hour recording sent with { startSec: 3600, endSec: 9000 }
-   *  bills based on the 1.5-hour window, not the whole file
-   *  (per Opus's OpenAPI; billing behaviour flagged in ADR-060
-   *  as needing operator confirmation with Opus support). */
+   *  passed through to Opus as curationPref.range. Constrains
+   *  which candidate clips Opus surfaces. Confirmed operationally
+   *  2026-07-27 that Opus billing scales with SOURCE DURATION
+   *  (Opus refuses manual uploads when the file duration exceeds
+   *  available credit), NOT with this range. So passing the range
+   *  narrows candidate selection but does not save credits — to
+   *  save credits the source must be pre-trimmed before Opus sees
+   *  it. See ADR-060 §4 for the pre-trim pipeline. */
   clipRangeStartSec?: number;
   clipRangeEndSec?: number;
 }
@@ -93,11 +94,12 @@ async function handler(req: NextRequest) {
   // groups options under curationPref + renderPref instead of the
   // flat top-level fields. See help.opus.pro/api-reference/openapi.json.
   // Build curationPref: topicKeywords from prompt + optional range
-  // window (ADR-060). Opus's own docs describe range as "the range
-  // of the original long-form video to generate clips from" —
-  // sending it means Opus should only ingest/process the specified
-  // seconds, so a 5-hour raw recording with a 1.5-hour scheduled
-  // main show doesn't pay the full 5 hours of credits.
+  // window (ADR-060). Range narrows candidate selection so Opus
+  // does not surface pre/post-show clips, but Opus's billing
+  // scales with SOURCE DURATION (confirmed operationally — Opus
+  // refuses manual uploads exceeding available credit). To save
+  // credits the source must be pre-trimmed before Opus sees it;
+  // ADR-060 §4 tracks the pre-trim pipeline as follow-up work.
   const curationPref: Record<string, unknown> = {};
   if (prompt) curationPref.topicKeywords = [prompt];
   const rangeStart = Number.isFinite(clipRangeStartSec) ? Math.max(0, Math.floor(clipRangeStartSec as number)) : null;

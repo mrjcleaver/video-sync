@@ -274,6 +274,24 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       // Opus can be diagnosed from the dashboard without opening Cloud
       // Logging. Paired with the ShortsError line on failure.
       onEvent(`ShortsRequested: "${video.title}"${dateTag(video.recorded_at)} → ${parentYouTubeUrl}${shortsPrompt ? ` (prompt: ${shortsPrompt.slice(0, 40)}${shortsPrompt.length > 40 ? "…" : ""})` : ""}${rangeSuffix}`, { video_id: video.id });
+      // ADR-060 §4 — Opus bills by source duration, not by
+      // curationPref.range. Warn the operator when they've asked
+      // for a window narrower than the source so credit spend
+      // isn't a surprise. The pre-trim pipeline (ffmpeg-cut mp4
+      // in a temp GCS bucket, then feed Opus that URL) is
+      // deferred; document it here for reviewer visibility.
+      if (clipRangeStartSec != null && clipRangeEndSec != null && video.duration_seconds > 0) {
+        const windowSec = clipRangeEndSec - clipRangeStartSec;
+        const untrimmedSec = video.duration_seconds - windowSec;
+        if (untrimmedSec > 60) {
+          onEvent(
+            `ShortsCreditWarning: Opus bills by full source duration (${Math.round(video.duration_seconds / 60)}m). ` +
+            `Your main-show window is ${Math.round(windowSec / 60)}m; you'll still be billed for the ~${Math.round(untrimmedSec / 60)}m of pre/post-show that Opus ingests but ignores. ` +
+            `Pre-trim pipeline is ADR-060 §4 follow-up.`,
+            { video_id: video.id },
+          );
+        }
+      }
       const genRes = await fetch("/api/shorts/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

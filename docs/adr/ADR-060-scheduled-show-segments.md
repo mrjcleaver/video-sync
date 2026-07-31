@@ -69,9 +69,18 @@ The provenance graph renders the segments as sub-nodes under the source record (
 
 ### 4. Clip generation defaults to the main show
 
-`generate_shorts` (ADR-029) accepts an optional `segment` parameter defaulting to `"main_show"`. When set, Opus Clip receives a `startOffset`/`endOffset` bound to that segment's window. The Shorts modal on VideoCard gains a segment picker (Pre-show / **Main show** / Post-show / Whole recording), defaulting to Main show.
+`generate_shorts` (ADR-029) accepts an optional `segment` parameter defaulting to `"main_show"`. When set, Opus Clip receives a `curationPref.range = { startSec, endSec }` bound to that segment's window. The Shorts modal on VideoCard gains a segment picker (Pre-show / **Main show** / Post-show / Whole recording), defaulting to Main show.
 
 Whole-recording remains available for the case where the operator hasn't configured a window for the series and wants to preview clips broadly.
+
+**Billing correction (2026-07-27, confirmed operationally):**
+Opus refuses uploads whose source duration exceeds the account's available credit — meaning **billing scales with source duration, not with `curationPref.range`**. `curationPref.range` constrains only which candidates Opus surfaces from within a source that has already been fully ingested. Consequences:
+
+- A 5-hour raw capture sent whole with `range = 1.5h` still consumes 5 hours of credit and will be refused if credits are short.
+- To avoid paying for pre/post-show minutes the operator must pre-trim the source before Opus sees it — i.e. produce a shorter mp4 whose *own* duration equals the main-show window, then hand Opus that shorter file.
+- A follow-up ADR describes the server-side pre-trim pipeline: download source → ffmpeg extract the main-show range → upload trimmed mp4 to a temp GCS location → pass that URL as Opus's `videoUrl`. Cleanup after the clip job reaches a terminal stage.
+
+Until the pre-trim pipeline lands, the current implementation still sends `curationPref.range` so *candidate selection* respects the main-show window (Opus won't surface pre-show clips), but the operator is paying for the full source duration. The Shorts modal will show a "credit cost = full source" warning whenever the trim window is narrower than the source so the operator has an explicit heads-up.
 
 ### 5. Published-to-YouTube edit workflow (Proposed — see ADR-061 or later)
 
