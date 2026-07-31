@@ -20,7 +20,7 @@ const SCOPES = ["https://www.googleapis.com/auth/drive.file"];
 
 let _drive: drive_v3.Drive | null = null;
 
-function getDrive(): drive_v3.Drive {
+export function getDrive(): drive_v3.Drive {
   if (_drive) return _drive;
   const auth = new GoogleAuth({ scopes: SCOPES });
   _drive = google.drive({ version: "v3", auth });

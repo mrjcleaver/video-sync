@@ -47,6 +47,20 @@ export interface SeriesRegistryEntry {
    *  e.g. "America/New_York". All three must be set for the
    *  window to take effect. */
   scheduled_timezone?: string;
+  /** ADR-062 — which summary sections drive highlight extraction
+   *  when building a stitched clip source. Default when omitted:
+   *  ["M", "C"] (Key Moments + Chat-Sparked). */
+  clip_source_sections?: Array<"M" | "L" | "T" | "C">;
+  /** ADR-062 — seconds before each highlight marker to include in
+   *  the extracted window. Default 30. */
+  clip_highlight_radius_before_sec?: number;
+  /** ADR-062 — seconds after each highlight marker to include in
+   *  the extracted window. Default 90. */
+  clip_highlight_radius_after_sec?: number;
+  /** ADR-062 — whether the main-show window is included alongside
+   *  summary highlights. Default true. Set false for a "just the
+   *  highlights" build. */
+  clip_include_main_show?: boolean;
 }
 
 export interface AlignedTitle {
