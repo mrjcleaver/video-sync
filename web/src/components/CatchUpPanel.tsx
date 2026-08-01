@@ -21,6 +21,7 @@ import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type Ti
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
+import { findDuplicateClusters, runCatalogDedupe, type DedupeProgressEvent } from "../lib/catalogDedupe";
 import { discoverOpusProjects, parseProjectIds, getOpusApiKey, findClipsMissingKeywords, refreshOpusKeywords, type DiscoverProgressEvent, type KeywordsRefreshProgressEvent } from "../lib/opusClipsDiscovery";
 
 interface Props {
@@ -246,6 +247,45 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   const [orphanRepairSummary, setOrphanRepairSummary] = useState<{ repaired: number; errors: number } | null>(null);
   const [orphanRepairProgress, setOrphanRepairProgress] = useState<{ index: number; total: number } | null>(null);
   const orphanCount = useMemo(() => findOrphanClips(videos).length, [videos]);
+
+  // ADR-062 follow-up — catalog dedupe. Clusters of records that
+  // share (source_platform, source_id); one canonical row + N
+  // losers per cluster. Losers get Abandon()'d in-run when the
+  // WASM state machine permits (Failed / Skipped / Published /
+  // Discovered / InScope); Approved / Publishing / ToRetry get
+  // reported as needing manual walk-back.
+  const dedupeClusters = useMemo(() => findDuplicateClusters(videos), [videos]);
+  const dedupeExtraCount = useMemo(
+    () => dedupeClusters.reduce((n, c) => n + c.losers.length, 0),
+    [dedupeClusters],
+  );
+  const [dedupeRunning, setDedupeRunning] = useState(false);
+  const [dedupeProgress, setDedupeProgress] = useState<{ index: number; total: number } | null>(null);
+  const [dedupeSummary, setDedupeSummary] = useState<{ clusters_processed: number; losers_abandoned: number; losers_manual: number; errors: number } | null>(null);
+
+  async function runDedupe() {
+    setDedupeRunning(true);
+    setDedupeSummary(null);
+    setDedupeProgress(null);
+    try {
+      await runCatalogDedupe(
+        actorState,
+        (ev: DedupeProgressEvent) => {
+          if (ev.type === "cluster_done" && ev.index) {
+            setDedupeProgress({ index: ev.index, total: ev.total });
+          } else if (ev.type === "complete" && ev.totals) {
+            setDedupeSummary(ev.totals);
+            setDedupeProgress(null);
+          }
+        },
+        onEvent,
+      );
+    } catch (err) {
+      onEvent?.(`Catalog dedupe errored: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDedupeRunning(false);
+    }
+  }
 
   // Opus discovery — operator pastes project IDs (Opus has no
   // list-all endpoint, so we can't enumerate for them).
@@ -939,6 +979,51 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
                   </>
                 )}
                 .
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Catalog dedupe (ADR-062 follow-up, 2026-08-01 audit).
+            Coalesces records sharing (source_platform, source_id).
+            Losers are Abandon()'d when the state machine permits
+            (Failed / Skipped / Published / Discovered / InScope);
+            Approved / Publishing / ToRetry are reported for manual
+            walk-back so an in-flight publish isn't clobbered. */}
+        <div style={{
+          marginTop: 12, padding: 10,
+          background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.28)", borderRadius: 4,
+          fontSize: "0.82rem",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>🗂 Catalog dedupe</div>
+          <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+            Finds records that share <code>(source_platform, source_id)</code> — an ingest gap that let the same
+            recording land in the catalog more than once. Keeps the canonical row (highest-status,
+            most-Destination-locations, oldest indexed_at) and abandons the rest.
+            Losers in Approved / Publishing / ToRetry states can't be abandoned directly and are surfaced in the
+            event log for the operator to walk back manually.
+            {dedupeClusters.length > 0 ? (
+              <> <strong>{dedupeClusters.length}</strong> cluster{dedupeClusters.length === 1 ? "" : "s"} detected covering <strong>{dedupeExtraCount}</strong> extra row{dedupeExtraCount === 1 ? "" : "s"}.</>
+            ) : (
+              <> No duplicate clusters detected.</>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={runDedupe}
+              disabled={dedupeRunning || dedupeClusters.length === 0}
+              title="Abandon duplicate rows; canonical stays. Losers in Approved/Publishing/ToRetry are logged instead of abandoned."
+            >
+              {dedupeRunning
+                ? dedupeProgress ? `Deduping ${dedupeProgress.index}/${dedupeProgress.total}…` : "Deduping…"
+                : `Run dedupe${dedupeClusters.length ? ` (${dedupeClusters.length} cluster${dedupeClusters.length === 1 ? "" : "s"})` : ""}`}
+            </button>
+            {dedupeSummary && (
+              <span style={{ color: "var(--text-muted)" }}>
+                Last run: {dedupeSummary.losers_abandoned} abandoned ·{" "}
+                {dedupeSummary.losers_manual} need manual walk-back ·{" "}
+                {dedupeSummary.errors} error{dedupeSummary.errors === 1 ? "" : "s"}.
               </span>
             )}
           </div>

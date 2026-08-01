@@ -206,12 +206,18 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     const chatJobs: Array<() => Promise<void>> = [];
     const creds = getZoomCredentials();
     const newIds: string[] = [];
+    // ADR-062 follow-up (catalog dedupe audit 2026-08-01): guard
+    // against re-importing a Zoom source that already exists in
+    // the catalog. Previously only isExcluded() gated import, so
+    // a second Fetch + Import on the same meeting produced a
+    // duplicate row. Same pattern YouTubeLiveImport already uses.
+    const existing = new Set(videoStore.getAll().map(v => `${v.source_platform}:${v.source_id}`));
 
     for (const meeting of meetings) {
       if (!selected.has(meeting.uuid)) continue;
 
       const sourceId = `zoom-${meeting.uuid}`;
-      if (isExcluded("Zoom", sourceId)) {
+      if (isExcluded("Zoom", sourceId) || existing.has(`Zoom:${sourceId}`)) {
         skipped++;
         continue;
       }

@@ -25,6 +25,7 @@ import { findMissingYouTubeRows } from "../../lib/youtubeIngest";
 import { findRecordsNeedingSummaryBadge } from "../../lib/summaryBadgeBackfill";
 import { findRecordsNeedingTitleAlignment } from "../../lib/youtubeTitleAlignBackfill";
 import { findOrphanClips } from "../../lib/orphanClipsRepair";
+import { findDuplicateClusters } from "../../lib/catalogDedupe";
 
 const NAV = [
   { path: "/catalog",    label: "Catalog",    icon: "📚", badge: "catalog" as const },
@@ -66,7 +67,9 @@ export function Sidebar() {
     const summariesNeeded = findRecordsNeedingSummaryBadge(videos, currentPromptVersion).length;
     const titlesNeeded = findRecordsNeedingTitleAlignment(videos, seriesRegistry).length;
     const orphanShorts = findOrphanClips(videos).length;
-    return missingYT + summariesNeeded + titlesNeeded + orphanShorts;
+    // ADR-062 follow-up — dupe clusters count as maintenance work.
+    const dupeExtras = findDuplicateClusters(videos).reduce((n, c) => n + c.losers.length, 0);
+    return missingYT + summariesNeeded + titlesNeeded + orphanShorts + dupeExtras;
   }, [videos, currentPromptVersion, seriesRegistry]);
 
   function badgeFor(kind: "catalog" | "import" | "maintain" | null): number | null {

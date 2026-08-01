@@ -142,9 +142,14 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
     let count = 0;
     let skipped = 0;
     let failed = 0;
+    // ADR-062 follow-up (catalog dedupe audit 2026-08-01): guard
+    // against re-importing an entry that already exists in the
+    // catalog. Same pattern as ZoomImport / FirefliesImport /
+    // YouTubeLiveImport.
+    const existing = new Set(videoStore.getAll().map(v => `${v.source_platform}:${v.source_id}`));
     for (const e of entries) {
       if (!selected.has(e.id)) continue;
-      if (isExcluded("Kaltura", e.id)) { skipped++; continue; }
+      if (isExcluded("Kaltura", e.id) || existing.has(`Kaltura:${e.id}`)) { skipped++; continue; }
 
       // ADR-055/056 — apply title alignment at ingest.
       const align = resolveTitleFromRegistry(e.name, e.createdAt, seriesRegistry);

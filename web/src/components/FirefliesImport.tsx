@@ -137,10 +137,15 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
     let count = 0;
     let skipped = 0;
     const newIds: string[] = [];
+    // ADR-062 follow-up (catalog dedupe audit 2026-08-01): guard
+    // against re-importing a Fireflies transcript that already
+    // exists in the catalog. Duplicates of the same source_id
+    // were the majority of hard-dup rows the audit surfaced.
+    const existing = new Set(videoStore.getAll().map(v => `${v.source_platform}:${v.source_id}`));
 
     for (const t of transcripts) {
       if (!selected.has(t.source_id)) continue;
-      if (isExcluded("Fireflies", t.source_id)) { skipped++; continue; }
+      if (isExcluded("Fireflies", t.source_id) || existing.has(`Fireflies:${t.source_id}`)) { skipped++; continue; }
 
       // ADR-055/056 — align generic Fireflies titles to their dated
       // form at ingest, preserving the raw platform title in
