@@ -10,8 +10,8 @@
 import VideoCard from "../../../components/VideoCard";
 import { useApp } from "../AppContext";
 import type { VideoRecordJSON } from "../../../lib/wasm";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const ACTIVE_STATUSES = ["Discovered", "InScope", "Approved", "Publishing", "Failed", "ToRetry"] as const;
 // ADR-062 follow-up (dedupe audit 2026-08-01): moved Abandoned out
@@ -30,25 +30,33 @@ function lastChange(v: VideoRecordJSON): number {
 }
 
 export default function CatalogPage() {
+  // useSearchParams needs a Suspense boundary in Next 15. Client-
+  // only page but the framework still enforces it during prerender.
+  return (
+    <Suspense fallback={null}>
+      <CatalogPageInner />
+    </Suspense>
+  );
+}
+
+function CatalogPageInner() {
   const {
     videos, broadcastPairs, showPaired, setShowPaired,
     filter, setFilter, search, setSearch, sortBy, setSortBy,
+    sortDir, setSortDir,
     refresh, addEvent, ensureVideoVisible, bulkApprove, exclusionCount,
   } = useApp();
   const router = useRouter();
 
-  // ?just=id1,id2 — set after an import so the operator sees just
-  // the freshly-imported cards. Read once on mount + on-nav via
-  // window.location (avoids the useSearchParams Suspense wrapping
-  // constraint). Dismissed by the banner's "Show all" link, which
-  // clears the query string without a full nav.
-  const [justIds, setJustIds] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = new URLSearchParams(window.location.search).get("just");
-    if (raw) setJustIds(new Set(raw.split(",").filter(Boolean)));
-    else setJustIds(new Set());
-  }, []);
+  // ?just=id1,id2 — set after an import (or a ⛶ focus click) so
+  // the operator sees just those cards. useSearchParams triggers
+  // a re-render on URL change, so a focus click that pushes a new
+  // ?just= updates the filter in place.
+  const searchParams = useSearchParams();
+  const justIds = useMemo(() => {
+    const raw = searchParams.get("just");
+    return raw ? new Set(raw.split(",").filter(Boolean)) : new Set<string>();
+  }, [searchParams]);
 
   // OpusClip records are rendered nested under their parent
   // VideoCard's collapsible '✂️ N clips' section — never as
@@ -63,8 +71,9 @@ export default function CatalogPage() {
     : catalogPoolPostPairing;
 
   function clearJustFilter() {
-    setJustIds(new Set());
-    // Drop the ?just= param from the URL without a full nav.
+    // Drop the ?just= param from the URL without a full nav — the
+    // useSearchParams-driven useMemo above will re-derive an empty
+    // set on the URL change.
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.delete("just");
@@ -90,10 +99,11 @@ export default function CatalogPage() {
       return q.split(/\s+/).every(term => haystack.includes(term));
     });
 
+    const dir = sortDir === "asc" ? -1 : 1;
     return filteredBySearch.slice().sort((a, b) =>
       sortBy === "recorded"
-        ? new Date(b.recorded_at || b.indexed_at).getTime() - new Date(a.recorded_at || a.indexed_at).getTime()
-        : lastChange(b) - lastChange(a),
+        ? dir * (new Date(b.recorded_at || b.indexed_at).getTime() - new Date(a.recorded_at || a.indexed_at).getTime())
+        : dir * (lastChange(b) - lastChange(a)),
     );
   })();
 
@@ -229,6 +239,14 @@ export default function CatalogPage() {
             {s === "recorded" ? "Date recorded" : "Last change"}
           </button>
         ))}
+        <button
+          className="btn btn-sm"
+          style={{ padding: "1px 8px", fontSize: "0.72rem" }}
+          onClick={() => setSortDir(sortDir === "desc" ? "asc" : "desc")}
+          title={sortDir === "desc" ? "Currently newest first — click for oldest first" : "Currently oldest first — click for newest first"}
+        >
+          {sortDir === "desc" ? "↓ newest first" : "↑ oldest first"}
+        </button>
         {broadcastPairs.destinationRecordIds.size > 0 && (
           <button
             className={`btn btn-sm ${showPaired ? "btn-primary" : ""}`}

@@ -65,6 +65,10 @@ interface AppContextValue {
   setSearch: (v: string) => void;
   sortBy: "recorded" | "updated";
   setSortBy: (v: "recorded" | "updated") => void;
+  /** Reverse the sort — default is desc (newest first). Ascending
+   *  puts oldest first, useful for chronological walkthroughs. */
+  sortDir: "desc" | "asc";
+  setSortDir: (v: "desc" | "asc") => void;
   /** Async-hydrated bits the sidebar needs to compute count badges
    *  (Maintain aggregate work, Import backfill queue). Values are
    *  cached once at layout mount so the sidebar's badge renders
@@ -94,6 +98,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [filter, setFilter] = useState<string>("Active");
   const [search, setSearch] = useState<string>("");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [showPaired, setShowPaired] = useState(false);
   const [currentPromptVersion, setCurrentPromptVersion] = useState<number | null>(null);
   const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
@@ -270,6 +275,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     search,
     setSearch,
     sortBy,
+    sortDir,
+    setSortDir,
     setSortBy,
     currentPromptVersion,
     seriesRegistry,

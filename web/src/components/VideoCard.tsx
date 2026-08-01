@@ -34,6 +34,7 @@ import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
 import { resolveAlignedTitle, resolveAlignedTitleForced, resolveDiscordChannel } from "../lib/youtubeTitleAlign";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import { formatDateHover } from "../lib/dateHover";
+import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
 import { refreshOneShortFromOpus } from "../lib/shortsRefresh";
 
@@ -78,6 +79,7 @@ interface Props {
 }
 
 export default function VideoCard({ video, allVideos, broadcastPairs, onMutated, onEvent, onNavigateToVideo }: Props) {
+  const router = useRouter();
   // ADR-036: derive actor from IAP JWT via /api/auth/me. Falls back to the
   // synthetic admin during boot or in dev mode (ALLOW_NO_IAP=1) so single-
   // user behaviour is preserved until IAP is configured. Throws on auth
@@ -1957,6 +1959,16 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           )}
         </div>
+        <button
+          onClick={() => router.push(`/catalog?just=${video.id}`)}
+          title="Focus this card — filter the catalog to just this record. Click 'Show all' on the banner to return."
+          style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: "var(--text-muted)", padding: "0 4px", fontSize: "1rem",
+          }}
+        >
+          ⛶
+        </button>
         <span className={`status-badge status-${status}`}>{status}</span>
       </div>
 
@@ -2722,31 +2734,103 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             <div style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: 8 }}>No upstream links.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-              {video.upstream_links.map((link) => (
-                <div key={`${link.platform}-${link.external_id}`} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>{derivationLabel(link.relation)}</span>
-                  <span style={{ fontWeight: 600 }}>{link.platform}</span>
-                  <span style={{ fontFamily: "monospace", fontSize: "0.72rem" }}>{link.external_id}</span>
-                  {link.account_hint && <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({link.account_hint})</span>}
-                  <span style={{ color: "var(--text-muted)", fontSize: "0.65rem" }}>{linkOriginLabel(link.linked_by)}</span>
-                  <button
-                    className="btn btn-sm"
-                    style={{ padding: "1px 6px", fontSize: "0.65rem", marginLeft: "auto" }}
-                    onClick={() => removeUpstreamLink(link, false)}
-                    title="Remove link"
-                  >
-                    Remove
-                  </button>
-                  <button
-                    className="btn btn-sm btn-red"
-                    style={{ padding: "1px 6px", fontSize: "0.65rem" }}
-                    onClick={() => removeUpstreamLink(link, true)}
-                    title="Reject — suppress future auto-suggestions"
-                  >
-                    Reject
-                  </button>
+              {video.upstream_links.map((link) => {
+                // Resolve the linked record so we can show its
+                // title, start-time, duration, and transcript
+                // availability instead of just a platform/id pair.
+                const linked = (allVideos ?? []).find(v =>
+                  (link.video_id && v.id === link.video_id)
+                  || (v.source_platform === link.platform && v.source_id === link.external_id),
+                );
+                const fmtDur = (secs: number) => {
+                  if (!secs) return "—";
+                  const h = Math.floor(secs / 3600);
+                  const m = Math.floor((secs % 3600) / 60);
+                  const s = Math.floor(secs % 60);
+                  return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+                };
+                const fmtTime = (iso: string | null | undefined) => {
+                  if (!iso) return "—";
+                  const d = new Date(iso);
+                  if (isNaN(d.getTime())) return "—";
+                  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                };
+                const hasOwnTranscript = linked && (linked.transcript_text?.length ?? 0) >= 200;
+                const hasBorrowedTranscript = linked && !hasOwnTranscript
+                  && !!resolveTranscriptForOperation(linked, allVideos ?? [linked]);
+                return (
+                <div
+                  key={`${link.platform}-${link.external_id}`}
+                  style={{
+                    display: "flex", flexDirection: "column", gap: 3,
+                    padding: "6px 8px", borderRadius: 4,
+                    background: "var(--bg)", border: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{
+                      fontSize: "0.62rem", padding: "1px 6px", borderRadius: 3,
+                      background: "rgba(99,102,241,0.15)", color: "var(--accent)",
+                      fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
+                    }}>{derivationLabel(link.relation)}</span>
+                    <span style={{ fontWeight: 600, fontSize: "0.75rem" }}>{link.platform}</span>
+                    {linked ? (
+                      <button
+                        onClick={() => onNavigateToVideo?.(linked.id)}
+                        style={{
+                          background: "none", border: "none", padding: 0, cursor: "pointer",
+                          color: "var(--text)", fontSize: "0.75rem", textAlign: "left",
+                          flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                          whiteSpace: "nowrap", textDecoration: "underline",
+                        }}
+                        title="Jump to this record's card"
+                      >
+                        {linked.title}
+                      </button>
+                    ) : (
+                      <span style={{ fontStyle: "italic", color: "var(--text-muted)", fontSize: "0.72rem", flex: 1 }}>
+                        (not in catalog) <span style={{ fontFamily: "monospace" }}>{link.external_id}</span>
+                      </span>
+                    )}
+                    <span style={{ color: "var(--text-muted)", fontSize: "0.62rem" }}>{linkOriginLabel(link.linked_by)}</span>
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: "1px 6px", fontSize: "0.62rem" }}
+                      onClick={() => removeUpstreamLink(link, false)}
+                      title="Remove link"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      className="btn btn-sm btn-red"
+                      style={{ padding: "1px 6px", fontSize: "0.62rem" }}
+                      onClick={() => removeUpstreamLink(link, true)}
+                      title="Reject — suppress future auto-suggestions"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                  {linked && (
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.7rem", color: "var(--text-muted)", flexWrap: "wrap" }}>
+                      <span title={formatDateHover(linked.recorded_at || linked.indexed_at)}>
+                        🕐 {fmtTime(linked.recorded_at || linked.indexed_at)}
+                      </span>
+                      <span title="Duration">⏱ {fmtDur(linked.duration_seconds)}</span>
+                      <span title={
+                        hasOwnTranscript ? `Own transcript (${Math.round((linked.transcript_text?.length ?? 0) / 5)} words est.)`
+                        : hasBorrowedTranscript ? "Borrowed transcript via ADR-053 provenance"
+                        : "No transcript"
+                      }>
+                        {hasOwnTranscript ? "📄 own"
+                         : hasBorrowedTranscript ? "📄 borrowed"
+                         : "✗ no transcript"}
+                      </span>
+                      {link.account_hint && <span>({link.account_hint})</span>}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {!showLinkForm ? (
