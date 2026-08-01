@@ -14,7 +14,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const ACTIVE_STATUSES = ["Discovered", "InScope", "Approved", "Publishing", "Failed", "ToRetry"] as const;
-const DONE_STATUSES = ["Published", "Skipped", "Abandoned"] as const;
+// ADR-062 follow-up (dedupe audit 2026-08-01): moved Abandoned out
+// of DONE_STATUSES so soft-deleted records don't clutter the
+// "Done" view. They stay reachable via the explicit "Abandoned"
+// status filter or "All".
+const DONE_STATUSES = ["Published", "Skipped"] as const;
 const ALL_STATUSES = ["Active", "All", ...ACTIVE_STATUSES, "Done", ...DONE_STATUSES] as const;
 
 function lastChange(v: VideoRecordJSON): number {
