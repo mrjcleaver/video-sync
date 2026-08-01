@@ -2731,7 +2731,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             Upstream provenance
           </div>
           {(!video.upstream_links || video.upstream_links.length === 0) ? (
-            <div style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: 8 }}>No upstream links.</div>
+            <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: 6, fontStyle: "italic" }}>
+              None — this record is a source of truth (no upstream links).
+              For where it lives + where it&apos;s been published, see the Locations panel below.
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
               {video.upstream_links.map((link) => {

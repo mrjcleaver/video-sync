@@ -28,6 +28,17 @@ export async function getSeriesRegistry(): Promise<SeriesRegistryEntry[]> {
   return inflight;
 }
 
+/**
+ * Synchronous accessor for the AppContext-warmed cache. Returns
+ * [] until the first async fetch resolves. Suitable for
+ * applyProcessingRules and other hot-path callers that can't
+ * await; the cache is warmed once at boot by AppContext so by
+ * the time any interaction runs it's populated.
+ */
+export function getSeriesRegistryCached(): SeriesRegistryEntry[] {
+  return cache ?? [];
+}
+
 /** Force a re-fetch. Call after saving the registry via saveSeriesRegistry. */
 export function refreshSeriesRegistry(): void {
   cache = null;
