@@ -136,12 +136,12 @@ function CatalogPageInner() {
           }}
         >
           <span>
-            ⤴ Showing <strong>{visibleVideos.length}</strong> just-imported record{visibleVideos.length === 1 ? "" : "s"}.
+            🔍 Focused on <strong>{visibleVideos.length}</strong> record{visibleVideos.length === 1 ? "" : "s"} (filtered by <code>?just=</code>).
           </span>
           <button
             className="btn btn-sm"
             onClick={clearJustFilter}
-            title="Drop the just-imported filter and show the full catalog"
+            title="Drop the just= filter and show the full catalog"
           >
             Show all
           </button>
