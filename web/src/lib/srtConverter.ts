@@ -21,7 +21,7 @@ export function captionsToTranscript(raw: string): string {
   if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
 
   const lines = raw.split(/\r?\n/);
-  const out: string[] = [];
+  const out: Array<{ time: string; text: string }> = [];
 
   let currentTime: string | null = null;
   let buffer: string[] = [];
@@ -29,7 +29,7 @@ export function captionsToTranscript(raw: string): string {
   function flush() {
     if (currentTime && buffer.length > 0) {
       const text = buffer.join(" ").trim().replace(/\s+/g, " ");
-      if (text) out.push(`[${currentTime}] ${text}`);
+      if (text) out.push({ time: currentTime, text });
     }
     buffer = [];
     currentTime = null;
@@ -59,5 +59,38 @@ export function captionsToTranscript(raw: string): string {
   }
   flush();
 
-  return out.join("\n");
+  // YouTube auto-caption VTT is heavily overlapped: each cue restates
+  // the tail of the previous cue's text as its head. On a multi-hour
+  // recording this makes the effective content ~30% of the char count
+  // — meaningful signal buried in duplication. Dedupe: for each cue,
+  // strip its longest prefix that appears as a suffix of the previous
+  // cue's text (word-boundary aware, cap at 16 words). Cleanly-authored
+  // VTT (Kaltura, Fireflies) rarely triggers the trim, so this is safe
+  // to apply universally.
+  const deduped: string[] = [];
+  let prevWords: string[] = [];
+  for (const { time, text } of out) {
+    const words = text.split(/\s+/);
+    let overlap = 0;
+    const maxCheck = Math.min(16, words.length, prevWords.length);
+    for (let n = maxCheck; n >= 1; n--) {
+      let match = true;
+      for (let i = 0; i < n; i++) {
+        if (prevWords[prevWords.length - n + i]?.toLowerCase() !== words[i]?.toLowerCase()) {
+          match = false;
+          break;
+        }
+      }
+      if (match) { overlap = n; break; }
+    }
+    const kept = words.slice(overlap).join(" ").trim();
+    if (kept) {
+      deduped.push(`[${time}] ${kept}`);
+      prevWords = words;
+    } else {
+      // Cue was pure overlap — carry the previous cue's tail forward
+      // so the next overlap check still sees the same context.
+    }
+  }
+  return deduped.join("\n");
 }

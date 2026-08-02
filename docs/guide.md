@@ -25,3 +25,6 @@ Specific topics that moved on since this document was written:
 | Roles + access control | `ADR-036` (Google Workspace Authentication) — Admin / Publisher / Viewer derived from Cloud Identity Groups, gated by IAP |
 | What lives where (server vs. browser) | `user-guide.md` §10 "What Lives Where" — catalog, transcripts, rules, backfill profiles + queue, exclusions all server-shared |
 | Audit log | `ADR-041` (App-Level Audit Log) — surfaced both to Cloud Logging and the in-app EventLog |
+| Show Notes prompt / Description strategy | `user-guide.md` §5 "Description Strategy (ADR-064)" and "Show Notes Prompt (ADR-046)" — both live on **Config** (formerly split across Maintain + code) |
+| Fetching a transcript when the record has none | `user-guide.md` §12 "YouTube Transcript Fallback (ADR-063)" — progressive-reach captions API → InnerTube → yt-dlp cascade |
+| Pushing local edits to the YouTube video | `user-guide.md` §12 "Push Title + Description to YouTube (ADR-064-adjacent)" — replaces the older Realign-and-push button |

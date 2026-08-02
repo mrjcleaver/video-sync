@@ -10,14 +10,16 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { VideoRecordJSON } from "../lib/wasm";
-import { useCurrentActor } from "../lib/useCurrentActor";
+import { videoStore } from "../lib/store";
+import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { formatUsd, estimatePerRecordCost } from "../lib/llmCost";
 import { runCatchUp, runBroadcastPairMigration, type OrchestratorEvent, type StageId, type StageStatus, AUTO_LINK_THRESHOLD, type MigrationProgressEvent } from "../lib/catchupOrchestrator";
 import { runYouTubeRowBackfill, findMissingYouTubeRows, type BackfillProgressEvent } from "../lib/youtubeIngest";
 import { runSummaryBadgeBackfill, findRecordsNeedingSummaryBadge, type BackfillProgressEvent as SummaryBackfillEvent } from "../lib/summaryBadgeBackfill";
 import { getCurrentPromptVersion } from "../lib/summaryPromptClient";
-import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, type TitleAlignmentProgressEvent } from "../lib/youtubeTitleAlignBackfill";
+import { runYouTubeTitleAlignBackfill, findRecordsNeedingTitleAlignment, findRecordsSkippedByAlignment, type TitleAlignmentProgressEvent } from "../lib/youtubeTitleAlignBackfill";
 import { getSeriesRegistry } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
@@ -71,6 +73,7 @@ const STATUS_COLOR: Record<StageStatus, string> = {
 
 export default function CatchUpPanel({ open, videos, onEvent, onClose, variant = "drawer" }: Props) {
   const actorState = useCurrentActor();
+  const router = useRouter();
   const [maxRecords, setMaxRecords] = useState(1);
   const [costCapUsd, setCostCapUsd] = useState(10);
   const [runState, setRunState] = useState<RunState>("idle");
@@ -232,6 +235,124 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
     () => findRecordsNeedingTitleAlignment(videos, seriesRegistry, { force: true }),
     [videos, seriesRegistry],
   );
+  const titleAlignSkipped = useMemo(
+    () => findRecordsSkippedByAlignment(videos, seriesRegistry),
+    [videos, seriesRegistry],
+  );
+  // Broader "undated records" list — every catalog row whose current
+  // title has no date and isn't already picked up by titleAlignWork.
+  // Catches the case where the record's title doesn't match ANY current
+  // series pattern (registry gap or non-series record). Independent of
+  // recorded_at.
+  const titleAlignUndated = useMemo(() => {
+    const dateRe = /\b\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/i;
+    // Every non-clip catalog row whose current title has no date.
+    // Includes rows the "Run alignment" button will handle (so the
+    // operator can spot-check what's queued) as well as rows the
+    // resolver can't handle (which get the per-row diagnostic).
+    return videos.filter((v) =>
+      v.source_platform !== "OpusClip"
+      && v.title
+      && !dateRe.test(v.title),
+    );
+  }, [videos]);
+  const willRenameIds = useMemo(
+    () => new Set(titleAlignWork.map((c) => c.record.id)),
+    [titleAlignWork],
+  );
+  const [showSkippedList, setShowSkippedList] = useState(false);
+
+  // ADR-064 diagnostic — flag records whose title matches a series
+  // whose registry entry is MISSING scheduled_start_local /
+  // scheduled_end_local / scheduled_timezone. Without those three
+  // fields, ADR-060's computeScheduledWindow returns null and the
+  // record's Show Notes / description / clip source all bake in the
+  // full recording — pre-show and post-show noise included.
+  const seriesScheduleGaps = useMemo(() => {
+    // Which series in the registry are missing any of the three fields?
+    const incomplete = new Map<string, { seriesName: string; missing: string[] }>();
+    for (const e of seriesRegistry) {
+      const missing: string[] = [];
+      if (!(e.scheduled_start_local ?? "").trim()) missing.push("start");
+      if (!(e.scheduled_end_local ?? "").trim()) missing.push("end");
+      if (!(e.scheduled_timezone ?? "").trim()) missing.push("timezone");
+      if (missing.length > 0) incomplete.set(e.series_name, { seriesName: e.series_name, missing });
+    }
+    if (incomplete.size === 0) return { series: [], records: [] };
+    // Which records hit each incomplete series?
+    const gaps: Array<{ record: VideoRecordJSON; series_name: string; missing: string[] }> = [];
+    const sorted = [...seriesRegistry].sort((a, b) => b.series_name.length - a.series_name.length);
+    for (const v of videos) {
+      if (v.source_platform === "OpusClip") continue;
+      if (!v.title) continue;
+      for (const entry of sorted) {
+        let re: RegExp;
+        try { re = new RegExp(entry.pattern, "i"); } catch { continue; }
+        if (!re.test(v.title)) continue;
+        const inc = incomplete.get(entry.series_name);
+        if (inc) gaps.push({ record: v, series_name: inc.seriesName, missing: inc.missing });
+        break;
+      }
+    }
+    return { series: Array.from(incomplete.values()), records: gaps };
+  }, [seriesRegistry, videos]);
+  const [showScheduleGaps, setShowScheduleGaps] = useState(false);
+
+  // Nearest-match suggester — for each undated row where NO registry
+  // pattern already matches, propose the series whose name shares the
+  // most substantial tokens with the title. Cheap Jaccard over
+  // lowercased words ≥ 4 chars; drops trivial stop-words and single
+  // matches ("Agentics" or "Live" alone). Returns null if no series
+  // clears a token-count threshold.
+  function suggestNearestSeries(title: string): { series_name: string; overlap: number } | null {
+    const STOP = new Set(["live", "with", "from", "the", "and", "for"]);
+    const tokenise = (s: string) =>
+      new Set(
+        s.toLowerCase()
+         .replace(/[^a-z0-9\s]/g, " ")
+         .split(/\s+/)
+         .filter((w) => w.length >= 4 && !STOP.has(w)),
+      );
+    const titleTok = tokenise(title);
+    if (titleTok.size === 0) return null;
+    let best: { series_name: string; overlap: number } | null = null;
+    for (const entry of seriesRegistry) {
+      const seriesTok = tokenise(entry.series_name);
+      let overlap = 0;
+      for (const t of seriesTok) if (titleTok.has(t)) overlap++;
+      if (overlap === 0) continue;
+      if (!best || overlap > best.overlap) best = { series_name: entry.series_name, overlap };
+    }
+    // At least one substantive shared token AND the record's title
+    // shouldn't be a distant relative — 2 tokens = confident, 1 = fair.
+    return best && best.overlap >= 1 ? best : null;
+  }
+
+  async function acceptSuggestion(recordId: string, seriesName: string) {
+    const rec = videos.find((v) => v.id === recordId);
+    if (!rec) return;
+    const me = (rec.metadata_extra ?? {}) as Record<string, unknown>;
+    const liveStart = typeof me.actual_start_time === "string" ? me.actual_start_time
+                    : typeof me.scheduled_start_time === "string" ? me.scheduled_start_time
+                    : null;
+    const when = rec.recorded_at ?? liveStart ?? rec.indexed_at ?? null;
+    const t = when ? new Date(when) : null;
+    if (!t || isNaN(t.getTime())) {
+      onEvent?.(`Suggestion rejected for ${rec.id}: no valid recorded_at (${String(when)})`);
+      return;
+    }
+    const monthShort = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][t.getUTCMonth()];
+    const dated = `${t.getUTCDate()} ${monthShort} ${t.getUTCFullYear()}`;
+    const newTitle = `${seriesName} - ${dated}`;
+    try {
+      videoStore.mutate(rec.id, (r) =>
+        r.update_metadata(actorCommand(actorState, { edits: { title: newTitle } })),
+      );
+      onEvent?.(`Suggestion accepted for ${rec.id}: "${rec.title}" → "${newTitle}"`, { video_id: rec.id });
+    } catch (err) {
+      onEvent?.(`Suggestion apply failed for ${rec.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   const titleAlignCounts = useMemo(() => {
     const paired = titleAlignWork.filter((c) => c.alignment.source === "paired_canonical").length;
     const registry = titleAlignWork.filter((c) => c.alignment.source === "series_registry").length;
@@ -859,10 +980,10 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           background: "rgba(96,165,250,0.05)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>📄 Summary badge backfill (ADR-052)</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>📄 Show Notes backfill (ADR-052)</div>
           <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
             Walks every record with a usable transcript (own or borrowed via paired Fireflies / Zoom / YouTube / Kaltura per ADR-053)
-            and generates summary badges that are missing or stale (prompt version drifted). Default skips locked records.
+            and generates Show Notes that are missing or stale (prompt version drifted). Default skips locked records.
             {summaryCurrentPromptVersion != null && (
               <> Current prompt version: <strong>v{summaryCurrentPromptVersion}</strong>.</>
             )}
@@ -906,6 +1027,72 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             )}
           </div>
         </div>
+
+        {/* ADR-064 diagnostic — series missing schedule fields */}
+        {seriesScheduleGaps.records.length > 0 && (
+          <div style={{
+            marginTop: 12, padding: 10,
+            background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 4,
+            fontSize: "0.82rem",
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ Series missing schedule fields (ADR-060/064)</div>
+            <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>
+              <strong>{seriesScheduleGaps.series.length}</strong> series in the registry
+              lack one or more of <code>scheduled_start_local</code>, <code>scheduled_end_local</code>,
+              <code>scheduled_timezone</code>. Without them, ADR-060&apos;s scheduled-window
+              trim can&apos;t fire — <strong>{seriesScheduleGaps.records.length}</strong> catalog
+              record{seriesScheduleGaps.records.length === 1 ? "" : "s"} in {seriesScheduleGaps.series.length === 1 ? "that series" : "those series"} bake in the
+              full recording (pre-show + post-show) when generating Show Notes,
+              descriptions, or clip sources. Fix in <strong>Config → Series Registry</strong>,
+              then re-run <em>Show Notes backfill</em> above.
+            </div>
+            <button
+              className="btn btn-sm"
+              style={{ fontSize: "0.7rem" }}
+              onClick={() => setShowScheduleGaps((v) => !v)}
+            >
+              {showScheduleGaps ? "▾" : "▸"} {seriesScheduleGaps.series.length} affected series · {seriesScheduleGaps.records.length} record{seriesScheduleGaps.records.length === 1 ? "" : "s"}
+            </button>
+            {showScheduleGaps && (
+              <div style={{
+                marginTop: 6, padding: 8,
+                background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4,
+                maxHeight: 260, overflowY: "auto",
+              }}>
+                {seriesScheduleGaps.series.map((s) => (
+                  <div key={s.seriesName} style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600 }}>
+                      &quot;{s.seriesName}&quot; <span style={{ color: "#f59e0b", fontWeight: 400 }}>
+                        — missing: {s.missing.join(", ")}
+                      </span>
+                    </div>
+                    <div style={{ marginLeft: 12, marginTop: 4 }}>
+                      {seriesScheduleGaps.records
+                        .filter((g) => g.series_name === s.seriesName)
+                        .map((g) => (
+                          <div key={g.record.id} style={{ padding: "2px 0", fontSize: "0.76rem" }}>
+                            <button
+                              onClick={() => router.push(`/catalog?just=${g.record.id}`)}
+                              style={{
+                                background: "none", border: "none", padding: 0, cursor: "pointer",
+                                color: "var(--text)", textDecoration: "underline", textAlign: "left",
+                              }}
+                              title="Jump to this record's card"
+                            >
+                              {g.record.title || "(untitled)"}
+                            </button>
+                            <span style={{ fontFamily: "monospace", fontSize: "0.66rem", color: "var(--text-muted)", marginLeft: 8 }}>
+                              {g.record.id.slice(0, 8)}…
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ADR-055 — YouTube title alignment. Fourth maintenance card.
             Rewrites undated YouTube-source titles to the dated form
@@ -982,6 +1169,102 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
               </span>
             )}
           </div>
+          {(titleAlignUndated.length > 0 || titleAlignSkipped.length > 0) && (
+            <div style={{ marginTop: 8, fontSize: "0.75rem" }}>
+              <button
+                className="btn btn-sm"
+                style={{ fontSize: "0.7rem" }}
+                onClick={() => setShowSkippedList(v => !v)}
+                title="Every catalog record whose title has no date and won't be picked up by the alignment run. Shows the resolver's skip reason for each so you can pick the fix — add a registry alias, re-import to get a valid recorded_at, etc."
+              >
+                {showSkippedList ? "▾" : "▸"} {titleAlignUndated.length} undated record{titleAlignUndated.length === 1 ? "" : "s"} the resolver won&apos;t rename
+              </button>
+              {showSkippedList && (
+                <div style={{
+                  marginTop: 6, padding: 8,
+                  background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4,
+                  maxHeight: 260, overflowY: "auto",
+                }}>
+                  {titleAlignUndated.length === 0 && (
+                    <div style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
+                      All catalog titles are already dated. (Nothing to inspect here.)
+                    </div>
+                  )}
+                  {titleAlignUndated.map(rec => {
+                    const willBeRenamed = willRenameIds.has(rec.id);
+                    const alignWorkItem = willBeRenamed ? titleAlignWork.find(c => c.record.id === rec.id) : null;
+                    const diag = titleAlignSkipped.find(s => s.record.id === rec.id);
+                    const reason = diag?.reason;
+                    // For "no series pattern matches" rows, propose a
+                    // nearest-match by token overlap. For "no
+                    // recorded_at" rows, the pattern already matches
+                    // (diag.matched_series) — the operator can accept
+                    // to apply that series if the date can be derived.
+                    const suggestion = reason === "no_recorded_at"
+                      ? { series_name: diag!.matched_series, overlap: 99 }
+                      : reason === "already_dated"
+                        ? null
+                        : suggestNearestSeries(rec.title);
+                    const label = willBeRenamed && alignWorkItem
+                      ? `✓ will rename to "${alignWorkItem.alignment.new_title}" on Run alignment`
+                    : reason === "no_recorded_at"    ? `⚠ matches "${diag!.matched_series}" but no valid recorded_at`
+                    : reason === "already_dated"    ? `✓ already dated`
+                    : suggestion                    ? `💡 nearest match: "${suggestion.series_name}"`
+                    : `— no series pattern matches its title (registry gap?)`;
+                    const color = willBeRenamed
+                      ? "#22c55e"
+                    : reason === "no_recorded_at"    ? "#f59e0b"
+                    : reason === "already_dated"    ? "var(--text-muted)"
+                    : suggestion                    ? "#60a5fa"
+                    : "var(--text-muted)";
+                    const canAccept = suggestion != null && !!(
+                      rec.recorded_at
+                      || (rec.metadata_extra as Record<string, unknown> | null)?.actual_start_time
+                      || (rec.metadata_extra as Record<string, unknown> | null)?.scheduled_start_time
+                    );
+                    return (
+                      <div key={rec.id} style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            onClick={() => router.push(`/catalog?just=${rec.id}`)}
+                            style={{
+                              background: "none", border: "none", padding: 0, cursor: "pointer",
+                              color: "var(--text)", fontSize: "0.82rem", textAlign: "left",
+                              textDecoration: "underline", flex: 1, minWidth: 0,
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}
+                            title="Jump to this record's card"
+                          >
+                            {rec.title || "(untitled)"}
+                          </button>
+                          {suggestion && canAccept && (
+                            <button
+                              className="btn btn-sm"
+                              style={{ padding: "1px 6px", fontSize: "0.68rem" }}
+                              onClick={() => acceptSuggestion(rec.id, suggestion.series_name)}
+                              title={`Rename to "${suggestion.series_name} - D MMM YYYY" using the record's date.`}
+                            >
+                              ✓ Accept
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ fontFamily: "monospace", fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                          {rec.id.slice(0, 8)}… · {rec.source_platform}:{rec.source_id}
+                        </div>
+                        <div style={{ fontSize: "0.68rem", color }}>
+                          {label}
+                        </div>
+                        <div style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                          recorded_at: <code>{String(rec.recorded_at ?? "null")}</code>
+                          {!canAccept && suggestion && <> · needs a valid date before accept</>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Catalog dedupe (ADR-062 follow-up, 2026-08-01 audit).

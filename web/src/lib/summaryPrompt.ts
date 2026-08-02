@@ -49,8 +49,10 @@ For each chapter, emit a chapter heading and FOUR sections, in this exact order,
 ### Chat-Sparked Discussions
 
 Each section is a bulleted list. Each bullet:
-- Starts with a timestamp in square brackets, e.g. [00:14:32]
+- Starts with a timestamp in square brackets in EXACT [HH:MM:SS] form — always 2-digit hour, minute, and second (e.g. [00:14:32], NOT [14:32] and NOT [0:14:32]). Even for events at 3 minutes in, write [00:03:00].
 - Then a one-paragraph description referencing the speaker(s) where known.
+
+The VERY FIRST bullet of the first chapter's "Key Moments" section MUST have timestamp [00:00:00] — a generic opener like "Show begins" is fine. This anchors the YouTube-description chapter list at 0.
 
 Section definitions:
 - **Key Moments** — narrative beats in the video itself (concept introductions, decisions, demos, transitions).
@@ -61,6 +63,8 @@ Section definitions:
 If a section has no entries for a chapter, omit the heading for that chapter (do not emit an empty section).
 
 Chapter heading format: \`## {N}. {Short chapter title} [{HH:MM}-{HH:MM}]\`
+
+Do NOT emit a "chapter map" or "table of contents" or any concatenated list of timestamps as a preamble. Timestamps belong ONLY inside the bulleted sections. The chapter headings themselves already convey structure — the reader (and downstream YouTube-description conversion) picks up chapter cues from the FIRST bullet under Key Moments in each chapter, not from any summary line above.
 
 Output ONLY the Markdown summary. No preamble. No JSON wrapper. No closing remarks.`;
 

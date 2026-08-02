@@ -82,8 +82,14 @@ function CatalogPageInner() {
   }
 
   const filtered = (() => {
+    // When ?just= is active the operator wants THOSE records regardless
+    // of what status they carry — Abandoned, Skipped, whatever. Layering
+    // the status filter on top of an explicit id list hides the very
+    // record the operator clicked "focus" on. Skip the status filter
+    // entirely under ?just=.
     const base =
-      filter === "All" ? visibleVideos
+      justIds.size > 0 ? visibleVideos
+      : filter === "All" ? visibleVideos
       : filter === "Active" ? visibleVideos.filter((v) => (ACTIVE_STATUSES as readonly string[]).includes(v.status))
       : filter === "Done" ? visibleVideos.filter((v) => (DONE_STATUSES as readonly string[]).includes(v.status))
       : visibleVideos.filter((v) => v.status === filter);
@@ -107,8 +113,14 @@ function CatalogPageInner() {
     );
   })();
 
+  // Counts drive the filter pill labels ("Active (12)", "Discovered (3)"). Compute
+  // over the SAME pool the catalog actually renders — the raw `videos` list
+  // includes OpusClip clips and broadcast-pair destinations that are hidden by
+  // default, so counting over it produced misleadingly large numbers ("Active 187"
+  // then only 2 cards render). Uses `catalogPoolPostPairing`, which honours both
+  // the OpusClip exclusion and the showPaired toggle.
   const counts: Record<string, number> = {};
-  for (const v of videos) counts[v.status] = (counts[v.status] || 0) + 1;
+  for (const v of catalogPoolPostPairing) counts[v.status] = (counts[v.status] || 0) + 1;
 
   return (
     <>

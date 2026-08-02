@@ -16,6 +16,7 @@ import { videoStore } from "../lib/store";
 import { actorCommand } from "../lib/useCurrentActor";
 import { invalidateCurrentPromptVersion } from "../lib/summaryPromptClient";
 import { estimatePerRecordCost, estimateBatchCost, formatUsd, isKnownModel } from "../lib/llmCost";
+import { applyProcessingRules, loadProcessingRules } from "../lib/processingRules";
 
 interface Props {
   open: boolean;
@@ -86,15 +87,30 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
   const eligible = useMemo(() => {
     return videos
       .filter(v => !v.summary_locked && (v.transcript_text?.length ?? 0) >= 200)
-      .map(v => ({
-        record_id: v.id,
-        title: v.title,
-        source_platform: v.source_platform,
-        source_id: v.source_id,
-        recorded_at: v.recorded_at ?? new Date().toISOString(),
-        transcript_chars: v.transcript_text?.length ?? 0,
-        estimated_cost_usd: estimatePerRecordCost(v.transcript_text?.length ?? 0, model),
-      }));
+      .map(v => {
+        // ADR-059/060 — compute the same trim window the per-record
+        // Show Notes button uses, so bulk regen honours pre- and
+        // post-show cutoffs identically.
+        let trim_start_seconds = 0;
+        let trim_end_seconds = 0;
+        try {
+          const attrs = applyProcessingRules(loadProcessingRules(), v);
+          trim_start_seconds = Math.max(0, Math.floor(attrs.trim_start_seconds ?? 0));
+          trim_end_seconds = Math.max(0, Math.floor(attrs.trim_end_seconds ?? 0));
+        } catch { /* leave 0 */ }
+        return {
+          record_id: v.id,
+          title: v.title,
+          source_platform: v.source_platform,
+          source_id: v.source_id,
+          recorded_at: v.recorded_at ?? new Date().toISOString(),
+          transcript_chars: v.transcript_text?.length ?? 0,
+          estimated_cost_usd: estimatePerRecordCost(v.transcript_text?.length ?? 0, model),
+          duration_seconds: v.duration_seconds,
+          trim_start_seconds,
+          trim_end_seconds,
+        };
+      });
   }, [videos, model]);
 
   const estimatedBatchCost = useMemo(
@@ -147,8 +163,8 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          queue: eligible.map(({ record_id, title, source_platform, source_id, recorded_at, estimated_cost_usd }) =>
-            ({ record_id, title, source_platform, source_id, recorded_at, estimated_cost_usd })),
+          queue: eligible.map(({ record_id, title, source_platform, source_id, recorded_at, estimated_cost_usd, duration_seconds, trim_start_seconds, trim_end_seconds }) =>
+            ({ record_id, title, source_platform, source_id, recorded_at, estimated_cost_usd, duration_seconds, trim_start_seconds, trim_end_seconds })),
           cost_cap_usd: costCapUsd,
           prompt_version: prompt.version,
         }),

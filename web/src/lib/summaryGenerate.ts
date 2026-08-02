@@ -9,6 +9,7 @@ import { getSharedCredential } from "./sharedCredentials";
 import { getCurrentPrompt, type SummaryPromptVersion } from "./summaryPrompt";
 import { getArtifact, setSummaryDoc, type RecordContext } from "./driveArtifactStore";
 import type { SummaryCountsJSON } from "./wasm";
+import { sliceTranscriptFromSeconds, sliceTranscriptToSeconds } from "./transcriptSlice";
 
 // Cap transcript size to keep one-shot generation tractable. Two-pass
 // strategy for very long transcripts is deferred per ADR-046's slice
@@ -31,6 +32,8 @@ export interface GenerateRecordResult {
    *  produced 0). Recorded so a rule change can be detected as
    *  staleness later. */
   trim_start_seconds: number;
+  /** ADR-060 — matching tail trim (from record end). */
+  trim_end_seconds: number;
 }
 
 export class GenerateError extends Error {
@@ -47,21 +50,51 @@ export class GenerateError extends Error {
 export function parseSectionCounts(markdown: string): SummaryCountsJSON {
   const counts: SummaryCountsJSON = { m: 0, l: 0, t: 0, c: 0 };
   let current: keyof SummaryCountsJSON | null = null;
+
+  // Match section headings tolerantly. Accept:
+  //   ## Key Moments        (level 2-6 hash headings)
+  //   ### Key Moments
+  //   **Key Moments**       (bold-only "heading" — Haiku sometimes emits this)
+  //   Key Moments:          (plain line ending in colon)
+  const HEADING_RES = [
+    /^#{2,6}\s+(.+?)\s*$/,
+    /^\*\*(.+?)\*\*\s*:?\s*$/,
+    /^(.+?):\s*$/,
+  ];
+  const classify = (rawTitle: string): keyof SummaryCountsJSON | null => {
+    const t = rawTitle.toLowerCase().replace(/[*_]/g, "").trim();
+    if (t.includes("moment") || t.includes("highlight")) return "m";
+    if (t.includes("learning") || t.includes("lesson") || t.includes("insight")) return "l";
+    if (t.includes("takeaway") || t.includes("action") || t.includes("theme")) return "t";
+    if (t.includes("chat")) return "c";
+    return null;
+  };
+
   for (const raw of markdown.split("\n")) {
     const line = raw.trimEnd();
-    const heading = line.match(/^#{2,3}\s+(.+)$/);
-    if (heading) {
-      const title = heading[1].toLowerCase();
-      if (title.includes("key moment")) current = "m";
-      else if (title.includes("key learning")) current = "l";
-      else if (title.includes("key takeaway")) current = "t";
-      else if (title.includes("chat-sparked") || title.includes("chat sparked")) current = "c";
-      else current = null;
-      continue;
+    if (!line) continue;
+
+    let matchedHeading: string | null = null;
+    for (const re of HEADING_RES) {
+      const m = line.match(re);
+      if (m) { matchedHeading = m[1]; break; }
     }
-    if (current && /^\s*-\s+/.test(line)) {
-      counts[current]++;
+    // Only treat plain "Title:" lines as headings when they classify —
+    // otherwise `Speaker A:` inside a bullet's paragraph gets misread.
+    if (matchedHeading) {
+      const which = classify(matchedHeading);
+      if (which) { current = which; continue; }
+      // Non-classifying heading (chapter title, etc.) — reset section.
+      if (line.startsWith("#") || /^\*\*.+\*\*\s*:?\s*$/.test(line)) current = null;
     }
+
+    if (!current) continue;
+
+    // Count any line inside the current section that contains a
+    // timestamp marker — every bullet per the prompt starts with
+    // `[HH:MM:SS]`, so counting timestamps is robust against variations
+    // in bullet style (`- `, `* `, `1. `, or an indented paragraph).
+    if (/\[\d{1,2}:\d{2}(?::\d{2})?\]/.test(line)) counts[current]++;
   }
   return counts;
 }
@@ -92,6 +125,12 @@ export async function generateRecordSummary(
      *  for ffmpeg trimming, sourced from ADR-014 processing rules.
      *  0 or undefined ⇒ no slice. */
     trimStartSeconds?: number;
+    /** ADR-060 — drop transcript lines whose [HH:MM:SS] marker is at
+     *  or after (duration - trimEndSeconds), so the post-show
+     *  tear-down doesn't pollute the summary either. Requires
+     *  durationSeconds to compute the absolute cutoff. */
+    trimEndSeconds?: number;
+    durationSeconds?: number;
   } = {},
 ): Promise<GenerateRecordResult> {
   const rid = opts.rid ?? "n/a";
@@ -110,12 +149,17 @@ export async function generateRecordSummary(
   // ADR-059 — slice the transcript at trim_start_seconds. Applied
   // BEFORE the size-cap truncation so the trim recovers head-of-
   // transcript budget that was previously lost to pre-show content.
-  // Sidecar records the trim value so a change becomes a
-  // regeneration trigger.
+  // ADR-060 — same for the tail (post-show tear-down). Both sides
+  // are recorded in the sidecar so any change triggers a regen.
   const trimSecs = Math.max(0, Math.floor(opts.trimStartSeconds ?? 0));
-  const trimmedTranscript = trimSecs > 0
+  const trimEndSecs = Math.max(0, Math.floor(opts.trimEndSeconds ?? 0));
+  const duration = Math.max(0, Math.floor(opts.durationSeconds ?? 0));
+  let trimmedTranscript = trimSecs > 0
     ? sliceTranscriptFromSeconds(rawTranscript, trimSecs)
     : rawTranscript;
+  if (trimEndSecs > 0 && duration > trimEndSecs) {
+    trimmedTranscript = sliceTranscriptToSeconds(trimmedTranscript, duration - trimEndSecs);
+  }
   const transcript = trimmedTranscript.length > MAX_TRANSCRIPT_CHARS
     ? trimmedTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + "\n\n[transcript truncated]"
     : trimmedTranscript;
@@ -188,11 +232,32 @@ export async function generateRecordSummary(
     throw new GenerateError(`OpenRouter error (${res.status}): ${text.slice(0, 400)}`, 502, "openrouter_error");
   }
 
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const markdown = data.choices?.[0]?.message?.content?.trim() ?? "";
+  let data = await res.json() as { choices?: Array<{ message?: { content?: string; finish_reason?: string } }> };
+  let markdown = data.choices?.[0]?.message?.content?.trim() ?? "";
+  // Empty completions from Gemini 2.5 Pro on huge transcripts are a
+  // known failure mode — it accepts the context, spins for minutes, then
+  // returns nothing without erroring. Fall back to Haiku once before
+  // giving up. Haiku is more tolerant of noisy / long input and rarely
+  // returns empty.
+  if (!markdown && usedModel !== FALLBACK_MODEL) {
+    serverLog("warn", "ext:summary-generate", "empty output, retrying with fallback model", { rid, record_id: ctx.record_id, model: usedModel, fallback: FALLBACK_MODEL });
+    try {
+      const retryRes = await callModel(FALLBACK_MODEL);
+      if (retryRes.ok) {
+        data = await retryRes.json() as typeof data;
+        markdown = data.choices?.[0]?.message?.content?.trim() ?? "";
+        usedModel = FALLBACK_MODEL;
+      } else {
+        const body = await retryRes.text();
+        serverLog("error", "ext:summary-generate", "fallback openrouter error", { rid, status: retryRes.status, body_preview: body.slice(0, 300) });
+      }
+    } catch (err) {
+      serverLog("error", "ext:summary-generate", "fallback fetch threw", { rid, error: String(err) });
+    }
+  }
   if (!markdown) {
-    serverLog("error", "ext:summary-generate", "empty model output", { rid, record_id: ctx.record_id });
-    throw new GenerateError("Model returned an empty summary", 502, "empty_output");
+    serverLog("error", "ext:summary-generate", "empty model output (fallback also exhausted)", { rid, record_id: ctx.record_id, model: usedModel });
+    throw new GenerateError(`Model returned an empty summary (tried ${usedModel === FALLBACK_MODEL ? FALLBACK_MODEL : `${prompt.model} + ${FALLBACK_MODEL}`}). Transcript may be too noisy — check the description for hints and consider manual editing.`, 502, "empty_output");
   }
 
   const counts = parseSectionCounts(markdown);
@@ -225,6 +290,7 @@ ${markdown}`;
     generated_at: generatedAt,
     duration_ms: durationMs,
     trim_start_seconds: trimSecs,
+    trim_end_seconds: trimEndSecs,
   };
 }
 
@@ -236,19 +302,8 @@ ${markdown}`;
  * accepted: [HH:MM:SS], [H:MM:SS], [MM:SS], [M:SS] — matching what
  * Kaltura caption import / Fireflies fetch / Zoom VTT flatten emit.
  */
-export function sliceTranscriptFromSeconds(text: string, startSecs: number): string {
-  if (!text || startSecs <= 0) return text;
-  const lines = text.split("\n");
-  const markerRe = /^\s*\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(markerRe);
-    if (!m) continue;
-    const secs = m[3] !== undefined
-      ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-      : Number(m[1]) * 60 + Number(m[2]);
-    if (secs >= startSecs) {
-      return lines.slice(i).join("\n");
-    }
-  }
-  return text;
-}
+// Slicer helpers live in ../lib/transcriptSlice (client-safe) so
+// client components can import them without pulling in the server-
+// side Secret Manager machinery. Re-exported here for existing
+// call-sites that reach for summaryGenerate.
+export { sliceTranscriptFromSeconds, sliceTranscriptToSeconds } from "./transcriptSlice";

@@ -335,11 +335,14 @@ export async function tryEnsureSummary({ record, currentPromptVersion, actorStat
   // reused here so summarisation ignores the pre-show window. The
   // rules are cheap to load per record — client-side, localStorage-
   // backed. `applyProcessingRules` returns 0 when nothing matches.
-  const trimStartSeconds = (() => {
+  const { trimStartSeconds, trimEndSeconds } = (() => {
     try {
       const attrs = applyProcessingRules(loadProcessingRules(), record);
-      return Math.max(0, Math.floor(attrs.trim_start_seconds ?? 0));
-    } catch { return 0; }
+      return {
+        trimStartSeconds: Math.max(0, Math.floor(attrs.trim_start_seconds ?? 0)),
+        trimEndSeconds: Math.max(0, Math.floor(attrs.trim_end_seconds ?? 0)),
+      };
+    } catch { return { trimStartSeconds: 0, trimEndSeconds: 0 }; }
   })();
   const res = await fetch("/api/summary/generate", {
     method: "POST",
@@ -350,7 +353,9 @@ export async function tryEnsureSummary({ record, currentPromptVersion, actorStat
       source_platform: record.source_platform,
       source_id: record.source_id,
       recorded_at: record.recorded_at ?? record.indexed_at,
+      duration_seconds: record.duration_seconds,
       ...(trimStartSeconds > 0 ? { trim_start_seconds: trimStartSeconds } : {}),
+      ...(trimEndSeconds > 0 ? { trim_end_seconds: trimEndSeconds } : {}),
       // ADR-053 — when transcript is borrowed from a paired record,
       // send the text inline so the server doesn't try (and fail) to
       // read the target's own Drive transcript artifact. Also record

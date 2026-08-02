@@ -31,6 +31,7 @@ import { useCurrentActor, actorCommand } from "../../lib/useCurrentActor";
 import { loadQueue, readyQueue } from "../../lib/backfill";
 import { getCurrentPromptVersion } from "../../lib/summaryPromptClient";
 import { getSeriesRegistry } from "../../lib/seriesRegistryClient";
+import { getDescriptionConfig } from "../../lib/descriptionConfig";
 import type { SeriesRegistryEntry } from "../../lib/youtubeTitleAlign";
 
 type ActorState = ReturnType<typeof useCurrentActor>;
@@ -145,6 +146,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     getCurrentPromptVersion().then(v => { if (!cancelled) setCurrentPromptVersion(v); });
     getSeriesRegistry().then(r => { if (!cancelled) setSeriesRegistry(r); });
+    // Warm the description-config cache so VideoCard's Copy/Regenerate
+    // button gate reads the correct mode on first render (ADR-064).
+    void getDescriptionConfig();
     return () => { cancelled = true; };
   }, []);
 

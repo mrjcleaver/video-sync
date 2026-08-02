@@ -206,7 +206,24 @@ Found in the **Processing Rules** tab. These transform metadata when a video is 
 - **Title templates**: `{{title}} - {{date:D MMM YYYY}}` produces "Team Standup - 15 Mar 2026"
 - **Description templates**: Include `{{participants}}`, `{{source_platform}}`, `{{transcript_summary}}`
 - **Tag transforms**: Add, remove, or replace tags based on criteria
-- **LLM summary**: Request an AI-generated description via OpenRouter
+- **LLM summary**: Request an AI-generated description via OpenRouter. See §6a below — the default description strategy has been superseded by the Description Strategy panel (ADR-064).
+
+### Description Strategy (ADR-064)
+
+Found in **Config → 📝 Description strategy**. Controls how the paragraph description on each record (the one that ships to YouTube uploads) is produced. Two modes:
+
+- **Copy from Show Notes** (default) — deterministic markdown → YouTube-plain-text conversion of the record's Show Notes doc. Emits `HH:MM:SS Chapter` lines that YouTube renders as clickable chapter jumps. No LLM call. Falls back to the transcript LLM path when a record has no Show Notes yet.
+- **Generate from transcript** — LLM one-shot summariser fed the transcript directly. Ignores Show Notes even when present. Pre-ADR-064 behaviour.
+
+A prompt textarea below the mode radio lets Admins tune the transcript-mode prompt. Ships with an embedded default; a `↺ Reset to default` button appears when the textarea drifts.
+
+On each VideoCard, the button next to the Description label reflects the mode:
+- **📋 Copy from Show Notes** when the record has a Show Notes doc AND the default mode is on.
+- **✨ Regenerate from transcript** when either the mode is switched OR the record has no Show Notes.
+
+### Show Notes Prompt (ADR-046)
+
+Found in **Config → 📄 Show Notes prompt**. Formerly on Maintain; moved to Config alongside the Description Strategy panel. Edits the org-shared chapter-oriented prompt that produces the M/L/T/C section breakdown. Bulk-regen tools live in the same panel (skips locked records by default; cost cap protects against runaway spend).
 
 ### Post-Processing Rules (Notifications)
 
@@ -438,9 +455,9 @@ The new row gets correctly classified per the ADR-049/050 rules:
 
 Requires a Google API Key (for YouTube Data API metadata lookup) — either in **Connections → YouTube → Google API Key** for the operator's session, or as a `GOOGLE_API_KEY` env var on the Cloud Run service for everyone (recommended via Secret Manager per ADR-042).
 
-### Summary Badge Backfill (blue card — ADR-052)
+### Show Notes Backfill (blue card — ADR-052)
 
-Walks every record with a usable transcript and generates summaries that are **missing** (no `summary_doc_id`) or **stale** (prompt version drifted below current). Pre-flight count breaks down: `Run backfill (N missing, M stale, K via borrowed transcript)`.
+Walks every record with a usable transcript and generates Show Notes docs that are **missing** (no `summary_doc_id`) or **stale** (prompt version drifted below current). Pre-flight count breaks down: `Run backfill (N missing, M stale, K via borrowed transcript)`. Formerly called "Summary Badge Backfill" — the underlying artifact ID (`summary_doc_id`) and API paths still use `summary` for stability; the UI is Show Notes.
 
 Default **skips locked records** (records the operator deliberately froze with the lock icon on the `📄` badge). An **Include locked records (override)** checkbox surfaces in the card so override is one click and visible.
 
@@ -450,7 +467,21 @@ Cost cap **$5.00 USD per run** using `estimatePerRecordCost`. When the cap fires
 
 ### Transcript provenance lookup (ADR-053) — read-time, automatic
 
-When a record's own `transcript_text` is empty, the system walks the provenance graph in a defined safe-relations set and uses a donor record's text. Affects: the Summary Badge Backfill, the per-record **Summarise** button on each `VideoCard`, and (when wired) any future feature needing a transcript (search, RAG, etc.).
+When a record's own `transcript_text` is empty, the system walks the provenance graph in a defined safe-relations set and uses a donor record's text. Affects: the Show Notes Backfill, the per-record **📄 Show Notes** button on each `VideoCard`, the description generator, and (when wired) any future feature needing a transcript (search, RAG, etc.).
+
+### YouTube Transcript Fallback (ADR-063)
+
+When a record has a YouTube location but no local `transcript_text` and no borrow-able sibling under ADR-053, the **📥 Fetch from YouTube** button appears next to the disabled Show Notes button. Uses progressive reach:
+
+1. **YouTube Data API captions** (`captions.list` + `captions.download`) — official, requires video ownership; skipped when no YouTube OAuth headers.
+2. **InnerTube player scrape** — same endpoint the YouTube web player uses; works for third-party videos as long as captions exist.
+3. **yt-dlp** with `--write-auto-subs` — cascaded through `android`, `ios`, `tv_embedded,tv`, `web+ua` player clients. Cloud Run image ships yt-dlp already (ADR-027). `YOUTUBE_COOKIES_FILE` env var opts into a signed-in session fallback.
+
+First that succeeds wins; failures return a `tried[]` audit trail so operators see which reach step blocked. On success the fetched transcript is stashed in the store's dedicated transcript cache (never touches WASM heap, never blows localStorage quota).
+
+### Push Title + Description to YouTube (ADR-064-adjacent)
+
+The **↗ Push title + description to YouTube** button on each card PUTs the record's current local `title` and `description` to the actual YouTube video via `videos.update`. Idempotent — no-op when both already match. Requires the `youtube.force-ssl` OAuth scope; the tooltip explains the reconnect step if the operator's token predates ADR-029. Replaces the older "Realign + push" button which coupled title-alignment to push; realignment is now a separate 🏷 Realign button, so operators can settle title AND description locally before syncing YouTube.
 
 | Relation | Safe to borrow? | Why |
 |---|---|---|

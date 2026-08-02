@@ -58,7 +58,7 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
   if (!docId || !counts) {
     return (
       <span
-        title="No summary yet — click 📄 Summarise to generate one"
+        title="No Show Notes yet — click 📄 Show Notes on the card to generate them"
         style={{
           ...BASE,
           background: ABSENT_STYLE.bg,
@@ -76,7 +76,7 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
   const prefix = locked ? "🔒 " : "";
   const label = `${prefix}📄 M:${counts.m} L:${counts.l} T:${counts.t} C:${counts.c}`;
   const tooltipParts = [
-    `Summary prompt v${promptVersion ?? "?"}`,
+    `Show Notes prompt v${promptVersion ?? "?"}`,
     locked ? "🔒 locked — bulk-regen skips this record" : null,
     stale ? `current prompt is v${currentVersion} — regenerate available` : null,
   ].filter(Boolean) as string[];

@@ -83,7 +83,10 @@ export interface AlignedTitle {
  */
 export function titleContainsDate(title: string): boolean {
   if (!title) return false;
-  const monthNames = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
+  // Accept both 3-letter abbreviations and full month names. A manual
+  // rename like "4 June 2026" is still a dated title even though the
+  // canonical "D MMM YYYY" form we emit uses the short form.
+  const monthNames = "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
   const dmy = new RegExp(`\\b\\d{1,2}\\s+${monthNames}\\s+\\d{4}\\b`, "i");
   const iso = /\b\d{4}-\d{2}-\d{2}\b/;
   return dmy.test(title) || iso.test(title);
@@ -120,12 +123,13 @@ export function resolveDiscordChannel(title: string, registry: SeriesRegistryEnt
 export function extractDateFromTitle(title: string): string | null {
   if (!title) return null;
   const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const dmyRe = new RegExp(`\\b(\\d{1,2})\\s+(${monthNames.join("|")})\\s+(\\d{4})\\b`, "i");
+  // Accept short OR full month names; normalise to short in the output.
+  const monthAlt = "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
+  const dmyRe = new RegExp(`\\b(\\d{1,2})\\s+(${monthAlt})\\s+(\\d{4})\\b`, "i");
   const dmy = title.match(dmyRe);
   if (dmy) {
-    // Normalise month capitalisation to match formatDMMMYYYY output.
-    const monthLower = dmy[2].toLowerCase();
-    const monthCanon = monthNames.find(m => m.toLowerCase() === monthLower)!;
+    const monthPrefix = dmy[2].slice(0, 3).toLowerCase();
+    const monthCanon = monthNames.find(m => m.toLowerCase() === monthPrefix)!;
     return `${Number(dmy[1])} ${monthCanon} ${dmy[3]}`;
   }
   const iso = title.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
@@ -211,7 +215,20 @@ function tryStrategyRegistry(
   record: VideoRecordJSON,
   registry: SeriesRegistryEntry[],
 ): AlignedTitle | null {
-  return resolveTitleFromRegistry(record.title, record.recorded_at ?? record.indexed_at ?? "", registry);
+  // Prefer the livestream's actual/scheduled START time over
+  // recorded_at whenever it's available. On some ingest paths
+  // recorded_at is populated from the END of the broadcast (or from
+  // publishedAt, which may be later still) — a session that started
+  // 22:00 local June 4 but ended 22:58 UTC June 5 would then get
+  // "5 Jun" instead of the operator-visible "4 Jun". actualStartTime
+  // is the truth for a livestream; recorded_at only wins for
+  // Zoom/Fireflies/Kaltura ingests (which don't populate these keys).
+  const me = (record.metadata_extra ?? {}) as Record<string, unknown>;
+  const liveStart = typeof me.actual_start_time === "string" ? me.actual_start_time
+                  : typeof me.scheduled_start_time === "string" ? me.scheduled_start_time
+                  : null;
+  const when = liveStart ?? record.recorded_at ?? record.indexed_at ?? "";
+  return resolveTitleFromRegistry(record.title, when, registry);
 }
 
 /**

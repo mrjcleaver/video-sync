@@ -4,8 +4,11 @@
  * ADR-057 Option A — Config page. Setup and admin surface:
  * platform credentials (Connections), rules for automation
  * (Ingestion / Processing / Post-Processing), and the summary
- * prompt version (ADR-046). Rarely-visited by daily users but
- * dense when it IS visited — deserves its own canvas.
+ * prompt version (ADR-046).
+ *
+ * ADR-064 adds the description-strategy panel (copy vs generate)
+ * and moves the Show Notes prompt editor here from Maintain so
+ * both operator-tunable prompts live in the same place.
  */
 
 import ConnectionsPanel from "../../../components/ConnectionsPanel";
@@ -13,12 +16,15 @@ import RulesPanel from "../../../components/RulesPanel";
 import ProcessingRulesPanel from "../../../components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../../../components/PostProcessingRulesPanel";
 import SeriesRegistryPanel from "../../../components/SeriesRegistryPanel";
+import DescriptionConfigPanel from "../../../components/DescriptionConfigPanel";
+import SummaryPromptPanel from "../../../components/SummaryPromptPanel";
 import { useApp } from "../AppContext";
 import { useState } from "react";
 
 export default function ConfigPage() {
   const [showConnections, setShowConnections] = useState(true);
-  const { ruleRunner } = useApp();
+  const [showPrompt, setShowPrompt] = useState(false);
+  const { ruleRunner, videos, addEvent } = useApp();
   return (
     <>
       <div className="header">
@@ -34,6 +40,30 @@ export default function ConfigPage() {
       <ProcessingRulesPanel />
       <PostProcessingRulesPanel />
       <SeriesRegistryPanel />
+      <DescriptionConfigPanel />
+      <div className="panel" style={{ marginBottom: 12 }}>
+        <div
+          className="panel-header"
+          onClick={() => setShowPrompt(v => !v)}
+          style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        >
+          <div>
+            <strong>📄 Show Notes prompt (ADR-046)</strong>
+            <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: "0.85rem" }}>
+              Edit the org-shared chapter-oriented prompt and bulk-regenerate unlocked docs.
+            </span>
+          </div>
+          <span>{showPrompt ? "▾" : "▸"}</span>
+        </div>
+        {showPrompt && (
+          <SummaryPromptPanel
+            open
+            videos={videos}
+            onEvent={addEvent}
+            onClose={() => setShowPrompt(false)}
+          />
+        )}
+      </div>
     </>
   );
 }

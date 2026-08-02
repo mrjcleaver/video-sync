@@ -26,7 +26,6 @@ class VideoStore {
   private transcripts = new Map<string, string>(); // id → transcript_text (JS-side only)
   private lastModified = new Map<string, string>(); // id → ISO timestamp
   private listeners = new Set<() => void>();
-  private pendingRecordPush = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingTranscriptPush = new Map<string, ReturnType<typeof setTimeout>>();
 
   subscribe(fn: () => void): () => void {
@@ -102,14 +101,42 @@ class VideoStore {
     const snapshots: string[] = [];
     for (const [id, record] of this.records.entries()) {
       try {
-        snapshots.push(record.to_json());
+        // Strip ephemeral metadata_extra keys before persisting. These
+        // fields are (a) large (signed URLs are ~500 bytes), (b) time-
+        // bound and refetched on next play anyway, and (c) collectively
+        // push the records blob past the 5MB localStorage quota when
+        // multiplied across hundreds of OpusClip rows. In-memory copy
+        // keeps them; only the persisted snapshot loses them.
+        const json = record.to_json();
+        try {
+          const parsed = JSON.parse(json) as { metadata_extra?: Record<string, unknown> };
+          const me = parsed.metadata_extra;
+          if (me && typeof me === "object") {
+            delete me.opus_fresh_download_url;
+            delete me.opus_fresh_download_expires;
+            snapshots.push(JSON.stringify(parsed));
+          } else {
+            snapshots.push(json);
+          }
+        } catch {
+          snapshots.push(json);
+        }
       } catch {
         clientLog("warn", "store", "Dropping record — serialization failed", { video_id: id });
         this.records.delete(id);
         this.lastModified.delete(id);
       }
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
+    } catch (err) {
+      // Quota exceeded on the records blob — the browser's 5MB
+      // origin cap has been hit. Don't crash the mutation: the
+      // in-memory copy stays consistent, next load re-hydrates from
+      // the server (ADR-035 Level 2). Surface the incident to the
+      // client log so operators know the reload dependency exists.
+      clientLog("warn", "store", "Records blob exceeded localStorage quota — session-only until reload from server", { error: String(err) });
+    }
 
     // Persist transcript cache separately (never inside WASM JSON)
     const transcriptMap: Record<string, string> = {};
@@ -229,13 +256,26 @@ class VideoStore {
     this.listeners.forEach((fn) => fn());
   }
 
+  private pendingBatchIds = new Set<string>();
+  private batchPushTimer: ReturnType<typeof setTimeout> | null = null;
+
   private scheduleRecordPush(id: string) {
-    const existing = this.pendingRecordPush.get(id);
-    if (existing) clearTimeout(existing);
-    this.pendingRecordPush.set(id, setTimeout(() => {
-      this.pendingRecordPush.delete(id);
-      this.pushRecord(id);
-    }, PUSH_DEBOUNCE_MS));
+    // Coalesce record pushes into a single batched POST. Individual
+    // per-id timers were causing N serialized writes on the server
+    // (POST /api/catalog is inside a withLock); a bulk operator
+    // action easily produced 60 concurrent pushes, and the server's
+    // read-merge-write serialization made each subsequent one wait —
+    // the 30th write hit Cloud Run's 30s request cap and 500'd.
+    // Now: every mutation adds to a batch set; a single timer fires
+    // one bulk POST with everything queued.
+    this.pendingBatchIds.add(id);
+    if (this.batchPushTimer) return;
+    this.batchPushTimer = setTimeout(() => {
+      this.batchPushTimer = null;
+      const ids = Array.from(this.pendingBatchIds);
+      this.pendingBatchIds.clear();
+      this.pushRecordsBatch(ids);
+    }, PUSH_DEBOUNCE_MS);
   }
 
   private scheduleTranscriptPush(id: string) {
@@ -247,25 +287,30 @@ class VideoStore {
     }, PUSH_DEBOUNCE_MS));
   }
 
-  private async pushRecord(id: string) {
-    const record = this.records.get(id);
-    if (!record) return;
-    let json: string;
-    try {
-      json = record.to_json();
-    } catch {
-      return;
+  private async pushRecordsBatch(ids: string[]) {
+    if (ids.length === 0) return;
+    const records: Array<{ id: string; json: string; lastModified: string }> = [];
+    for (const id of ids) {
+      const record = this.records.get(id);
+      if (!record) continue;
+      let json: string;
+      try {
+        json = record.to_json();
+      } catch {
+        continue;
+      }
+      records.push({ id, json, lastModified: this.lastModified.get(id) ?? new Date().toISOString() });
     }
-    const lastModified = this.lastModified.get(id) ?? new Date().toISOString();
+    if (records.length === 0) return;
     try {
       const res = await fetch("/api/catalog", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, json, lastModified }),
+        body: JSON.stringify({ records }),
       });
       if (!res.ok) throw new Error(`POST /api/catalog ${res.status}`);
     } catch (err) {
-      clientLog("warn", "store", "catalog record push failed", { video_id: id, error: String(err) });
+      clientLog("warn", "store", "catalog batch push failed", { count: records.length, error: String(err) });
     }
   }
 
@@ -369,8 +414,7 @@ class VideoStore {
     this.transcripts.delete(id);
     this.lastModified.delete(id);
     // Cancel any pending pushes for this id — the delete supersedes them.
-    const recPush = this.pendingRecordPush.get(id);
-    if (recPush) { clearTimeout(recPush); this.pendingRecordPush.delete(id); }
+    this.pendingBatchIds.delete(id);
     const trPush = this.pendingTranscriptPush.get(id);
     if (trPush) { clearTimeout(trPush); this.pendingTranscriptPush.delete(id); }
     this.notify();

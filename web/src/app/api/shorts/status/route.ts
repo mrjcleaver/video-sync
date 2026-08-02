@@ -174,9 +174,17 @@ async function handler(req: NextRequest) {
     // deep-link is useful for tweaks before publishing.
     // Shape confirmed from the operator's browser:
     //   https://clip.opus.pro/editor-ux/<projectId>.<clipId>?clipId=<clipId>&clipRank=<n>&editType=normal
-    const opusEditUrl = clipId
-      ? `https://clip.opus.pro/editor-ux/${encodeURIComponent(jobId)}.${encodeURIComponent(clipId)}`
-        + `?clipId=${encodeURIComponent(clipId)}&clipRank=${i + 1}&editType=normal`
+    //
+    // Opus's v2 payload emits `c.id` in either bare (`LneZaQmTBv`)
+    // or dotted (`<projectId>.<clipId>`) form depending on the
+    // project's origin. Normalise to the bare tail for URL building
+    // so we never emit `<projectId>.<projectId>.<clipId>`. Keep the
+    // raw `clipId` in the record for match consistency with
+    // subsequent status calls (Opus will return the same shape).
+    const bareClipId = clipId?.includes(".") ? (clipId.split(".").pop() ?? clipId) : clipId;
+    const opusEditUrl = bareClipId
+      ? `https://clip.opus.pro/editor-ux/${encodeURIComponent(jobId)}.${encodeURIComponent(bareClipId)}`
+        + `?clipId=${encodeURIComponent(bareClipId)}&clipRank=${i + 1}&editType=normal`
       : null;
     return {
       index: i,

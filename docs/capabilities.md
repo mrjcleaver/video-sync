@@ -85,7 +85,10 @@ A capability-by-capability rundown of what Video Bridge (this tool, also called 
 | **Run Catch-Up** — per-record pipeline (transcript hydrate → sibling link → ensure summary) with a chosen scope | ✅ | ADR-047 | — |
 | **Broadcast-Pair Migration** — one-shot reclassification of legacy `SameEvent` links to directional `BroadcastedFrom` / `TranscribedFrom` + duplicate-location dedupe | ✅ | ADR-049 slice 5 | — |
 | **YouTube Row Backfill** (C1-A) — walks Destination-YouTube locations on host records and creates missing YouTube source rows + correct upstream links | ✅ | ADR-049/050 C1-A | — |
-| **Summary Badge Backfill** — generates summaries for records missing or stale relative to current prompt version | ✅ | ADR-052 | — |
+| **Show Notes Backfill** — generates Show Notes docs for records missing or stale relative to current prompt version | ✅ | ADR-052 | — |
+| **Series-schedule-fields diagnostic** — flags catalog records whose series-registry entry lacks `scheduled_start_local` / `scheduled_end_local` / `scheduled_timezone`, so ADR-060 trim can't fire and Show Notes bake in pre/post-show noise | ✅ | ADR-060/064 | — |
+| **Undated-titles diagnostic** — walks the catalog looking for non-clip records with undated titles, offers a nearest-match series and one-click accept where a date is derivable | ✅ | ADR-055/056 | — |
+| **Catalog dedupe** — clusters records by `(source_platform, source_id)` and Abandons losers when the state machine permits; reports manual walk-back needed for Approved/Publishing/ToRetry | ✅ | ADR-062 follow-up | — |
 | Per-run **cost cap** on LLM-incurring operations (default $5.00 USD) | ✅ | ADR-052 + `lib/llmCost.ts` | — |
 | **Idempotent reruns** — re-clicking any maintenance button after partial completion re-derives the work list from current state | ✅ | All maintenance cards | — |
 | **Resumability** — closing the browser mid-run doesn't lose completed work | ✅ | localStorage-immediate persist + 500ms debounced server push + last-writer-wins boot merge | — |
@@ -94,17 +97,23 @@ A capability-by-capability rundown of what Video Bridge (this tool, also called 
 
 ---
 
-## 6. Summaries
+## 6. Show Notes + Descriptions
 
 | Capability | Status | How | Other tool |
 |---|---|---|---|
-| **Prompt-driven summaries** — Markdown summary docs written to Drive, versioned by prompt version | ✅ | ADR-046 | — |
+| **Prompt-driven Show Notes** — Markdown Show Notes docs written to Drive, versioned by prompt version | ✅ | ADR-046 | — |
 | **Version-aware staleness** — badge indicates when prompt version has drifted from current | ✅ | ADR-046, `SummaryLozenge.tsx` | — |
-| **Lock** to freeze a particular summary version (bulk-regen skips locked) | ✅ | ADR-046 (`summary_locked`) | — |
-| **Include-locked override** when an operator wants to forcibly re-summarise even locked records | ✅ | ADR-052 (override checkbox) | — |
+| **Lock** to freeze a particular Show Notes version (bulk-regen skips locked) | ✅ | ADR-046 (`summary_locked`) | — |
+| **Include-locked override** when an operator wants to forcibly re-generate even locked records | ✅ | ADR-052 (override checkbox) | — |
 | **Counts breakdown** (M / L / T / C) surfaced on the badge | ✅ | ADR-046 | — |
-| Summary doc **lives on Drive** (operator can edit it directly in Google Docs) | ✅ | ADR-039, ADR-046 | — |
-| Summarise records **without their own transcript** by borrowing from a paired Fireflies / Zoom / YouTube auto-caption record | ✅ | ADR-053 | — |
+| Show Notes doc **lives on Drive** (operator can edit it directly in Google Docs) | ✅ | ADR-039, ADR-046 | — |
+| Show Notes for records **without their own transcript** by borrowing from a paired Fireflies / Zoom / YouTube auto-caption record | ✅ | ADR-053 | — |
+| **Pre-show / post-show trim** — Show Notes generation slices transcript to the scheduled programme window before the LLM sees it | ✅ | ADR-059, ADR-060 | — |
+| **Progressive-reach YouTube transcript fetch** — captions API → InnerTube scrape → yt-dlp cascade, so records without a local transcript can still be summarised | ✅ | ADR-063 | — |
+| **Description Strategy** — Config-page toggle: `copy_show_notes` (deterministic markdown flatten to plain text w/ chapter cues) vs `generate` (transcript LLM) | ✅ | ADR-064 | — |
+| **Editable transcript-mode description prompt** — Admin-tunable system prompt on Config page | ✅ | ADR-064 | — |
+| **YouTube chapter cues** — Show Notes → description conversion emits `HH:MM:SS Text` lines that YouTube renders as clickable chapter jumps (validates + repairs YouTube's rules) | ✅ | ADR-064 | — |
+| **Push local title + description to YouTube** in one call via `videos.update` (idempotent) | ✅ | ADR-064-adjacent | — |
 
 ---
 

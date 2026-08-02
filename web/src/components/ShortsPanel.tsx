@@ -123,7 +123,24 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
     const start = extra.clip_start_seconds as number | undefined;
     const end = extra.clip_end_seconds as number | undefined;
     const parentYtId = extra.parent_youtube_id as string | undefined;
-    const opusEditUrl = extra.opus_edit_url as string | undefined;
+    // Heal legacy `<pid>.<pid>.<cid>` edit URLs at render time — the
+    // server-side generator has been fixed, but records stamped before
+    // that fix still carry the broken form. Extract the tail after the
+    // first "<pid>." and rebuild — anything already in the correct
+    // shape passes through untouched.
+    const rawEditUrl = extra.opus_edit_url as string | undefined;
+    const opusEditUrl = (() => {
+      if (!rawEditUrl) return undefined;
+      const m = rawEditUrl.match(/^(https:\/\/clip\.opus\.pro\/editor-ux\/)([^/?#]+)(\?.*)?$/);
+      if (!m) return rawEditUrl;
+      const [, prefix, pathSeg, query = ""] = m;
+      const parts = pathSeg.split(".");
+      if (parts.length <= 2) return rawEditUrl;
+      const pid = parts[0];
+      const cid = parts[parts.length - 1];
+      const fixedQuery = query.replace(/([?&]clipId=)([^&]+)/, (_, p) => `${p}${encodeURIComponent(cid)}`);
+      return `${prefix}${pid}.${cid}${fixedQuery}`;
+    })();
     const duration = start !== undefined && end !== undefined ? formatDuration(start, end) : "";
     // ADR-058 follow-up — orphan clip = OpusClip source row without
     // a ClipOf upstream link. Surface a one-click repair here so the
@@ -213,16 +230,26 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
           )}
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 8, flexWrap: "wrap" }}>
             {duration && <span>{duration}</span>}
-            {parentYtId && (
-              <a
-                href={`https://www.youtube.com/watch?v=${parentYtId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#e00", textDecoration: "none" }}
-              >
-                ▶ source
-              </a>
-            )}
+            {parentYtId && (() => {
+              const t = start !== undefined && start > 0 ? Math.floor(start) : undefined;
+              const href = t !== undefined
+                ? `https://www.youtube.com/watch?v=${parentYtId}&t=${t}s`
+                : `https://www.youtube.com/watch?v=${parentYtId}`;
+              const title = t !== undefined
+                ? `Open the parent video on YouTube at ${formatDuration(0, t)} — the clip's start offset in the source.`
+                : "Open the parent video on YouTube.";
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#e00", textDecoration: "none" }}
+                  title={title}
+                >
+                  ▶ source{t !== undefined ? ` @ ${formatDuration(0, t)}` : ""}
+                </a>
+              );
+            })()}
             {canPlayInline && (
               <button
                 onClick={(e) => {
@@ -298,20 +325,40 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
           )}
         </div>
       </div>
-      {isPlayerOpen && canPlayInline && (
-        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-start" }}>
-          <video
-            controls
-            preload="metadata"
-            src={clip.download_url}
-            style={{
-              maxWidth: 280, maxHeight: 500,
-              width: "100%", height: "auto",
-              background: "#000", borderRadius: 6,
-            }}
-          />
-        </div>
-      )}
+      {isPlayerOpen && canPlayInline && (() => {
+        // Prefer the fresh signed URL we cached from the last Opus
+        // status poll. Opus's CDN signs URLs with a ~48h TTL — the
+        // record's original download_url captured at ingest time is
+        // almost always expired by the time an operator plays it.
+        // The fresh URL lives in metadata_extra.opus_fresh_download_url;
+        // fall back to the original if we haven't refreshed yet or if
+        // the fresh one is also past its Expires timestamp.
+        const nowSec = Math.floor(Date.now() / 1000);
+        const freshUrl = typeof extra.opus_fresh_download_url === "string" ? extra.opus_fresh_download_url : null;
+        const freshExpiry = typeof extra.opus_fresh_download_expires === "number" ? extra.opus_fresh_download_expires : null;
+        const freshIsUsable = freshUrl && (!freshExpiry || freshExpiry > nowSec + 30);
+        const srcUrl = freshIsUsable ? (freshUrl as string) : clip.download_url;
+        return (
+          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-start" }}>
+            <video
+              controls
+              preload="metadata"
+              src={srcUrl}
+              onError={() => {
+                // A 403 here means the URL was signed for a window
+                // that has now closed. Fire another refresh so the
+                // next play attempt uses the newly-issued URL.
+                void refreshOneShortFromOpus(clip, { actorState, onEvent, onMutated });
+              }}
+              style={{
+                maxWidth: 280, maxHeight: 500,
+                width: "100%", height: "auto",
+                background: "#000", borderRadius: 6,
+              }}
+            />
+          </div>
+        );
+      })()}
       </div>
     );
   }

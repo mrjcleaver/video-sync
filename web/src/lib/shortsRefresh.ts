@@ -52,7 +52,7 @@ export async function refreshOneShortFromOpus(clip: VideoRecordJSON, ctx: Ctx): 
     if (!res.ok) return;
     const data = await res.json() as {
       status: string;
-      clips?: Array<{ index: number; viralityScore?: number; opusClipId?: string | null; keywords?: string[] }>;
+      clips?: Array<{ index: number; viralityScore?: number; opusClipId?: string | null; keywords?: string[]; clipUrl?: string; opusEditUrl?: string | null }>;
     };
     if (!data.clips || data.clips.length === 0) return;
     const opusClipId = typeof extra.opus_clip_id === "string" ? extra.opus_clip_id : null;
@@ -96,7 +96,7 @@ export async function refreshShortsFromOpus(clips: VideoRecordJSON[], ctx: Ctx):
       const res = await fetch(`/api/shorts/status?jobId=${encodeURIComponent(jobId)}&apiKey=${encodeURIComponent(key)}`);
       if (!res.ok) return;
       const data = await res.json() as {
-        clips?: Array<{ index: number; viralityScore?: number; opusClipId?: string | null; keywords?: string[] }>;
+        clips?: Array<{ index: number; viralityScore?: number; opusClipId?: string | null; keywords?: string[]; clipUrl?: string; opusEditUrl?: string | null }>;
       };
       if (!data.clips || data.clips.length === 0) return;
       const targets = byJob.get(jobId) ?? [];
@@ -130,7 +130,7 @@ export async function refreshShortsFromOpus(clips: VideoRecordJSON[], ctx: Ctx):
  */
 function applyOpusMetadataToRecord(
   row: VideoRecordJSON,
-  opus: { viralityScore?: number; keywords?: string[] },
+  opus: { viralityScore?: number; keywords?: string[]; clipUrl?: string; opusEditUrl?: string | null },
   ctx: Ctx,
 ): boolean {
   const existing = (row.metadata_extra ?? {}) as Record<string, unknown>;
@@ -143,6 +143,26 @@ function applyOpusMetadataToRecord(
     if (JSON.stringify(prev) !== JSON.stringify(opus.keywords)) {
       patch.keywords = opus.keywords;
     }
+  }
+  // Opus's signed CDN URLs expire ~48h after issue; the record was
+  // ingested with whatever URL was live at ingest time and stays
+  // stale unless we overwrite it. Stash the fresh URL + parsed
+  // expiry into metadata_extra so the player can prefer it over the
+  // stale download_url without needing a WASM schema change.
+  if (typeof opus.clipUrl === "string" && opus.clipUrl.startsWith("http")) {
+    const priorFresh = typeof existing.opus_fresh_download_url === "string" ? existing.opus_fresh_download_url : null;
+    if (priorFresh !== opus.clipUrl) {
+      patch.opus_fresh_download_url = opus.clipUrl;
+      const m = opus.clipUrl.match(/[?&]Expires=(\d+)/);
+      if (m) patch.opus_fresh_download_expires = Number(m[1]);
+    }
+  }
+  // Heal legacy records that stored the buggy `<pid>.<pid>.<cid>`
+  // edit URL — the fresh status response now emits the corrected
+  // form, so overwrite whenever the two differ.
+  if (typeof opus.opusEditUrl === "string" && opus.opusEditUrl.length > 0) {
+    const prior = typeof existing.opus_edit_url === "string" ? existing.opus_edit_url : null;
+    if (prior !== opus.opusEditUrl) patch.opus_edit_url = opus.opusEditUrl;
   }
   if (Object.keys(patch).length === 0) return false;
   try {

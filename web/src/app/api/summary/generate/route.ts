@@ -36,6 +36,12 @@ interface GenerateBody {
    *  summarising. Value comes from ADR-014 processing rules,
    *  matching what the video upload path uses. */
   trim_start_seconds?: number;
+  /** ADR-060 — matching post-show trim (measured from end of recording).
+   *  Needed to keep Show Notes anchored to the scheduled programme
+   *  window on both sides. duration_seconds pairs with this so the
+   *  slicer can compute the absolute end-time in transcript space. */
+  trim_end_seconds?: number;
+  duration_seconds?: number;
 }
 
 async function handler(req: NextRequest) {
@@ -55,7 +61,7 @@ async function handler(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { record_id, title, source_platform, source_id, recorded_at, transcript_override, transcript_source_record_id, trim_start_seconds } = body;
+  const { record_id, title, source_platform, source_id, recorded_at, transcript_override, transcript_source_record_id, trim_start_seconds, trim_end_seconds, duration_seconds } = body;
   if (!record_id || !title || !source_platform || !source_id || !recorded_at) {
     return NextResponse.json(
       { error: "record_id, title, source_platform, source_id, recorded_at all required" },
@@ -72,6 +78,8 @@ async function handler(req: NextRequest) {
       transcriptOverride: transcript_override,
       transcriptSourceRecordId: transcript_source_record_id,
       trimStartSeconds: trim_start_seconds,
+      trimEndSeconds: trim_end_seconds,
+      durationSeconds: duration_seconds,
     });
     return NextResponse.json(result);
   } catch (err) {

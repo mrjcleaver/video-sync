@@ -41,6 +41,11 @@ const STATE_FILE = join(process.cwd(), "data", "summary-regen-state.json");
 
 interface QueueItem extends RecordContext {
   estimated_cost_usd: number;
+  /** ADR-059/060 — trim window to apply before summarising.
+   *  Client-computed from applyProcessingRules per item. */
+  trim_start_seconds?: number;
+  trim_end_seconds?: number;
+  duration_seconds?: number;
 }
 
 interface RegenBody {
@@ -169,7 +174,13 @@ async function handler(req: NextRequest) {
         try {
           const result = await generateRecordSummary(
             { record_id: item.record_id, title: item.title, source_platform: item.source_platform, source_id: item.source_id, recorded_at: item.recorded_at },
-            { rid, prompt },
+            {
+              rid,
+              prompt,
+              trimStartSeconds: item.trim_start_seconds,
+              trimEndSeconds: item.trim_end_seconds,
+              durationSeconds: item.duration_seconds,
+            },
           );
           state.processed++;
           state.cost_so_far_usd += item.estimated_cost_usd;

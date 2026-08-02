@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { getSharedCredential } from "../../../../lib/sharedCredentials";
+import { readDescriptionConfig } from "../../description/config/route";
 
 // google/gemini-2.0-flash-001 was retired upstream — OpenRouter returns
 // 404 "No endpoints found" for it. Default to the current Flash tier;
@@ -19,14 +20,12 @@ import { getSharedCredential } from "../../../../lib/sharedCredentials";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const FALLBACK_MODEL = "anthropic/claude-haiku-4-5";
 
-const SYSTEM_PROMPT = `You are a video session summariser. Given a meeting or coding session transcript, return a JSON object with exactly these fields:
-- summary: string — 2-4 sentences describing what the session covered
-- topics: string[] — 3-7 key topics discussed (short phrases)
-- highlights: string[] — 2-5 notable moments, decisions, or insights
-
-Return only valid JSON. No markdown, no explanation.`;
-
 async function handler(req: NextRequest) {
+  // ADR-064 — system prompt now lives in data/description-config.json.
+  // Falls back to embedded default when the file is absent.
+  const descriptionConfig = await readDescriptionConfig();
+  const SYSTEM_PROMPT = descriptionConfig.prompt_text;
+
   let body: { transcript?: string; apiKey?: string; model?: string };
   try {
     body = await req.json();

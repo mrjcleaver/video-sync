@@ -47,6 +47,74 @@ export function findRecordsNeedingTitleAlignment(
   return out;
 }
 
+export interface SkippedAlignmentDiagnostic {
+  record: VideoRecordJSON;
+  matched_series: string;
+  reason:
+    | "already_dated"                  // current title has a date; would be a no-op
+    | "no_recorded_at"                 // pattern matches but recorded_at is null/invalid
+    | "no_pattern_match_but_undated";  // no series pattern fires — likely a registry gap
+}
+
+/**
+ * Companion scanner — records that a *human* would expect to be
+ * renamed but the resolver couldn't handle. Useful diagnostic for
+ * "bulk rename ran, why did X not get renamed?" — a very common
+ * failure mode is a livestream ingest where `recorded_at` came in
+ * malformed and the registry template can't produce a valid date
+ * (see resolveTitleFromRegistry: `formatDMMMYYYY` returns "" on
+ * unparseable dates, resolver returns null).
+ *
+ * Only reports records whose title matches SOME series pattern —
+ * records with no pattern match are legitimately out of scope and
+ * would drown out the signal.
+ */
+export function findRecordsSkippedByAlignment(
+  allRecords: VideoRecordJSON[],
+  registry: SeriesRegistryEntry[],
+): SkippedAlignmentDiagnostic[] {
+  const out: SkippedAlignmentDiagnostic[] = [];
+  for (const rec of allRecords) {
+    // Anything the primary resolver already picks up is not a "skipped" case.
+    if (resolveAlignedTitle(rec, allRecords, registry)) continue;
+
+    // Try each series pattern against the record's current title. If ANY
+    // matches, this record was skipped for a reason other than "no
+    // pattern applies." That reason is either "already dated" (the
+    // deliberate gate) or "recorded_at is unusable."
+    const dateRe = /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/i;
+    const alreadyDated = dateRe.test(rec.title);
+    let matchedSeries: string | null = null;
+    for (const entry of [...registry].sort((a, b) => b.series_name.length - a.series_name.length)) {
+      try {
+        if (new RegExp(entry.pattern, "i").test(rec.title)) {
+          matchedSeries = entry.series_name;
+          break;
+        }
+      } catch { /* malformed pattern */ }
+    }
+    if (!matchedSeries) continue;
+
+    if (alreadyDated) {
+      out.push({ record: rec, matched_series: matchedSeries, reason: "already_dated" });
+      continue;
+    }
+    // Pattern matches, title has no date — resolver could only have
+    // returned null if the recorded_at (or indexed_at fallback)
+    // failed to produce a "D MMM YYYY" string. Diagnose that.
+    const when = rec.recorded_at ?? rec.indexed_at ?? "";
+    const t = when ? Date.parse(when) : NaN;
+    if (!Number.isFinite(t)) {
+      out.push({ record: rec, matched_series: matchedSeries, reason: "no_recorded_at" });
+    } else {
+      // Should never reach here — the resolver would have succeeded.
+      // Keep the branch for safety and label as pattern-match/undated.
+      out.push({ record: rec, matched_series: matchedSeries, reason: "no_pattern_match_but_undated" });
+    }
+  }
+  return out;
+}
+
 export interface TitleAlignmentProgressEvent {
   type: "started" | "item_done" | "complete";
   index?: number;

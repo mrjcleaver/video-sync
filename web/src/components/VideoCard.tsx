@@ -32,7 +32,10 @@ import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 import { ingestYouTubeSourceRow } from "../lib/youtubeIngest";
 import { resolveTranscriptForOperation } from "../lib/transcriptProvenance";
 import { resolveAlignedTitle, resolveAlignedTitleForced, resolveDiscordChannel } from "../lib/youtubeTitleAlign";
-import { getSeriesRegistry } from "../lib/seriesRegistryClient";
+import { getSeriesRegistry, getSeriesRegistryCached } from "../lib/seriesRegistryClient";
+import { sliceTranscriptFromSeconds, sliceTranscriptToSeconds } from "../lib/transcriptSlice";
+import { getDescriptionConfigCached } from "../lib/descriptionConfig";
+import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
@@ -103,6 +106,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [fetchingYtTranscript, setFetchingYtTranscript] = useState(false);
+  const [ytTranscriptError, setYtTranscriptError] = useState<string | null>(null);
   const [showAttrsPreview, setShowAttrsPreview] = useState(false);
   const [attrsPreview, setAttrsPreview] = useState<PublishAttributes | null>(null);
   const [showProvenance, setShowProvenance] = useState(false);
@@ -120,6 +127,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // flood of standalone VideoCards it used to be.
   const [showClips, setShowClips] = useState(false);
   const [realigning, setRealigning] = useState(false);
+  const [pushingYt, setPushingYt] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
@@ -486,8 +494,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       // slice. The processing-rule-derived value is authoritative;
       // if the operator has overridden it in the publish preview
       // (publishAttrs state), prefer that override.
-      const ruleAttrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
+      const ruleAttrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video, getSeriesRegistryCached());
       const trimStartSeconds = Math.max(0, Math.floor(ruleAttrs.trim_start_seconds ?? 0));
+      const trimEndSeconds = Math.max(0, Math.floor(ruleAttrs.trim_end_seconds ?? 0));
       const res = await fetch("/api/summary/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -497,7 +506,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           source_platform: video.source_platform,
           source_id: video.source_id,
           recorded_at: video.recorded_at ?? video.indexed_at,
+          duration_seconds: video.duration_seconds,
           ...(trimStartSeconds > 0 ? { trim_start_seconds: trimStartSeconds } : {}),
+          ...(trimEndSeconds > 0 ? { trim_end_seconds: trimEndSeconds } : {}),
           // Pass the resolved transcript inline whenever we have one
           // client-side. For own-transcript records this is redundant
           // with the Drive read but harmless; for borrowed-transcript
@@ -681,10 +692,23 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
   async function preparePublish() {
     const rules = loadProcessingRules();
-    let attrs = applyProcessingRules(rules, video);
+    let attrs = applyProcessingRules(rules, video, getSeriesRegistryCached());
 
-    // If any rule uses transcript_llm and we have a transcript, fetch summary
-    const needsLlm = rules.some(
+    // ADR-064 — if the operator has already put a description on the
+    // record (Copy from Show Notes, manual edit, or ingest), that IS
+    // the truth. Don't let a rule-driven transform overwrite it in
+    // the publish preview. Rules still fire for records with empty
+    // descriptions.
+    const hasCurated = (video.description ?? "").trim().length > 0;
+    if (hasCurated) {
+      attrs.description = video.description ?? "";
+    }
+
+    // Only run the transcript LLM path when both (a) a rule needs it
+    // AND (b) the record has no description yet. Otherwise we'd burn
+    // an LLM call on every Preview open just to throw the result
+    // away when hasCurated=true.
+    const needsLlm = !hasCurated && rules.some(
       (r) =>
         r.enabled &&
         (r.transforms.title?.mode === "transcript_llm" ||
@@ -696,7 +720,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         const summary = await requestLlmSummary(video.transcript_text);
         // Re-apply with summary injected as description fallback
         const enriched = { ...video, description: summary.summary };
-        attrs = applyProcessingRules(rules, enriched);
+        attrs = applyProcessingRules(rules, enriched, getSeriesRegistryCached());
       } catch (err) {
         onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
         // Fall through with non-LLM attrs
@@ -1361,21 +1385,129 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
    * one-paragraph blurb that populates VideoRecord.description.
    * Surfaces when the record has a transcript but no description.
    */
-  async function generateDescriptionFromTranscript() {
-    if (!video.transcript_text || video.transcript_text.length < 200) {
-      setDescriptionError("Transcript is too short or missing.");
+  /**
+   * Progressive-reach YouTube transcript fetch. Used when a record
+   * has a YouTube location but no local transcript (own or
+   * borrowed). Calls /api/youtube/transcript which tries the
+   * official captions API first (needs OAuth + video ownership),
+   * then falls back through public timedtext scrape and yt-dlp.
+   * Result is stamped onto the record via update_metadata so
+   * subsequent Show Notes / Description flows see it.
+   */
+  async function fetchTranscriptFromYouTube() {
+    const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.external_id);
+    if (!ytLoc) {
+      setYtTranscriptError("No YouTube location on this record.");
       return;
     }
+    setFetchingYtTranscript(true);
+    setYtTranscriptError(null);
+    try {
+      let connections: Record<string, { credentials?: Record<string, string> }> = {};
+      try {
+        const raw = localStorage.getItem("video-sync:connections");
+        if (raw) connections = JSON.parse(raw);
+      } catch { /* ignore */ }
+      const ytCreds = connections["YouTube"]?.credentials;
+      const headers: Record<string, string> = {};
+      if (ytCreds?.refreshToken) headers["x-youtube-refresh-token"] = ytCreds.refreshToken;
+      if (ytCreds?.clientId) headers["x-youtube-client-id"] = ytCreds.clientId;
+      if (ytCreds?.clientSecret) headers["x-youtube-client-secret"] = ytCreds.clientSecret;
+
+      // Strip the "youtube-" source-id convention prefix. Locations
+      // for YouTube-origin records inherit the record's source_id
+      // wholesale (e.g. "youtube-H75x9DKqkOM") while YouTube-destination
+      // rows have the bare video id. Send only the bare id — YouTube's
+      // API/InnerTube/yt-dlp all reject the prefixed form.
+      const rawId = ytLoc.external_id;
+      const bareVideoId = rawId.startsWith("youtube-") ? rawId.slice("youtube-".length) : rawId;
+      const res = await fetch(`/api/youtube/transcript?videoId=${encodeURIComponent(bareVideoId)}`, { headers });
+      const data = await res.json();
+      if (!res.ok) {
+        const tried = Array.isArray(data.tried) ? data.tried.map((t: { step: string; reason?: string }) => `${t.step}: ${t.reason ?? "ok"}`).join(" · ") : "";
+        throw new Error(`${data.error || `Fetch failed (${res.status})`}${tried ? ` — tried: ${tried}` : ""}`);
+      }
+      const text = String(data.text ?? "");
+      if (text.length < 200) throw new Error(`Transcript too short (${text.length} chars)`);
+      // Persist via the dedicated transcript cache map — NOT via
+      // update_metadata. Transcripts routinely exceed 100KB and
+      // stamping them into the WASM record blob quickly blows the
+      // ~5MB localStorage quota that holds ALL records. The store's
+      // setTranscript() keeps them in a separate key with graceful
+      // overflow (session-only) and overlays back onto the record's
+      // transcript_text in getAll() so all consumers see it.
+      videoStore.setTranscript(video.id, text);
+      onEvent(`TranscriptFetchedFromYouTube: "${video.title}"${dateTag(video.recorded_at)} — via ${data.source} (${text.length} chars)`, { video_id: video.id });
+      onMutated();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setYtTranscriptError(msg);
+      // Emit the full reason to the event log so operators can copy-
+      // paste the yt-dlp stderr / InnerTube playability status without
+      // hovering. The hover text still shows the same message; this
+      // just adds a durable, selectable copy.
+      onEvent(
+        `TranscriptFetchFromYouTubeFailed: "${video.title}"${dateTag(video.recorded_at)} — YT ${ytLoc.external_id} — ${msg}`,
+        { video_id: video.id },
+      );
+    } finally {
+      setFetchingYtTranscript(false);
+    }
+  }
+
+  async function generateDescriptionFromTranscript() {
     setGeneratingDescription(true);
     setDescriptionError(null);
     try {
-      const result = await requestLlmSummary(video.transcript_text);
+      const cfg = getDescriptionConfigCached();
+      const hasShowNotes = !!video.summary_doc_id;
+
+      // Mode "copy_show_notes" + Show Notes exists → deterministic
+      // Google-Doc-markdown → YouTube-plain-text conversion (no LLM
+      // call, chapter cues emitted).
+      if (cfg.mode === "copy_show_notes" && hasShowNotes) {
+        const res = await fetch(`/api/summary/read?docId=${encodeURIComponent(video.summary_doc_id!)}`);
+        if (!res.ok) throw new Error(`Show Notes read failed (${res.status})`);
+        const md = await res.text();
+        const description = showNotesToDescription(md);
+        if (!description || description.length < 20) {
+          throw new Error("Show Notes doc empty or too short after conversion.");
+        }
+        videoStore.mutate(video.id, (r) =>
+          r.update_metadata(cmd({ edits: { description } })),
+        );
+        onEvent(`DescriptionCopied: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from Show Notes`, { video_id: video.id });
+        onMutated();
+        return;
+      }
+
+      // Mode "generate", or "copy_show_notes" fallback when Show
+      // Notes are missing. Same LLM path as before with the ADR-060
+      // trim applied first; prompt comes from server config.
+      if (!video.transcript_text || video.transcript_text.length < 200) {
+        setDescriptionError(cfg.mode === "copy_show_notes"
+          ? "No Show Notes on Drive and no transcript to fall back on."
+          : "Transcript is too short or missing.");
+        return;
+      }
+      const rules = loadProcessingRules();
+      const attrs = applyProcessingRules(rules, video, getSeriesRegistryCached());
+      const trimStart = Math.max(0, Math.floor(attrs.trim_start_seconds ?? 0));
+      const trimEnd = Math.max(0, Math.floor(attrs.trim_end_seconds ?? 0));
+      const duration = video.duration_seconds || 0;
+      let transcript = video.transcript_text;
+      if (trimStart > 0) transcript = sliceTranscriptFromSeconds(transcript, trimStart);
+      if (trimEnd > 0 && duration > trimEnd) {
+        transcript = sliceTranscriptToSeconds(transcript, duration - trimEnd);
+      }
+      const finalTranscript = transcript.length >= 200 ? transcript : video.transcript_text;
+      const result = await requestLlmSummary(finalTranscript);
       const description = result.summary?.trim();
       if (!description) throw new Error("LLM returned no summary text");
       videoStore.mutate(video.id, (r) =>
         r.update_metadata(cmd({ edits: { description } })),
       );
-      onEvent(`DescriptionGenerated: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars)`, { video_id: video.id });
+      onEvent(`DescriptionGenerated: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from transcript${cfg.mode === "copy_show_notes" ? " (Show Notes fallback)" : ""}`, { video_id: video.id });
       onMutated();
     } catch (err) {
       setDescriptionError(err instanceof Error ? err.message : String(err));
@@ -1556,7 +1688,13 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       setShowAttrsPreview(false);
       return;
     }
-    const attrs = applyProcessingRules(loadProcessingRules(), video);
+    const attrs = applyProcessingRules(loadProcessingRules(), video, getSeriesRegistryCached());
+    // Same operator-intent rule as preparePublish: a curated
+    // description on the record beats a rule-driven transform in
+    // the small Preview panel too.
+    if ((video.description ?? "").trim().length > 0) {
+      attrs.description = video.description ?? "";
+    }
     setAttrsPreview(attrs);
     setShowAttrsPreview(true);
   }
@@ -1761,6 +1899,74 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
     } finally {
       setRealigning(false);
+    }
+  }
+
+  /**
+   * Push the local title AND description to the YouTube video via
+   * videos.update. Separate from realignTitle — no title mutation is
+   * attempted; the record's current title + description are sent
+   * verbatim. The endpoint is idempotent (returns updated:false
+   * when both already match). Falls through when the record has
+   * no YouTube video ID or YouTube isn't authorised, logging the
+   * reason to the event stream.
+   */
+  async function pushTitleAndDescriptionToYouTube() {
+    setPushingYt(true);
+    try {
+      const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
+                 ?? (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Origin" && l.external_id);
+      const ytId = ytLoc?.external_id
+                ?? (video.source_platform === "YouTube" ? video.source_id.replace(/^youtube-/, "") : null);
+      if (!ytId) {
+        onEvent(`YouTubePush skipped: "${video.title}"${dateTag(video.recorded_at)} — no YouTube video ID on record`, { video_id: video.id });
+        return;
+      }
+      let connections: Record<string, { credentials?: Record<string, string> }> = {};
+      try {
+        const raw = localStorage.getItem("video-sync:connections");
+        if (raw) connections = JSON.parse(raw);
+      } catch { /* ignore */ }
+      const yt = connections["YouTube"]?.credentials;
+      if (!yt?.refreshToken || !yt?.clientId || !yt?.clientSecret) {
+        onEvent(`YouTubePush skipped: "${video.title}"${dateTag(video.recorded_at)} — YouTube not authorised`, { video_id: video.id });
+        return;
+      }
+      const bareId = ytId.replace(/^youtube-/, "");
+      const description = video.description ?? "";
+      try {
+        const res = await fetch("/api/youtube/update-title", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            videoId: bareId,
+            title: video.title,
+            description,
+            refreshToken: yt.refreshToken,
+            clientId: yt.clientId,
+            clientSecret: yt.clientSecret,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          const d = data as { updated?: boolean; titleChanged?: boolean; descriptionChanged?: boolean };
+          if (d.updated) {
+            const parts: string[] = [];
+            if (d.titleChanged) parts.push(`title→"${video.title}"`);
+            if (d.descriptionChanged) parts.push(`desc→${description.length}ch`);
+            onEvent(`YouTubePush ok YouTube/${bareId}: ${parts.join(", ")}`, { video_id: video.id });
+          } else {
+            onEvent(`YouTubePush no-op YouTube/${bareId}: title + description already match`, { video_id: video.id });
+          }
+        } else {
+          const err = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+          onEvent(`YouTubePush failed YouTube/${bareId}: ${err}`, { video_id: video.id });
+        }
+      } catch (err) {
+        onEvent(`YouTubePush errored YouTube/${bareId}: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+      }
+    } finally {
+      setPushingYt(false);
     }
   }
 
@@ -2148,13 +2354,25 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             Fireflies). Hidden as separate cards by default; these
             badges are their representation on the canonical
             (upstream meeting source) card. */}
-        {pairedBroadcasts.map(p => (
+        {pairedBroadcasts.map(p => {
+          const linked = (allVideos ?? []).find(v => v.id === p.destination_record_id);
+          const badgeLabel = linked
+            ? `${linked.title.slice(0, 40)}${linked.title.length > 40 ? "…" : ""}`
+            : p.external_id;
+          const dateHint = linked?.recorded_at
+            ? ` · ${new Date(linked.recorded_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+            : "";
+          return (
           <a
             key={p.destination_record_id}
             href={`https://www.youtube.com/watch?v=${p.external_id}`}
             target="_blank"
             rel="noopener noreferrer"
-            title={`Broadcast destination on YouTube Live (paired record ${p.destination_record_id.slice(0, 8)}…). Click to open.`}
+            title={
+              linked
+                ? `Broadcast destination on YouTube Live\nPaired record: ${linked.title}\nRecorded: ${linked.recorded_at ?? "?"}\nYouTube ID: ${p.external_id}\nCatalog ID: ${p.destination_record_id.slice(0, 8)}…\nClick to open on YouTube.`
+                : `Broadcast destination on YouTube Live (paired record ${p.destination_record_id.slice(0, 8)}…). Click to open.`
+            }
             style={{
               fontSize: "0.7rem",
               padding: "1px 6px",
@@ -2166,9 +2384,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               whiteSpace: "nowrap",
             }}
           >
-            📺 YouTube Live · {p.external_id}
+            📺 YouTube Live · {badgeLabel}{dateHint}
           </a>
-        ))}
+          );
+        })}
         {pairedTranscripts.map(p => (
           <a
             key={p.destination_record_id}
@@ -2216,7 +2435,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           without hovering on the lozenge. */}
       {video.summary_doc_id && (
         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 8 }}>
-          {video.summary_locked ? "🔒 " : ""}Summary: prompt v{video.summary_prompt_version ?? "?"}
+          {video.summary_locked ? "🔒 " : ""}Show Notes: prompt v{video.summary_prompt_version ?? "?"}
           {video.summary_generated_at && (
             <> · last regenerated {new Date(video.summary_generated_at).toLocaleString(undefined, {
               year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
@@ -2251,26 +2470,142 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       )}
 
       {video.description ? (
-        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 8 }}>
-          {video.description}
-        </p>
-      ) : (video.transcript_text && video.transcript_text.length >= 200) ? (
-        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8, fontStyle: "italic", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span>No description yet.</span>
-          <button
-            className="btn btn-sm"
-            style={{ fontSize: "0.72rem" }}
-            onClick={generateDescriptionFromTranscript}
-            disabled={generatingDescription}
-            title="Generate a short paragraph description from the transcript via OpenRouter. Distinct from the chapter-oriented Summary doc (ADR-046)."
-          >
-            {generatingDescription ? "Generating…" : "✨ Generate from transcript"}
-          </button>
-          {descriptionError && (
-            <span style={{ color: "var(--red)" }}>Error: {descriptionError.slice(0, 100)}</span>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{
+            fontSize: "0.62rem", fontWeight: 600, color: "var(--text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2,
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          }}>
+            <span title="video.description — short paragraph attached to the record at ingest (or generated from the transcript). Distinct from the chapter-oriented Show Notes (ADR-046).">
+              Description
+            </span>
+            {!editingDescription && (
+              <button
+                className="btn btn-sm"
+                style={{ padding: "0 6px", fontSize: "0.6rem", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}
+                onClick={() => {
+                  setDescriptionDraft(video.description ?? "");
+                  setEditingDescription(true);
+                  setDescriptionError(null);
+                }}
+                title="Edit the description text in place. Saves to the record via update_metadata (event-sourced)."
+              >
+                ✏ Edit
+              </button>
+            )}
+            {(() => {
+              const cfg = getDescriptionConfigCached();
+              const hasSN = !!video.summary_doc_id;
+              const copyMode = cfg.mode === "copy_show_notes" && hasSN;
+              const canGenerate = (video.transcript_text?.length ?? 0) >= 200;
+              if (!copyMode && !canGenerate) return null;
+              if (editingDescription) return null;
+              const label = generatingDescription
+                ? (copyMode ? "📋 Copying…" : "✨ Regenerating…")
+                : (copyMode ? "📋 Copy from Show Notes" : "✨ Regenerate from transcript");
+              const title = copyMode
+                ? "Rewrite the description from the current Show Notes doc — deterministic markdown → YouTube-plain-text conversion, emits chapter cues where possible. No LLM call."
+                : "Regenerate the paragraph description from the current transcript. Uses ADR-060 scheduled-window trim (drops pre/post-show).";
+              return (
+                <button
+                  className="btn btn-sm"
+                  style={{ padding: "0 6px", fontSize: "0.6rem", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}
+                  onClick={generateDescriptionFromTranscript}
+                  disabled={generatingDescription}
+                  title={title}
+                >
+                  {label}
+                </button>
+              );
+            })()}
+            {descriptionError && (
+              <span style={{ color: "var(--red)", textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
+                Error: {descriptionError.slice(0, 100)}
+              </span>
+            )}
+          </div>
+          {editingDescription ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <textarea
+                value={descriptionDraft}
+                onChange={(e) => setDescriptionDraft(e.target.value)}
+                style={{
+                  width: "100%", minHeight: 90, fontSize: "0.85rem",
+                  color: "var(--text)", background: "var(--bg)",
+                  border: "1px solid var(--border)", borderRadius: 4,
+                  padding: "6px 8px", resize: "vertical",
+                  fontFamily: "inherit", lineHeight: 1.4,
+                }}
+                autoFocus
+              />
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  className="btn btn-sm btn-primary"
+                  style={{ fontSize: "0.72rem" }}
+                  onClick={() => {
+                    try {
+                      const next = descriptionDraft.trim();
+                      videoStore.mutate(video.id, (r) =>
+                        r.update_metadata(cmd({ edits: { description: next } })),
+                      );
+                      onEvent(`DescriptionEdited: "${video.title}"${dateTag(video.recorded_at)} (${next.length} chars)`, { video_id: video.id });
+                      setEditingDescription(false);
+                      onMutated();
+                    } catch (err) {
+                      setDescriptionError(err instanceof Error ? err.message : String(err));
+                    }
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{ fontSize: "0.72rem" }}
+                  onClick={() => { setEditingDescription(false); setDescriptionError(null); }}
+                >
+                  Cancel
+                </button>
+                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", alignSelf: "center", marginLeft: 4 }}>
+                  {descriptionDraft.length} chars
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0, whiteSpace: "pre-wrap" }}>
+              {video.description}
+            </p>
           )}
         </div>
-      ) : null}
+      ) : (() => {
+        const cfg = getDescriptionConfigCached();
+        const hasSN = !!video.summary_doc_id;
+        const copyMode = cfg.mode === "copy_show_notes" && hasSN;
+        const canGenerate = (video.transcript_text?.length ?? 0) >= 200;
+        if (!copyMode && !canGenerate) return null;
+        const label = generatingDescription
+          ? (copyMode ? "📋 Copying…" : "Generating…")
+          : (copyMode ? "📋 Copy from Show Notes" : "✨ Generate from transcript");
+        const title = copyMode
+          ? "Copy the description from the current Show Notes doc — deterministic markdown → YouTube-plain-text with chapter cues. No LLM call."
+          : "Generate a short paragraph description from the transcript via OpenRouter. Distinct from the chapter-oriented Show Notes.";
+        return (
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8, fontStyle: "italic", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>No description yet.</span>
+            <button
+              className="btn btn-sm"
+              style={{ fontSize: "0.72rem" }}
+              onClick={generateDescriptionFromTranscript}
+              disabled={generatingDescription}
+              title={title}
+            >
+              {label}
+            </button>
+            {descriptionError && (
+              <span style={{ color: "var(--red)" }}>Error: {descriptionError.slice(0, 100)}</span>
+            )}
+          </div>
+        );
+      })()}
 
       {video.tags.length > 0 && (
         <div className="video-card-tags">
@@ -2645,8 +2980,38 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {/* Locations */}
       {video.locations && video.locations.length > 0 && (
         <div className="locations-section">
-          {video.locations.map((loc) => (
-            <div key={`${loc.platform}-${loc.external_id}`} className="location-row">
+          {video.locations.map((loc) => {
+            // Normalise the "youtube-" convention prefix on source_id
+            // when matching a Location against catalog rows. YouTube
+            // ingest stores source_id as "youtube-<id>" but Location
+            // rows carry the bare "<id>". Without this, YouTube
+            // Destinations always show as "not in catalog" even when
+            // the target record exists.
+            const stripYt = (s: string) => s.startsWith("youtube-") ? s.slice("youtube-".length) : s;
+            const locBareId = stripYt(loc.external_id);
+            const isSelf = loc.platform === video.source_platform
+              && (loc.external_id === video.source_id || locBareId === stripYt(video.source_id));
+            const linked = isSelf
+              ? video
+              : (allVideos ?? []).find(v =>
+                  v.source_platform === loc.platform
+                  && (v.source_id === loc.external_id || stripYt(v.source_id) === locBareId),
+                );
+            const fmtDur = (secs: number) => {
+              if (!secs) return "—";
+              const h = Math.floor(secs / 3600);
+              const m = Math.floor((secs % 3600) / 60);
+              const s = Math.floor(secs % 60);
+              return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+            };
+            const fmtTime = (iso: string | null | undefined) => {
+              if (!iso) return "—";
+              const d = new Date(iso);
+              if (isNaN(d.getTime())) return "—";
+              return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+            };
+            return (
+            <div key={`${loc.platform}-${loc.external_id}`} className="location-row" style={{ flexWrap: "wrap" }}>
               <span className="location-platform">{loc.platform}</span>
               {(() => {
                 const href = resolveExternalUrl(loc.external_url);
@@ -2667,6 +3032,44 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               {loc.status && (
                 <span className="location-status">{loc.status}</span>
               )}
+              {linked && !isSelf ? (
+                <button
+                  onClick={() => onNavigateToVideo?.(linked.id)}
+                  style={{
+                    background: "none", border: "none", padding: 0, cursor: "pointer",
+                    color: "var(--text)", fontSize: "0.75rem", textAlign: "left",
+                    flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                    whiteSpace: "nowrap", textDecoration: "underline",
+                  }}
+                  title="Jump to the catalog record for this location"
+                >
+                  {linked.title}
+                </button>
+              ) : linked && isSelf ? (
+                <span style={{
+                  fontSize: "0.72rem", color: "var(--text-muted)", fontStyle: "italic",
+                  flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }} title="This location is this record's own source">
+                  (this record)
+                </span>
+              ) : (
+                <span style={{
+                  fontSize: "0.72rem", color: "var(--text-muted)", fontStyle: "italic",
+                  flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }} title="No catalog record for this external id — publication-only endpoint">
+                  (not in catalog)
+                </span>
+              )}
+              {linked && (
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }} title={formatDateHover(linked.recorded_at || linked.indexed_at)}>
+                  🕐 {fmtTime(linked.recorded_at || linked.indexed_at)}
+                </span>
+              )}
+              {linked && (
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }} title="Duration">
+                  ⏱ {fmtDur(linked.duration_seconds)}
+                </span>
+              )}
               {loc.platform === "YouTube" && loc.role === "Destination" && (
                 <button
                   className="btn btn-sm"
@@ -2685,7 +3088,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 x
               </button>
             </div>
-          ))}
+            );
+          })}
           {!showLocationForm && (
             <button
               className="btn btn-sm"
@@ -2741,9 +3145,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 // Resolve the linked record so we can show its
                 // title, start-time, duration, and transcript
                 // availability instead of just a platform/id pair.
+                // Handles the YouTube "youtube-<id>" source_id
+                // prefix on both sides (link.external_id can be bare
+                // or prefixed depending on ingest path).
+                const stripYt2 = (s: string) => s.startsWith("youtube-") ? s.slice("youtube-".length) : s;
+                const linkBareId = stripYt2(link.external_id);
                 const linked = (allVideos ?? []).find(v =>
                   (link.video_id && v.id === link.video_id)
-                  || (v.source_platform === link.platform && v.source_id === link.external_id),
+                  || (v.source_platform === link.platform
+                      && (v.source_id === link.external_id || stripYt2(v.source_id) === linkBareId)),
                 );
                 const fmtDur = (secs: number) => {
                   if (!secs) return "—";
@@ -3228,12 +3638,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         {video.source_platform !== "OpusClip" && (video.locations ?? []).some(l => l.platform === "YouTube" && l.external_id) && (
           <button
             className="btn btn-sm"
-            onClick={() => realignTitle(true)}
-            disabled={realigning}
+            onClick={pushTitleAndDescriptionToYouTube}
+            disabled={pushingYt}
             style={{ fontSize: "0.72rem" }}
-            title="Realign this record's title and also PUT the new title to the actual YouTube video via videos.update. Requires the youtube.force-ssl OAuth scope — reconnect YouTube in Connections if you see a 'scope missing' event."
+            title="PUT this record's current local title AND description to the actual YouTube video via videos.update. Idempotent — no-op if both already match. Requires the youtube.force-ssl OAuth scope (reconnect YouTube in Connections if you see 'scope missing')."
           >
-            {realigning ? "Realigning…" : "🏷↗ Realign + push to YouTube"}
+            {pushingYt ? "↗ Pushing…" : "↗ Push title + description to YouTube"}
           </button>
         )}
         {canApprove && (
@@ -3334,29 +3744,50 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         {(() => {
           const hasTranscript = !!video.transcript_text && video.transcript_text.length > 200;
           const disabled = summarising || !hasTranscript;
+          const hasYouTubeLoc = (video.locations ?? []).some(l => l.platform === "YouTube" && l.external_id);
           // ADR-053 — if the record itself has no transcript, another
           // paired record (Fireflies via TranscribedFrom, or a Zoom
           // canonical via SameEvent) may have one. Surface a hint
           // instead of hiding the button so the operator can act.
-          const noTranscriptHint = "This record has no transcript ≥200 chars. Fix by: (1) hydrating a paired Fireflies/Kaltura record via Import, (2) linking a SameEvent sibling on this card's Provenance panel that has one, or (3) uploading a transcript manually (see docs).";
+          const noTranscriptHint = hasYouTubeLoc
+            ? "This record has no transcript ≥200 chars. Try 📥 Fetch from YouTube (progressive-reach: official captions API → public timedtext → yt-dlp), link a SameEvent sibling with a transcript, or upload one manually."
+            : "This record has no transcript ≥200 chars. Fix by: (1) hydrating a paired Fireflies/Kaltura record via Import, (2) linking a SameEvent sibling on this card's Provenance panel that has one, or (3) uploading a transcript manually (see docs).";
           return (
-            <button
-              className="btn btn-sm"
-              style={{ fontSize: "0.72rem", ...(disabled && !summarising ? { opacity: 0.55 } : {}) }}
-              onClick={generateSummary}
-              disabled={disabled}
-              title={hasTranscript
-                ? (video.summary_doc_id
-                    ? `Regenerate summary (current: prompt v${video.summary_prompt_version ?? "?"})`
-                    : "Generate a chapter-oriented summary on Drive (ADR-046)")
-                : noTranscriptHint}
-            >
-              {summarising
-                ? "📄 Summarising…"
-                : hasTranscript
-                  ? (video.summary_doc_id ? "📄 Re-summarise" : "📄 Summarise")
-                  : "📄 Summarise (no transcript — hover)"}
-            </button>
+            <>
+              <button
+                className="btn btn-sm"
+                style={{ fontSize: "0.72rem", ...(disabled && !summarising ? { opacity: 0.55 } : {}) }}
+                onClick={generateSummary}
+                disabled={disabled}
+                title={hasTranscript
+                  ? (video.summary_doc_id
+                      ? `Regenerate Show Notes (current: prompt v${video.summary_prompt_version ?? "?"})`
+                      : "Generate Show Notes (chapter-oriented Drive doc — ADR-046) — M:Moments, L:Learnings, T:Themes, C:Chat-Sparked")
+                  : noTranscriptHint}
+              >
+                {summarising
+                  ? "📄 Generating…"
+                  : hasTranscript
+                    ? (video.summary_doc_id ? "📄 Regenerate Show Notes" : "📄 Show Notes")
+                    : "📄 Show Notes (no transcript — hover)"}
+              </button>
+              {!hasTranscript && hasYouTubeLoc && (
+                <button
+                  className="btn btn-sm"
+                  style={{ fontSize: "0.72rem" }}
+                  onClick={fetchTranscriptFromYouTube}
+                  disabled={fetchingYtTranscript}
+                  title="Progressive-reach fetch: 1) official YouTube captions API (owned videos), 2) public timedtext scrape, 3) yt-dlp auto-subs. Uses the first that succeeds."
+                >
+                  {fetchingYtTranscript ? "📥 Fetching…" : "📥 Fetch from YouTube"}
+                </button>
+              )}
+              {ytTranscriptError && (
+                <span style={{ color: "var(--red)", fontSize: "0.7rem" }} title={ytTranscriptError}>
+                  YT fetch: {ytTranscriptError.slice(0, 80)}{ytTranscriptError.length > 80 ? "…" : ""}
+                </span>
+              )}
+            </>
           );
         })()}
         {video.summary_doc_id && discordChannel && (
@@ -3364,7 +3795,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             className="btn btn-sm"
             style={{ fontSize: "0.72rem" }}
             onClick={() => pushToDiscord("summary", {
-              content: `**${video.title}**${dateTag(video.recorded_at)}\n📄 Summary: https://docs.google.com/document/d/${video.summary_doc_id}${
+              content: `**${video.title}**${dateTag(video.recorded_at)}\n📄 Show Notes: https://docs.google.com/document/d/${video.summary_doc_id}${
                 (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url)?.external_url
                   ? `\n▶ Watch: ${(video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_url)!.external_url}`
                   : ""
@@ -3373,7 +3804,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             disabled={pushingDiscord === "summary"}
             title={`Post this record's summary link to the series Discord channel (${discordChannel.replace(/https:\/\/(?:.*\.)?discord(?:app)?\.com\/api\/webhooks\//i, "…/")})`}
           >
-            {pushingDiscord === "summary" ? "💬 Pushing…" : "💬 Push summary to Discord"}
+            {pushingDiscord === "summary" ? "💬 Pushing…" : "💬 Push Show Notes to Discord"}
           </button>
         )}
         {/* ADR-046 slice 5 — Lock toggle. Only relevant once a summary

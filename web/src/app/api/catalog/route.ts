@@ -78,36 +78,44 @@ async function getHandler() {
 }
 
 async function postHandler(req: NextRequest) {
-  let body: { id?: string; json?: string; lastModified?: string };
+  interface Item { id?: string; json?: string; lastModified?: string }
+  let body: Item & { records?: Item[] };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (!body.id || typeof body.id !== "string") {
-    return NextResponse.json({ error: "id required" }, { status: 400 });
-  }
-  if (!body.json || typeof body.json !== "string") {
-    return NextResponse.json({ error: "json required" }, { status: 400 });
-  }
-  // Sanity-check the record JSON parses and matches the id (boundary validation)
-  try {
-    const parsed = JSON.parse(body.json) as { id?: string };
-    if (parsed.id !== body.id) {
-      return NextResponse.json({ error: "id mismatch" }, { status: 400 });
+  // Accept either single-record shape (legacy) or a `records` array.
+  // Batching collapses N pushes into one read-merge-write cycle, so
+  // a burst of client mutations doesn't stack against the serialized
+  // writeQueue and time out at Cloud Run's 30s request cap.
+  const items: Item[] = Array.isArray(body.records) ? body.records : [body];
+  const validated: Array<{ id: string; json: string; ts: string }> = [];
+  for (const it of items) {
+    if (!it.id || typeof it.id !== "string") {
+      return NextResponse.json({ error: "id required for each record" }, { status: 400 });
     }
-  } catch {
-    return NextResponse.json({ error: "json malformed" }, { status: 400 });
+    if (!it.json || typeof it.json !== "string") {
+      return NextResponse.json({ error: "json required for each record" }, { status: 400 });
+    }
+    try {
+      const parsed = JSON.parse(it.json) as { id?: string };
+      if (parsed.id !== it.id) {
+        return NextResponse.json({ error: `id mismatch on record ${it.id}` }, { status: 400 });
+      }
+    } catch {
+      return NextResponse.json({ error: `json malformed on record ${it.id}` }, { status: 400 });
+    }
+    validated.push({ id: it.id, json: it.json, ts: it.lastModified ?? new Date().toISOString() });
   }
-  const ts = body.lastModified ?? new Date().toISOString();
-  const recordId = body.id;
-  const recordJson = body.json;
   return withLock(async () => {
     const current = await readCatalog();
-    current.records[recordId] = recordJson;
-    current.lastModified[recordId] = ts;
+    for (const v of validated) {
+      current.records[v.id] = v.json;
+      current.lastModified[v.id] = v.ts;
+    }
     await writeCatalog(current);
-    return NextResponse.json({ ok: true, id: recordId, lastModified: ts });
+    return NextResponse.json({ ok: true, count: validated.length });
   });
 }
 

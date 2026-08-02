@@ -13,9 +13,10 @@ import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
  */
 async function handler(req: NextRequest) {
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
-  const { videoId, title, refreshToken, clientId, clientSecret } = body as {
+  const { videoId, title, description, refreshToken, clientId, clientSecret } = body as {
     videoId?: string;
     title?: string;
+    description?: string;
     refreshToken?: string;
     clientId?: string;
     clientSecret?: string;
@@ -63,9 +64,19 @@ async function handler(req: NextRequest) {
   if (!currentSnippet) {
     return NextResponse.json({ error: `video ${videoId} not found on YouTube` }, { status: 404 });
   }
-  if (currentSnippet.title === title) {
-    // Idempotent no-op — telling the caller so it can log accordingly.
-    return NextResponse.json({ updated: false, reason: "already-matches", currentTitle: currentSnippet.title });
+  // Determine what actually changed. Title change is required for a
+  // no-op check; description is opt-in (only push when the caller
+  // sent it AND it differs from current). This keeps the endpoint
+  // safe when only-title callers don't want description touched.
+  const wantDescriptionUpdate = typeof description === "string" && description !== (currentSnippet.description ?? "");
+  const titleChanged = currentSnippet.title !== title;
+  if (!titleChanged && !wantDescriptionUpdate) {
+    return NextResponse.json({
+      updated: false,
+      reason: "already-matches",
+      currentTitle: currentSnippet.title,
+      currentDescriptionLength: (currentSnippet.description ?? "").length,
+    });
   }
 
   const updateRes = await fetch(
@@ -83,7 +94,7 @@ async function handler(req: NextRequest) {
           // categoryId is required — YouTube 400s without it. We
           // just echo the current value.
           categoryId: currentSnippet.categoryId ?? "22",
-          description: currentSnippet.description,
+          description: wantDescriptionUpdate ? description : currentSnippet.description,
           tags: currentSnippet.tags,
         },
       }),
@@ -105,8 +116,21 @@ async function handler(req: NextRequest) {
     );
   }
 
-  serverLog("info", "yt:update-title", "update-ok", { videoId, oldTitle: currentSnippet.title, newTitle: title });
-  return NextResponse.json({ updated: true, oldTitle: currentSnippet.title, newTitle: title });
+  serverLog("info", "yt:update-title", "update-ok", {
+    videoId,
+    oldTitle: currentSnippet.title,
+    newTitle: title,
+    titleChanged,
+    descriptionChanged: wantDescriptionUpdate,
+    descriptionLength: wantDescriptionUpdate ? (description as string).length : undefined,
+  });
+  return NextResponse.json({
+    updated: true,
+    oldTitle: currentSnippet.title,
+    newTitle: title,
+    titleChanged,
+    descriptionChanged: wantDescriptionUpdate,
+  });
 }
 
 export const PUT = withRequestLogging("api:youtube/update-title", handler);
