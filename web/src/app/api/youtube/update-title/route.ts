@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
+import { captureBackup } from "../../../../lib/descriptionBackups";
+import { getActor } from "../../../../lib/auth";
 
 /**
  * ADR-055 follow-up — push a locally-aligned title back to the
@@ -13,14 +15,20 @@ import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
  */
 async function handler(req: NextRequest) {
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
-  const { videoId, title, description, refreshToken, clientId, clientSecret } = body as {
+  const { videoId, title, description, refreshToken, clientId, clientSecret, record_id } = body as {
     videoId?: string;
     title?: string;
     description?: string;
     refreshToken?: string;
     clientId?: string;
     clientSecret?: string;
+    /** Optional — catalog record id for backup attribution. */
+    record_id?: string;
   };
+  // Best-effort: know the actor doing the write (for backup provenance).
+  let actorEmail = "unknown";
+  try { const actor = await getActor(req); actorEmail = actor.email; }
+  catch { /* keep "unknown" */ }
 
   if (!videoId || !title || !refreshToken || !clientId || !clientSecret) {
     return NextResponse.json(
@@ -77,6 +85,23 @@ async function handler(req: NextRequest) {
       currentTitle: currentSnippet.title,
       currentDescriptionLength: (currentSnippet.description ?? "").length,
     });
+  }
+
+  // Snapshot the CURRENT title + description BEFORE we overwrite —
+  // powers Maintain → Restore. Best-effort; a backup-write failure
+  // doesn't block the primary update.
+  try {
+    await captureBackup({
+      record_id: record_id ?? "",
+      yt_video_id: videoId,
+      taken_by: actorEmail,
+      prior_title: currentSnippet.title ?? "",
+      prior_description: currentSnippet.description ?? "",
+      new_title: title,
+      new_description: wantDescriptionUpdate ? (description as string) : undefined,
+    });
+  } catch (err) {
+    serverLog("warn", "yt:update-title", "backup-capture-failed", { videoId, error: String(err) });
   }
 
   const updateRes = await fetch(

@@ -26,15 +26,17 @@ import { findRecordsNeedingSummaryBadge } from "../../lib/summaryBadgeBackfill";
 import { findRecordsNeedingTitleAlignment } from "../../lib/youtubeTitleAlignBackfill";
 import { findOrphanClips } from "../../lib/orphanClipsRepair";
 import { findDuplicateClusters } from "../../lib/catalogDedupe";
+import { useCurrentActor } from "../../lib/useCurrentActor";
 
 const NAV = [
-  { path: "/catalog",    label: "Catalog",    icon: "📚", badge: "catalog" as const },
-  { path: "/overview",   label: "Overview",   icon: "📅", badge: null       as const },
-  { path: "/provenance", label: "Provenance", icon: "🔗", badge: null       as const },
-  { path: "/import",     label: "Import",     icon: "⬇️", badge: "import"  as const },
-  { path: "/maintain",   label: "Maintain",   icon: "🧰", badge: "maintain" as const },
-  { path: "/shorts",     label: "Shorts",     icon: "✂️", badge: null       as const },
-  { path: "/config",     label: "Config",     icon: "⚙️", badge: null       as const },
+  { path: "/catalog",    label: "Catalog",    icon: "📚", badge: "catalog" as const, roles: ["Admin", "Publisher", "Viewer"] as const },
+  { path: "/overview",   label: "Overview",   icon: "📅", badge: null       as const, roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
+  { path: "/provenance", label: "Provenance", icon: "🔗", badge: null       as const, roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
+  { path: "/contribute", label: "Contribute", icon: "🎁", badge: null       as const, roles: ["Admin", "Publisher", "Contributor"] as const },
+  { path: "/import",     label: "Import",     icon: "⬇️", badge: "import"  as const, roles: ["Admin", "Publisher"] as const },
+  { path: "/maintain",   label: "Maintain",   icon: "🧰", badge: "maintain" as const, roles: ["Admin", "Publisher"] as const },
+  { path: "/shorts",     label: "Shorts",     icon: "✂️", badge: null       as const, roles: ["Admin", "Publisher"] as const },
+  { path: "/config",     label: "Config",     icon: "⚙️", badge: null       as const, roles: ["Admin"] as const },
 ] as const;
 
 export function Sidebar() {
@@ -43,6 +45,8 @@ export function Sidebar() {
     videos, currentPromptVersion, seriesRegistry,
     backfillReadySize,
   } = useApp();
+  const actorState = useCurrentActor();
+  const role = actorState.actor?.role ?? "Viewer";
 
   // Catalog backlog — records the operator needs to look at.
   const catalogBadge = useMemo(() => {
@@ -99,7 +103,7 @@ export function Sidebar() {
       <div style={{ padding: "4px 10px 12px", fontWeight: 700, fontSize: "1rem" }}>
         Video Sync
       </div>
-      {NAV.map((item) => {
+      {NAV.filter((item) => (item.roles as readonly string[]).includes(role)).map((item) => {
         const isActive = pathname === item.path || (pathname === "/" && item.path === "/overview");
         const count = badgeFor(item.badge);
         return (
@@ -145,6 +149,50 @@ export function Sidebar() {
         );
       })}
       <div style={{ flex: 1 }} />
+
+      {/* ADR-065 — role selector. Admin/Publisher can preview the app as
+          a lower-role user by demoting themselves via X-View-As. Never
+          elevates (server ignores elevation attempts). Hidden when the
+          true role is already the lowest tier. */}
+      {actorState.trueRole && actorState.trueRole !== "Viewer" && (
+        <div
+          style={{
+            padding: "6px 10px", borderTop: "1px solid var(--border)",
+            marginTop: 6, fontSize: "0.72rem", color: "var(--text-muted)",
+          }}
+        >
+          <div style={{ marginBottom: 2 }}>
+            <span aria-hidden style={{ marginRight: 6 }}>👁</span>
+            View as
+          </div>
+          <select
+            value={actorState.viewAsRole ?? actorState.trueRole}
+            onChange={(e) => {
+              const v = e.target.value;
+              actorState.setViewAsRole(v === actorState.trueRole ? null : v as typeof actorState.trueRole);
+            }}
+            style={{
+              width: "100%", fontSize: "0.75rem", padding: "3px 6px",
+              background: "var(--bg)", color: "var(--text)",
+              border: "1px solid var(--border)", borderRadius: 4,
+            }}
+            title="Preview the app as if you were a lower-role user. Reloads the page. Server ignores elevation attempts, so this can only demote."
+          >
+            {actorState.trueRole === "Admin" && <option value="Admin">Admin (you)</option>}
+            {actorState.trueRole !== "Viewer" && actorState.trueRole !== "Contributor" && (
+              <option value="Publisher">{actorState.trueRole === "Publisher" ? "Publisher (you)" : "Publisher"}</option>
+            )}
+            <option value="Contributor">Contributor</option>
+            <option value="Viewer">Viewer</option>
+          </select>
+          {actorState.viewAsRole && actorState.viewAsRole !== actorState.trueRole && (
+            <div style={{ marginTop: 3, color: "#f59e0b", fontSize: "0.68rem" }}>
+              ⚠ Demoted view — click role &quot;{actorState.trueRole} (you)&quot; to restore.
+            </div>
+          )}
+        </div>
+      )}
+
       <a
         style={{
           display: "flex", alignItems: "center", gap: 8,
@@ -171,6 +219,68 @@ export function Sidebar() {
         <span aria-hidden style={{ width: 20, textAlign: "center" }}>❓</span>
         Help
       </a>
+      {/* ADR-066 — MCP connect hint. Uses NEXT_PUBLIC_MCP_PUBLIC_ORIGIN
+          when set (the public no-IAP Cloud Run service that hosts
+          the MCP RPC + OAuth token endpoints). Falls back to the
+          current origin for single-service deploys. Hidden from
+          Viewer + Contributor — they can't mint tokens and the
+          endpoint gives them nothing they don't already see. */}
+      {(role === "Admin" || role === "Publisher") && (
+      <details style={{ padding: "6px 10px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+        <summary style={{ cursor: "pointer", listStyle: "none" }}>
+          <span aria-hidden style={{ width: 20, textAlign: "center", display: "inline-block" }}>🔌</span>
+          Connect via MCP
+        </summary>
+        <div style={{ paddingTop: 6, fontSize: "0.68rem", lineHeight: 1.45 }}>
+          <div style={{ marginBottom: 6 }}>
+            Mint a token in <strong>Config → 🔌 MCP tokens</strong> (Admin only), then use it via <code>mcp-remote</code> below.
+          </div>
+
+          <div style={{ fontWeight: 600, marginTop: 2 }}>Recommended — config.json via mcp-remote</div>
+          <pre style={{
+            marginTop: 3, padding: 5, fontSize: "0.66rem",
+            background: "var(--bg)", border: "1px solid var(--border)",
+            borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-all",
+          }}>{`{
+  "mcpServers": {
+    "video-sync": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "${(process.env.NEXT_PUBLIC_MCP_PUBLIC_ORIGIN ?? (typeof window !== "undefined" ? window.location.origin : ""))}/api/mcp",
+        "--header",
+        "Authorization: Bearer vsync_YOUR_TOKEN_HERE"
+      ]
+    }
+  }
+}`}</pre>
+
+          <div style={{ fontWeight: 600, marginTop: 8 }}>Alt — Custom Connector UI (OAuth flow)</div>
+          Settings → Connectors → <em>Add Custom Connector</em> → paste:
+          <pre style={{
+            marginTop: 3, padding: 5, fontSize: "0.66rem",
+            background: "var(--bg)", border: "1px solid var(--border)",
+            borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-all",
+          }}>{`${(process.env.NEXT_PUBLIC_MCP_PUBLIC_ORIGIN ?? (typeof window !== "undefined" ? window.location.origin : ""))}/api/mcp`}</pre>
+          Claude Desktop will discover <code>/.well-known/oauth-authorization-server</code>, walk you through Approve, and store the token itself.
+          <div style={{
+            marginTop: 6, padding: 6,
+            background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.35)",
+            borderRadius: 3,
+          }}>
+            <strong style={{ color: "#f59e0b" }}>⚠ Requires IAP exception</strong>
+            <div style={{ marginTop: 3 }}>
+              The OAuth <code>/register</code> and <code>/token</code> endpoints need to be reachable from Claude Desktop without an IAP session. That&apos;s a GCP config task (URL-based IAP exemption or a separate Cloud Run service). Until that&apos;s done, the OAuth flow will 302 to Google Login and stall. The <code>mcp-remote</code> route above works today without any IAP changes.
+            </div>
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            The token&apos;s frozen role at mint time determines what results scope to.
+          </div>
+        </div>
+      </details>
+      )}
     </aside>
   );
 }

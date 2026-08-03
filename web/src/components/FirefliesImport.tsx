@@ -38,6 +38,9 @@ interface Props {
   /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
    *  Sub-panel fires its own fetch on every value change past 0. */
   fetchTrigger?: number;
+  /** Cross-source title filter set by ImportPanel. Overrides local
+   *  filterTitle when non-empty. */
+  sharedFilterTitle?: string;
 }
 
 function getFirefliesApiKey(): string | null {
@@ -53,7 +56,7 @@ function getFirefliesApiKey(): string | null {
   }
 }
 
-export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
+export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger, sharedFilterTitle }: Props) {
   const [transcripts, setTranscripts] = useState<NormalisedTranscript[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // ADR-055/056 at ingest — cache the series registry once at mount
@@ -206,7 +209,8 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
 
   const visible = transcripts.filter((t) => {
     const mins = durationMinutes(t);
-    if (filterTitle && !t.title.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+    const effectiveFilter = (sharedFilterTitle && sharedFilterTitle.length > 0) ? sharedFilterTitle : filterTitle;
+    if (effectiveFilter && !t.title.toLowerCase().includes(effectiveFilter.toLowerCase())) return false;
     if (filterMinLen && mins < Number(filterMinLen)) return false;
     if (filterMaxLen && mins > Number(filterMaxLen)) return false;
     if (filterDays.size > 0 && !filterDays.has(new Date(t.recorded_at).getDay())) return false;

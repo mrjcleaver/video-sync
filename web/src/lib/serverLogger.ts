@@ -74,10 +74,60 @@ const AUDIT_BUFFER_MAX = 500;
 const recentAudit: AuditEvent[] = [];
 let _auditSeq = 0;
 
+// Persistence — write the ring to FUSE periodically so a Cloud Run
+// cold start / redeploy doesn't wipe it. File is small (~500 events *
+// ~250 bytes ≈ 125KB), FUSE write is a few hundred ms; do it on a
+// debounced timer, not per-event.
+let _auditDirty = false;
+let _auditFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const AUDIT_FLUSH_DEBOUNCE_MS = 3000;
+const AUDIT_FILE = process.cwd() + "/data/audit-recent.json";
+
+async function loadAuditFromDisk(): Promise<void> {
+  try {
+    const { promises: fs } = await import("fs");
+    const raw = await fs.readFile(AUDIT_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as AuditEvent[];
+    if (Array.isArray(parsed)) {
+      recentAudit.push(...parsed.slice(-AUDIT_BUFFER_MAX));
+    }
+  } catch { /* first run: file absent, nothing to load */ }
+}
+
+async function flushAuditToDisk(): Promise<void> {
+  if (!_auditDirty) return;
+  _auditDirty = false;
+  try {
+    const { promises: fs } = await import("fs");
+    const path = await import("path");
+    await fs.mkdir(path.dirname(AUDIT_FILE), { recursive: true });
+    await fs.writeFile(AUDIT_FILE, JSON.stringify(recentAudit), "utf-8");
+  } catch { /* FUSE hiccup — retry on next dirty flag */ }
+}
+
+function scheduleAuditFlush(): void {
+  _auditDirty = true;
+  if (_auditFlushTimer) return;
+  _auditFlushTimer = setTimeout(() => {
+    _auditFlushTimer = null;
+    void flushAuditToDisk();
+  }, AUDIT_FLUSH_DEBOUNCE_MS);
+}
+
+// Fire-and-forget load on module init — the ring re-populates from
+// disk within a few ms of the container starting.
+let _auditHydrated = false;
+function ensureAuditHydrated(): void {
+  if (_auditHydrated) return;
+  _auditHydrated = true;
+  void loadAuditFromDisk();
+}
+
 function pushAudit(entry: Omit<AuditEvent, "id" | "ts">): void {
   // Skip the polling endpoint to prevent feedback noise — every poll
   // would otherwise immediately re-appear in the next poll.
   if (entry.path === "/api/audit/recent") return;
+  ensureAuditHydrated();
   const event: AuditEvent = {
     ...entry,
     id: `${Date.now()}-${++_auditSeq}`,
@@ -87,6 +137,7 @@ function pushAudit(entry: Omit<AuditEvent, "id" | "ts">): void {
   if (recentAudit.length > AUDIT_BUFFER_MAX) {
     recentAudit.splice(0, recentAudit.length - AUDIT_BUFFER_MAX);
   }
+  scheduleAuditFlush();
 }
 
 /**

@@ -23,9 +23,13 @@ const DEFAULT_PROMPT = `You are a video session summariser. Given a meeting or c
 
 Return only valid JSON. No markdown, no explanation.`;
 
+// Kept in server-side sync with lib/descriptionConfig.ts's DEFAULT_SHOW_NOTES_PROMPT.
+const DEFAULT_SHOW_NOTES_PROMPT = `You are turning a chapter-by-chapter Show Notes markdown document into a YouTube video description that both preserves chapter cues (HH:MM:SS lines) AND sells the video to a first-time viewer. Total ≤ 4800 chars. See the client default for the full rubric — this server-side stub only fires when the config file is missing.`;
+
 interface DescriptionConfig {
   mode: "copy_show_notes" | "generate";
   prompt_text: string;
+  show_notes_prompt: string;
   updated_at?: string;
   updated_by?: string;
 }
@@ -33,6 +37,7 @@ interface DescriptionConfig {
 const DEFAULT_CONFIG: DescriptionConfig = {
   mode: "copy_show_notes",
   prompt_text: DEFAULT_PROMPT,
+  show_notes_prompt: DEFAULT_SHOW_NOTES_PROMPT,
 };
 
 export async function readDescriptionConfig(): Promise<DescriptionConfig> {
@@ -44,6 +49,9 @@ export async function readDescriptionConfig(): Promise<DescriptionConfig> {
       prompt_text: typeof parsed.prompt_text === "string" && parsed.prompt_text.length > 0
         ? parsed.prompt_text
         : DEFAULT_PROMPT,
+      show_notes_prompt: typeof parsed.show_notes_prompt === "string" && parsed.show_notes_prompt.length > 0
+        ? parsed.show_notes_prompt
+        : DEFAULT_SHOW_NOTES_PROMPT,
       updated_at: parsed.updated_at,
       updated_by: parsed.updated_by,
     };
@@ -72,9 +80,13 @@ async function putHandler(req: NextRequest) {
   const prompt_text = typeof body.prompt_text === "string" && body.prompt_text.trim().length > 20
     ? body.prompt_text
     : DEFAULT_PROMPT;
+  const show_notes_prompt = typeof body.show_notes_prompt === "string" && body.show_notes_prompt.trim().length > 20
+    ? body.show_notes_prompt
+    : DEFAULT_SHOW_NOTES_PROMPT;
   const next: DescriptionConfig = {
     mode,
     prompt_text,
+    show_notes_prompt,
     updated_at: new Date().toISOString(),
     updated_by: actor.user_id,
   };

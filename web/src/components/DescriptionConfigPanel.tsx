@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import {
   DEFAULT_DESCRIPTION_PROMPT,
+  DEFAULT_SHOW_NOTES_PROMPT,
   getDescriptionConfig,
   refreshDescriptionConfig,
   saveDescriptionConfig,
@@ -28,6 +29,7 @@ export default function DescriptionConfigPanel() {
   const [cfg, setCfg] = useState<DescriptionConfig | null>(null);
   const [mode, setMode] = useState<DescriptionMode>("copy_show_notes");
   const [prompt, setPrompt] = useState("");
+  const [showNotesPrompt, setShowNotesPrompt] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export default function DescriptionConfigPanel() {
       setCfg(c);
       setMode(c.mode);
       setPrompt(c.prompt_text);
+      setShowNotesPrompt(c.show_notes_prompt);
     });
     return () => { cancelled = true; };
   }, []);
@@ -47,7 +50,7 @@ export default function DescriptionConfigPanel() {
     setSaving(true);
     setStatus(null);
     setError(null);
-    const res = await saveDescriptionConfig({ mode, prompt_text: prompt });
+    const res = await saveDescriptionConfig({ mode, prompt_text: prompt, show_notes_prompt: showNotesPrompt });
     setSaving(false);
     if (res.ok) {
       setStatus("Saved.");
@@ -59,7 +62,7 @@ export default function DescriptionConfigPanel() {
     }
   }
 
-  const dirty = cfg != null && (cfg.mode !== mode || cfg.prompt_text !== prompt);
+  const dirty = cfg != null && (cfg.mode !== mode || cfg.prompt_text !== prompt || cfg.show_notes_prompt !== showNotesPrompt);
 
   return (
     <div className="panel" style={{ marginBottom: 12 }}>
@@ -127,20 +130,54 @@ export default function DescriptionConfigPanel() {
             </label>
           </div>
 
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontWeight: 600, fontSize: "0.82rem" }}>
+              Show-Notes-mode prompt
+            </label>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 4 }}>
+              System prompt sent to OpenRouter when producing a YouTube description
+              from a record&apos;s Show Notes doc (mode &quot;Copy from Show Notes&quot;).
+              The default writes a marketing hook, HH:MM:SS chapter cues (so YouTube&apos;s
+              chapter picker renders), optional highlights, and hard-caps at 4800 chars.
+            </div>
+            <textarea
+              value={showNotesPrompt}
+              onChange={(e) => setShowNotesPrompt(e.target.value)}
+              disabled={!isAdmin}
+              rows={16}
+              style={{
+                width: "100%", fontFamily: "monospace", fontSize: "0.78rem",
+                padding: 8, background: "var(--bg)", color: "var(--text)",
+                border: "1px solid var(--border)", borderRadius: 4, resize: "vertical",
+              }}
+            />
+            {showNotesPrompt !== DEFAULT_SHOW_NOTES_PROMPT && (
+              <button
+                className="btn btn-sm"
+                style={{ marginTop: 4, fontSize: "0.72rem" }}
+                onClick={() => setShowNotesPrompt(DEFAULT_SHOW_NOTES_PROMPT)}
+                disabled={!isAdmin}
+                title="Reset the Show-Notes-mode prompt to the embedded default (not saved until you click Save)"
+              >
+                ↺ Reset to default
+              </button>
+            )}
+          </div>
+
           <div style={{ marginBottom: 8 }}>
             <label style={{ fontWeight: 600, fontSize: "0.82rem" }}>
               Transcript-mode prompt
             </label>
             <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 4 }}>
               System prompt sent to OpenRouter when generating from a transcript.
-              Used both by the &quot;Generate from transcript&quot; mode AND as the fallback
+              Used by mode &quot;Generate from transcript&quot; AND as the fallback
               when &quot;Copy from Show Notes&quot; is on but no Show Notes exist yet.
             </div>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               disabled={!isAdmin}
-              rows={12}
+              rows={10}
               style={{
                 width: "100%", fontFamily: "monospace", fontSize: "0.78rem",
                 padding: 8, background: "var(--bg)", color: "var(--text)",

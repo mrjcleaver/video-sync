@@ -25,6 +25,7 @@ import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
 import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent } from "../lib/orphanClipsRepair";
 import { findDuplicateClusters, runCatalogDedupe, type DedupeProgressEvent } from "../lib/catalogDedupe";
 import { discoverOpusProjects, parseProjectIds, getOpusApiKey, findClipsMissingKeywords, refreshOpusKeywords, type DiscoverProgressEvent, type KeywordsRefreshProgressEvent } from "../lib/opusClipsDiscovery";
+import DescriptionSyncPanel from "./DescriptionSyncPanel";
 
 interface Props {
   open: boolean;
@@ -1093,6 +1094,9 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             )}
           </div>
         )}
+
+        {/* ADR-064-adjacent — YouTube description sync with backups. */}
+        <DescriptionSyncPanel videos={videos} onEvent={onEvent} />
 
         {/* ADR-055 — YouTube title alignment. Fourth maintenance card.
             Rewrites undated YouTube-source titles to the dated form

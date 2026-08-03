@@ -1462,21 +1462,38 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       const cfg = getDescriptionConfigCached();
       const hasShowNotes = !!video.summary_doc_id;
 
-      // Mode "copy_show_notes" + Show Notes exists → deterministic
-      // Google-Doc-markdown → YouTube-plain-text conversion (no LLM
-      // call, chapter cues emitted).
+      // Mode "copy_show_notes" + Show Notes exists → LLM-rewrite the
+      // Show Notes markdown into a YouTube-facing description using
+      // the admin-configured `show_notes_prompt` (marketing hook +
+      // chapter cues + optional highlights, ≤ 4800 chars). Falls back
+      // to the deterministic showNotesToDescription() converter if
+      // the LLM call fails.
       if (cfg.mode === "copy_show_notes" && hasShowNotes) {
-        const res = await fetch(`/api/summary/read?docId=${encodeURIComponent(video.summary_doc_id!)}`);
-        if (!res.ok) throw new Error(`Show Notes read failed (${res.status})`);
-        const md = await res.text();
-        const description = showNotesToDescription(md);
-        if (!description || description.length < 20) {
-          throw new Error("Show Notes doc empty or too short after conversion.");
+        const readRes = await fetch(`/api/summary/read?docId=${encodeURIComponent(video.summary_doc_id!)}`);
+        if (!readRes.ok) throw new Error(`Show Notes read failed (${readRes.status})`);
+        const md = await readRes.text();
+        let description = "";
+        let source: "llm" | "deterministic_fallback" = "llm";
+        try {
+          const llmRes = await fetch("/api/description/from-show-notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ show_notes: md }),
+          });
+          const llmData = await llmRes.json().catch(() => ({}));
+          if (!llmRes.ok) throw new Error((llmData as { error?: string }).error ?? `LLM call failed (${llmRes.status})`);
+          description = (llmData as { text?: string }).text?.trim() ?? "";
+          if (!description || description.length < 20) throw new Error("LLM returned empty description");
+        } catch (err) {
+          onEvent(`DescriptionCopiedFallback: "${video.title}"${dateTag(video.recorded_at)} — LLM path failed (${err instanceof Error ? err.message : String(err)}); using deterministic converter`, { video_id: video.id });
+          description = showNotesToDescription(md);
+          source = "deterministic_fallback";
+          if (!description || description.length < 20) throw new Error("Both LLM and deterministic conversion failed");
         }
         videoStore.mutate(video.id, (r) =>
           r.update_metadata(cmd({ edits: { description } })),
         );
-        onEvent(`DescriptionCopied: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from Show Notes`, { video_id: video.id });
+        onEvent(`DescriptionCopied: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from Show Notes via ${source}`, { video_id: video.id });
         onMutated();
         return;
       }
@@ -2409,6 +2426,24 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             📝 {p.destination_platform} · {p.external_id.slice(0, 12)}…
           </a>
         ))}
+        {/* ADR-065 — community-contributor attribution chip. Only
+            renders when the record was ingested by a Contributor (or a
+            Publisher "on behalf of" a contributor). Chapter is optional
+            and shows before the email when present. */}
+        {video.contributor_email && (
+          <span
+            title={`Contributed by ${video.contributor_email}${video.contributor_chapter ? ` — ${video.contributor_chapter}` : ""}`}
+            style={{
+              fontSize: "0.7rem", padding: "1px 6px", borderRadius: 10,
+              background: "rgba(139,92,246,0.12)", color: "#a78bfa",
+              border: "1px solid rgba(139,92,246,0.35)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            👤 {video.contributor_chapter ? `${video.contributor_chapter} — ` : ""}
+            {video.contributor_email.split("@")[0]}
+          </span>
+        )}
         {/* Catalog UUID — clickable to copy. Useful when correlating with
             server logs, .meta.json files, or webhook payloads. */}
         <span

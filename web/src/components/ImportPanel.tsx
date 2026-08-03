@@ -46,6 +46,10 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
   // initial 0). Lets the "Fetch all" button fire four probes in
   // parallel without ImportPanel needing refs into each sub-panel.
   const [fetchTrigger, setFetchTrigger] = useState(0);
+  // Shared title filter that layers on top of every Meetings sub-panel's
+  // own filter. Case-insensitive substring match against each fetched
+  // item's title / topic / name. Empty = no filter.
+  const [sharedFilterTitle, setSharedFilterTitle] = useState("");
 
   // ADR-058 Option E — Overview's empty-slot "Import this day"
   // action deep-links to /import?from=YYYY-MM-DD&to=YYYY-MM-DD.
@@ -136,13 +140,39 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
                 🔄 Fetch all sources
               </button>
             </div>
-            <FirefliesImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} />
+            {/* Shared title filter applied to every Meetings sub-panel's
+                list. Overrides each panel's own title filter when set. */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 16px 0", fontSize: "0.82rem", color: "var(--text-muted)", flexWrap: "wrap" }}>
+              <span>Search titles:</span>
+              <input
+                type="text"
+                value={sharedFilterTitle}
+                onChange={(e) => setSharedFilterTitle(e.target.value)}
+                placeholder="substring match across all four sources"
+                style={{
+                  flex: 1, minWidth: 240, padding: "4px 8px",
+                  background: "var(--bg)", border: "1px solid var(--border)",
+                  borderRadius: 6, color: "var(--text)", fontSize: "0.8rem",
+                }}
+              />
+              {sharedFilterTitle && (
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setSharedFilterTitle("")}
+                  style={{ fontSize: "0.72rem" }}
+                  title="Clear the shared title filter"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <FirefliesImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} sharedFilterTitle={sharedFilterTitle} />
             <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
-            <ZoomImport      onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} />
+            <ZoomImport      onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} sharedFilterTitle={sharedFilterTitle} />
             <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
-            <KalturaImport   onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} />
+            <KalturaImport   onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} sharedFilterTitle={sharedFilterTitle} />
             <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
-            <YouTubeLiveImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} />
+            <YouTubeLiveImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} fetchTrigger={fetchTrigger} sharedFilterTitle={sharedFilterTitle} />
           </>
         )}
         {active === "url"    && <URLImport onImported={onImported} onEvent={onEvent} />}

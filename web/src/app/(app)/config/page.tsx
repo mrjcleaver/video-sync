@@ -18,6 +18,8 @@ import PostProcessingRulesPanel from "../../../components/PostProcessingRulesPan
 import SeriesRegistryPanel from "../../../components/SeriesRegistryPanel";
 import DescriptionConfigPanel from "../../../components/DescriptionConfigPanel";
 import SummaryPromptPanel from "../../../components/SummaryPromptPanel";
+import McpTokensPanel from "../../../components/McpTokensPanel";
+import AccessLogPanel from "../../../components/AccessLogPanel";
 import { useApp } from "../AppContext";
 import { useState } from "react";
 
@@ -41,6 +43,8 @@ export default function ConfigPage() {
       <PostProcessingRulesPanel />
       <SeriesRegistryPanel />
       <DescriptionConfigPanel />
+      <McpTokensPanel />
+      <AccessLogPanel />
       <div className="panel" style={{ marginBottom: 12 }}>
         <div
           className="panel-header"

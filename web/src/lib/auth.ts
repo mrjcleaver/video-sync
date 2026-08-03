@@ -12,9 +12,10 @@
  *      default until IAP is configured on the Cloud Run service.
  *
  * Group → Role mapping (ADR-036):
- *   video-sync-key-admins@<domain> → Admin
- *   video-sync-operators@<domain>  → Publisher
- *   video-sync-viewers@<domain>    → Viewer
+ *   video-sync-key-admins@<domain>    → Admin
+ *   video-sync-operators@<domain>     → Publisher
+ *   video-sync-contributors@<domain>  → Contributor  (ADR-065)
+ *   video-sync-viewers@<domain>       → Viewer
  *
  * Group lookup is cached per session (5 min TTL) to amortise the Cloud
  * Identity Groups API call.
@@ -171,9 +172,11 @@ async function lookupRole(email: string): Promise<Role | null> {
     roles = [];
     const keyAdmins = (process.env.KEY_ADMIN_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
     const operators = (process.env.OPERATOR_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+    const contributors = (process.env.CONTRIBUTOR_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
     const viewers = (process.env.VIEWER_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
     if (keyAdmins.includes(email)) roles.push("Admin");
     if (operators.includes(email)) roles.push("Publisher");
+    if (contributors.includes(email)) roles.push("Contributor");
     if (viewers.includes(email)) roles.push("Viewer");
   }
 
@@ -225,13 +228,34 @@ async function rolesFromCloudIdentity(email: string, domain: string): Promise<Ro
   const groups: Array<{ email: string; role: Role }> = [
     { email: `video-sync-key-admins@${domain}`, role: "Admin" },
     { email: `video-sync-operators@${domain}`, role: "Publisher" },
+    // ADR-065 — community contributors: can Import, see their own records + Provenance.
+    { email: `video-sync-contributors@${domain}`, role: "Contributor" },
     { email: `video-sync-viewers@${domain}`, role: "Viewer" },
   ];
   const roles: Role[] = [];
+  const errors: string[] = [];
+  // Iterate every group INDEPENDENTLY. A 403 on one group (e.g.
+  // video-sync-contributors doesn't exist yet, or the SA lacks
+  // viewer permission on that specific group) must not abort the
+  // whole lookup — otherwise a legitimate Viewer gets bounced to
+  // the wiki. Failures are logged; if EVERY group threw we rethrow
+  // so the outer env-var fallback still kicks in.
   for (const g of groups) {
-    const name = await resolveGroupName(token, g.email);
-    if (!name) continue;                                 // group doesn't exist → skip
-    if (await isMemberOfGroup(token, name, email)) roles.push(g.role);
+    try {
+      const name = await resolveGroupName(token, g.email);
+      if (!name) continue;                               // group doesn't exist → skip cleanly
+      if (await isMemberOfGroup(token, name, email)) roles.push(g.role);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${g.email}: ${msg}`);
+      console.warn(`Cloud Identity check skipped for ${g.email} (email=${email}): ${msg}`);
+    }
+  }
+  if (errors.length === groups.length) {
+    // Every group threw — treat as an outage and let the caller
+    // fall through to the env-var allowlist rather than silently
+    // denying everyone.
+    throw new Error(`All group lookups failed: ${errors.join("; ")}`);
   }
   return roles;
 }
@@ -255,6 +279,7 @@ async function getMetadataAccessToken(): Promise<string> {
 function highestRole(roles: Role[]): Role | null {
   if (roles.includes("Admin")) return "Admin";
   if (roles.includes("Publisher")) return "Publisher";
+  if (roles.includes("Contributor")) return "Contributor";
   if (roles.includes("Viewer")) return "Viewer";
   return null;  // user is in no group — deny
 }
@@ -267,6 +292,50 @@ function highestRole(roles: Role[]): Role | null {
  * should catch and return 401.
  */
 export async function getActor(req: Request): Promise<Actor> {
+  // ADR-066 §4 — bearer-token path for headless MCP clients. When the
+  // request carries `Authorization: Bearer vsync_…`, resolve against
+  // data/mcp-tokens.json. The token's frozen actor (email + role +
+  // user_id at mint time) becomes the effective actor. Skips IAP
+  // entirely for these calls — mcp-remote / Claude Desktop don't sit
+  // behind an IAP session.
+  const auth = req.headers.get("authorization");
+  if (auth && auth.startsWith("Bearer vsync_")) {
+    const plaintext = auth.slice("Bearer ".length);
+    // Dynamic import so client bundles don't try to include node:fs.
+    const { resolveToken } = await import("./mcpTokens");
+    const tok = await resolveToken(plaintext);
+    if (tok) {
+      return {
+        user_id: tok.actor_user_id,
+        role: tok.actor_role,
+        email: tok.actor_email,
+        sub: `token:${tok.id}`,
+      };
+    }
+    throw new Error("Invalid or revoked MCP bearer token");
+  }
+
+  const trueActor = await getTrueActor(req);
+  // ADR-065 §7 — X-View-As header lets a higher-role user preview the
+  // app as if they were a lower role. Only DEMOTIONS are honoured; any
+  // attempt to elevate is silently dropped so a compromised client can't
+  // gain privileges by forging the header.
+  const viewAs = req.headers.get("x-view-as");
+  if (viewAs && isRole(viewAs) && ROLE_ORDER[viewAs] < ROLE_ORDER[trueActor.role]) {
+    return { ...trueActor, role: viewAs };
+  }
+  return trueActor;
+}
+
+const ROLE_ORDER: Record<Role, number> = { Viewer: 0, Contributor: 1, Publisher: 2, Admin: 3 };
+function isRole(s: string): s is Role {
+  return s === "Admin" || s === "Publisher" || s === "Contributor" || s === "Viewer";
+}
+
+/** Returns the actor's TRUE role (from IAP + group lookup), ignoring
+ *  any X-View-As header. Used by /api/auth/me so the client always
+ *  knows the ceiling of its available view-as options. */
+export async function getTrueActor(req: Request): Promise<Actor> {
   if (ALLOW_NO_IAP) return DEV_ACTOR;
 
   const jwt = req.headers.get("x-goog-iap-jwt-assertion");

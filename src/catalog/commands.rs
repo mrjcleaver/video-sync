@@ -40,6 +40,11 @@ pub struct IndexVideo {
     pub metadata_extra: Option<serde_json::Value>,
     pub initial_owner: Option<Uuid>,
     pub recorded_at: Option<String>,
+    // ── ADR-065: community contributor attribution (optional) ─────
+    #[serde(default)]
+    pub contributor_email: Option<String>,
+    #[serde(default)]
+    pub contributor_chapter: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

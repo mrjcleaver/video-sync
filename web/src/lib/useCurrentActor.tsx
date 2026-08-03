@@ -22,7 +22,17 @@ interface ActorState {
   actor: Actor | null;
   loading: boolean;
   error: string | null;
+  /** The role the server gave us, before any client-side "view as" downgrade. */
+  trueRole: Role | null;
+  /** Currently-selected "view as" role. null = view as your true role. */
+  viewAsRole: Role | null;
+  /** Setter for the "view as" role. Downgrading only — attempts to elevate no-op.
+   *  Persists to localStorage. */
+  setViewAsRole: (role: Role | null) => void;
 }
+
+const ROLE_ORDER: Record<Role, number> = { Viewer: 0, Contributor: 1, Publisher: 2, Admin: 3 };
+const VIEW_AS_KEY = "video-sync:view-as-role";
 
 const FALLBACK_ACTOR: Actor = {
   user_id: "00000000-0000-0000-0000-000000000001",
@@ -34,6 +44,9 @@ const CurrentActorContext = createContext<ActorState>({
   actor: null,
   loading: true,
   error: null,
+  trueRole: null,
+  viewAsRole: null,
+  setViewAsRole: () => {},
 });
 
 // Per ADR-045: users who pass IAP (e.g. any @agentics.org Workspace user)
@@ -45,7 +58,17 @@ const UNAUTHORIZED_REDIRECT_URL =
   "https://github.com/mrjcleaver/video-sync/wiki";
 
 export function CurrentActorProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<ActorState>({ actor: null, loading: true, error: null });
+  const [actor, setActor] = useState<Actor | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [trueRole, setTrueRole] = useState<Role | null>(null);
+  const [viewAsRole, setViewAsRoleState] = useState<Role | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = window.localStorage.getItem(VIEW_AS_KEY);
+    if (!raw) return null;
+    if (raw === "Admin" || raw === "Publisher" || raw === "Contributor" || raw === "Viewer") return raw;
+    return null;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -61,16 +84,74 @@ export function CurrentActorProvider({ children }: { children: ReactNode }) {
         return r.json();
       })
       .then((data: Actor) => {
-        if (!cancelled) setState({ actor: data, loading: false, error: null });
+        if (cancelled) return;
+        setActor(data);
+        // Prefer the explicit true_role from /api/auth/me when present;
+        // fall back to the effective role for backward compatibility.
+        setTrueRole(data.true_role ?? data.role);
+        setLoading(false);
       })
       .catch((err: Error) => {
-        if (!cancelled) setState({ actor: null, loading: false, error: err.message });
+        if (cancelled) return;
+        setError(err.message);
+        setLoading(false);
       });
     return () => { cancelled = true; };
   }, []);
 
+  // Install a fetch interceptor that stamps X-View-As on every same-origin
+  // request when a view-as role is active. The server's getActor honours
+  // the header only when it demotes (never elevates), so a compromised
+  // client can't use this to gain privileges. Interceptor is idempotent
+  // — the previous ref is chained through so we don't double-wrap on
+  // React strict-mode double-mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const origFetch = window.fetch.bind(window);
+    const patched: typeof window.fetch = (input, init) => {
+      const nextInit: RequestInit = init ? { ...init } : {};
+      const headers = new Headers(nextInit.headers ?? {});
+      if (viewAsRole) headers.set("X-View-As", viewAsRole);
+      else headers.delete("X-View-As");
+      nextInit.headers = headers;
+      return origFetch(input, nextInit);
+    };
+    window.fetch = patched;
+    return () => { window.fetch = origFetch; };
+  }, [viewAsRole]);
+
+  const setViewAsRole = (role: Role | null) => {
+    if (typeof window !== "undefined") {
+      if (role) window.localStorage.setItem(VIEW_AS_KEY, role);
+      else window.localStorage.removeItem(VIEW_AS_KEY);
+    }
+    setViewAsRoleState(role);
+    // A role change alters what the server returns for /api/catalog and
+    // friends; a full reload is the cleanest way to re-hydrate everything
+    // (in particular the WASM store, which does per-record merge on boot).
+    if (typeof window !== "undefined") window.location.reload();
+  };
+
+  // Effective actor combines the server's actor with any client-side
+  // "view as" downgrade. Elevation attempts are ignored — a Publisher
+  // pretending to be Admin gets Publisher.
+  const effectiveActor: Actor | null = actor
+    ? (viewAsRole && ROLE_ORDER[viewAsRole] < ROLE_ORDER[actor.role]
+        ? { ...actor, role: viewAsRole }
+        : actor)
+    : null;
+
   return (
-    <CurrentActorContext.Provider value={state}>{children}</CurrentActorContext.Provider>
+    <CurrentActorContext.Provider value={{
+      actor: effectiveActor,
+      loading,
+      error,
+      trueRole,
+      viewAsRole,
+      setViewAsRole,
+    }}>
+      {children}
+    </CurrentActorContext.Provider>
   );
 }
 

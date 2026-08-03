@@ -119,6 +119,8 @@ const DEFAULT_DELAY_MS = 200;
  * calls tryEnsureSummary per record, emits progress events. Halts when the
  * cost cap would be exceeded — caller can re-run to continue.
  */
+const DEFAULT_CONCURRENCY = 4;
+
 export async function runSummaryBadgeBackfill(
   actorState: Parameters<typeof actorCommand>[0],
   onEvent: (ev: BackfillProgressEvent) => void,
@@ -128,89 +130,109 @@ export async function runSummaryBadgeBackfill(
     costCapUsd?: number;
     delayMs?: number;
     signal?: AbortSignal;
+    /** Max concurrent OpenRouter calls. Default 4 — each Show Notes
+     *  gen takes ~30-180s server-side (Gemini 2.5 Pro) and OpenRouter
+     *  tolerates several parallel calls. Set to 1 to force sequential
+     *  when troubleshooting rate-limit issues. */
+    concurrency?: number;
   },
 ): Promise<{ generated: number; skipped: number; errors: number; cost_spent_usd: number }> {
   const includeLocked = opts?.includeLocked ?? false;
   const costCap = opts?.costCapUsd ?? DEFAULT_COST_CAP_USD;
-  const delayMs = opts?.delayMs ?? DEFAULT_DELAY_MS;
+  const concurrency = Math.max(1, opts?.concurrency ?? DEFAULT_CONCURRENCY);
 
   const currentPromptVersion = await getCurrentPromptVersion();
   const allRecords = videoStore.getAll();
   const work = findRecordsNeedingSummaryBadge(allRecords, currentPromptVersion, { includeLocked });
 
   onEvent({ type: "started", total: work.length });
-  log?.(`Summary badge backfill started — ${work.length} record${work.length === 1 ? "" : "s"} eligible (includeLocked=${includeLocked})`);
+  log?.(`Summary badge backfill started — ${work.length} record${work.length === 1 ? "" : "s"} eligible (includeLocked=${includeLocked}, concurrency=${concurrency})`);
 
   let generated = 0;
   let skipped = 0;
   let errors = 0;
   let spent = 0;
+  let processedCount = 0;   // for the item_done progress index
+  let stoppedByCap = false;
   const signal = opts?.signal ?? new AbortController().signal;
 
-  for (let i = 0; i < work.length; i++) {
-    if (signal.aborted) break;
-    const { record, reason, needsBorrowedTranscript } = work[i];
+  // Bounded async pool. Workers pull the next un-processed item off
+  // the queue until it's empty or aborted / cost-capped. Each Show
+  // Notes gen is a blocking network wait — parallelism gives us
+  // near-linear speedup up to the OpenRouter concurrency ceiling
+  // (empirically fine at 4 for Gemini 2.5 Pro + Haiku fallback).
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      if (signal.aborted || stoppedByCap) return;
+      const i = cursor++;
+      if (i >= work.length) return;
+      const { record, reason, needsBorrowedTranscript } = work[i];
 
-    // Pre-flight cost estimate using transcript length we'd send to LLM.
-    const resolved = resolveTranscriptForOperation(record, videoStore.getAll());
-    const transcriptLen = resolved?.text.length ?? 0;
-    const estCost = estimatePerRecordCost(transcriptLen, "google/gemini-2.5-pro");
-    if (spent + estCost > costCap) {
+      // Pre-flight cost check. Because workers advance in parallel,
+      // spent can move while we're deciding; recheck AFTER the call
+      // and refund/deny only if we can't afford this specific gen.
+      const resolved = resolveTranscriptForOperation(record, videoStore.getAll());
+      const transcriptLen = resolved?.text.length ?? 0;
+      const estCost = estimatePerRecordCost(transcriptLen, "google/gemini-2.5-pro");
+      if (spent + estCost > costCap) {
+        stoppedByCap = true;
+        onEvent({
+          type: "item_done",
+          index: ++processedCount,
+          total: work.length,
+          recordTitle: record.title,
+          outcome: { kind: "stopped_cost_cap", spent, cap: costCap },
+        });
+        log?.(`Cost cap reached — halting, spent $${spent.toFixed(2)} of $${costCap.toFixed(2)}`);
+        return;
+      }
+
+      let outcome: BackfillProgressEvent["outcome"];
+      try {
+        const res = await tryEnsureSummary({
+          record,
+          currentPromptVersion,
+          actorState,
+          signal,
+          allRecords: videoStore.getAll(),
+          overrideLock: includeLocked,
+        });
+        if (res.generated) {
+          generated++;
+          spent += estCost;
+          outcome = { kind: "generated", recordId: record.id, reason, borrowed: needsBorrowedTranscript };
+          log?.(
+            `Backfilled badge for ${record.id} (${reason}${needsBorrowedTranscript ? ", borrowed transcript" : ""}) — est $${estCost.toFixed(3)}`,
+            { video_id: record.id },
+          );
+        } else {
+          skipped++;
+          if (res.reason === "locked") outcome = { kind: "skipped_locked" };
+          else if (res.reason === "current") outcome = { kind: "skipped_current" };
+          else if (res.reason?.startsWith("no transcript")) outcome = { kind: "skipped_no_transcript" };
+          else outcome = { kind: "skipped_current" };
+        }
+      } catch (err) {
+        errors++;
+        const msg = err instanceof Error ? err.message : String(err);
+        outcome = { kind: "error", error: msg };
+        log?.(`Backfill error on ${record.id} ("${record.title}"): ${msg}`, { video_id: record.id });
+      }
+
       onEvent({
         type: "item_done",
-        index: i + 1,
+        index: ++processedCount,
         total: work.length,
         recordTitle: record.title,
-        outcome: { kind: "stopped_cost_cap", spent, cap: costCap },
+        outcome,
       });
-      log?.(`Cost cap reached — halting at item ${i + 1}/${work.length}, spent $${spent.toFixed(2)} of $${costCap.toFixed(2)}`);
-      break;
-    }
-
-    let outcome: BackfillProgressEvent["outcome"];
-    try {
-      const res = await tryEnsureSummary({
-        record,
-        currentPromptVersion,
-        actorState,
-        signal,
-        allRecords: videoStore.getAll(),
-        overrideLock: includeLocked,
-      });
-      if (res.generated) {
-        generated++;
-        spent += estCost;
-        outcome = { kind: "generated", recordId: record.id, reason, borrowed: needsBorrowedTranscript };
-        log?.(
-          `Backfilled badge for ${record.id} (${reason}${needsBorrowedTranscript ? ", borrowed transcript" : ""}) — est $${estCost.toFixed(3)}`,
-          { video_id: record.id },
-        );
-      } else {
-        skipped++;
-        if (res.reason === "locked") outcome = { kind: "skipped_locked" };
-        else if (res.reason === "current") outcome = { kind: "skipped_current" };
-        else if (res.reason?.startsWith("no transcript")) outcome = { kind: "skipped_no_transcript" };
-        else outcome = { kind: "skipped_current" };
-      }
-    } catch (err) {
-      errors++;
-      const msg = err instanceof Error ? err.message : String(err);
-      outcome = { kind: "error", error: msg };
-      log?.(`Backfill error on ${record.id} ("${record.title}"): ${msg}`, { video_id: record.id });
-    }
-
-    onEvent({
-      type: "item_done",
-      index: i + 1,
-      total: work.length,
-      recordTitle: record.title,
-      outcome,
-    });
-
-    if (i < work.length - 1 && delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
+
+  // Launch `concurrency` workers, wait for all to drain.
+  const workers = Array.from({ length: Math.min(concurrency, work.length) }, () => worker());
+  await Promise.all(workers);
 
   const totals = { generated, skipped, errors, cost_spent_usd: spent };
   onEvent({ type: "complete", total: work.length, totals });

@@ -32,6 +32,9 @@ interface Props {
   /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
    *  Sub-panel fires its own fetch on every value change past 0. */
   fetchTrigger?: number;
+  /** Cross-source title filter set by ImportPanel. Overrides local
+   *  filterTitle when non-empty. */
+  sharedFilterTitle?: string;
 }
 
 function fmtDuration(secs: number): string {
@@ -59,7 +62,7 @@ function getYouTubeCredentials(): { refreshToken: string; clientId: string; clie
   }
 }
 
-export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
+export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger, sharedFilterTitle }: Props) {
   const [broadcasts, setBroadcasts] = useState<BroadcastEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -186,7 +189,8 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
   }
 
   const visible = broadcasts.filter(b => {
-    if (filterTitle && !b.title.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+    const effectiveFilter = (sharedFilterTitle && sharedFilterTitle.length > 0) ? sharedFilterTitle : filterTitle;
+    if (effectiveFilter && !b.title.toLowerCase().includes(effectiveFilter.toLowerCase())) return false;
     if (statusFilter !== "all" && b.liveBroadcastContent !== statusFilter) return false;
     return true;
   });

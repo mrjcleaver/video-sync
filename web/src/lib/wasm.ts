@@ -47,6 +47,9 @@ export interface VideoRecordJSON {
   summary_counts?: SummaryCountsJSON | null;
   /** ISO timestamp when the current summary was generated. */
   summary_generated_at?: string | null;
+  // ADR-065 — community-contributor attribution.
+  contributor_email?: string | null;
+  contributor_chapter?: string | null;
 }
 
 /** ADR-046 — counts surfaced as M:NN L:NN T:NN C:NN in the Overview. */
@@ -135,4 +138,7 @@ export interface IndexVideoCmd {
   metadata_extra?: unknown;
   initial_owner?: string;
   recorded_at?: string;
+  // ADR-065 — community-contributor attribution (optional).
+  contributor_email?: string;
+  contributor_chapter?: string;
 }

@@ -60,6 +60,19 @@ pub struct VideoRecord {
     /// flow removes the summary.
     #[serde(default)]
     pub summary_generated_at: Option<DateTime<Utc>>,
+    // ── ADR-065: community contributor attribution ───────────────────
+    /// Workspace email of the contributor who ingested this record
+    /// (when their effective role at ingest time was Contributor, or
+    /// when a Publisher imported "on behalf of" a contributor).
+    /// Absent for curator-imported records that predate ADR-065.
+    #[serde(default)]
+    pub contributor_email: Option<String>,
+    /// Free-text chapter name the contributor is associated with
+    /// (e.g. "Agentics Toronto"). Set alongside contributor_email at
+    /// ingest time. Not enforced against any registry — chapter names
+    /// can grow ad-hoc.
+    #[serde(default)]
+    pub contributor_chapter: Option<String>,
     pending_events: Vec<CatalogEvent>,
 }
 
@@ -132,6 +145,8 @@ impl VideoRecord {
             summary_locked: false,
             summary_counts: None,
             summary_generated_at: None,
+            contributor_email: cmd.contributor_email,
+            contributor_chapter: cmd.contributor_chapter,
             pending_events: Vec::new(),
         };
 

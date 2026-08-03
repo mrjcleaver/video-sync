@@ -32,6 +32,9 @@ interface Props {
   /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
    *  Sub-panel fires its own fetch on every value change past 0. */
   fetchTrigger?: number;
+  /** Cross-source title filter set by ImportPanel. Overrides local
+   *  filterTitle when non-empty. */
+  sharedFilterTitle?: string;
 }
 
 function getKalturaCredentials(): { partnerId: string; adminSecret: string } | null {
@@ -61,7 +64,7 @@ function fmtDuration(secs: number): string {
     : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
+export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger, sharedFilterTitle }: Props) {
   const [entries, setEntries] = useState<KalturaEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
@@ -239,7 +242,8 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   }
 
   const visible = entries.filter(e => {
-    if (filterTitle && !e.name.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+    const effectiveFilter = (sharedFilterTitle && sharedFilterTitle.length > 0) ? sharedFilterTitle : filterTitle;
+    if (effectiveFilter && !e.name.toLowerCase().includes(effectiveFilter.toLowerCase())) return false;
     if (liveOnly && !e.is_live) return false;
     return true;
   });

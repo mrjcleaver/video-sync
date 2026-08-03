@@ -44,6 +44,10 @@ interface Props {
   /** ADR-058 — bumped by ImportPanel's "Fetch all sources" button.
    *  Sub-panel fires its own fetch on every value change past 0. */
   fetchTrigger?: number;
+  /** Cross-source title filter set by ImportPanel. Overrides the
+   *  local filterTitle when non-empty; empty leaves the local one
+   *  in charge. */
+  sharedFilterTitle?: string;
 }
 
 function getZoomCredentials(): { accountId: string; clientId: string; clientSecret: string } | null {
@@ -61,7 +65,7 @@ function getZoomCredentials(): { accountId: string; clientId: string; clientSecr
   }
 }
 
-export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger }: Props) {
+export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp, dateTo: dateToProp, fetchTrigger, sharedFilterTitle }: Props) {
   const [meetings, setMeetings] = useState<ZoomMeeting[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [seriesRegistry, setSeriesRegistry] = useState<SeriesRegistryEntry[]>([]);
@@ -372,7 +376,8 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
           </div>
           <div className="zoom-import-list">
             {meetings.filter((m) => {
-              if (filterTitle && !m.topic.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+              const effectiveFilter = (sharedFilterTitle && sharedFilterTitle.length > 0) ? sharedFilterTitle : filterTitle;
+              if (effectiveFilter && !m.topic.toLowerCase().includes(effectiveFilter.toLowerCase())) return false;
               if (filterMinLen && m.duration < Number(filterMinLen)) return false;
               if (filterMaxLen && m.duration > Number(filterMaxLen)) return false;
               if (filterDays.size > 0 && !filterDays.has(new Date(m.start_time).getDay())) return false;

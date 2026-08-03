@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withRequestLogging } from "../../../../lib/serverLogger";
-import { getActor } from "../../../../lib/auth";
+import { getActor, getTrueActor } from "../../../../lib/auth";
 
 /**
  * GET /api/auth/me
@@ -27,12 +27,19 @@ const NO_CACHE_HEADERS = {
 
 async function handler(req: Request) {
   try {
-    const actor = await getActor(req);
+    // Always return the TRUE role here — the client uses this to
+    // determine the ceiling of allowed "view as" roles. Other routes
+    // honour X-View-As via getActor().
+    const trueActor = await getTrueActor(req);
+    // But surface the effective (possibly demoted) role too so the UI
+    // can render both "You are Admin, viewing as Contributor" cleanly.
+    const effectiveActor = await getActor(req);
     return NextResponse.json(
       {
-        user_id: actor.user_id,
-        role: actor.role,
-        email: actor.email,
+        user_id: trueActor.user_id,
+        role: effectiveActor.role,       // effective role — respects X-View-As
+        true_role: trueActor.role,       // ceiling — never demoted
+        email: trueActor.email,
       },
       { headers: NO_CACHE_HEADERS },
     );
