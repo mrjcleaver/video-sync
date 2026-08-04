@@ -386,7 +386,7 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
                   return next;
                 })}
                 aria-expanded={isExpanded}
-                aria-controls={`backfill-month-${key}`}
+                aria-controls={isExpanded ? `backfill-month-${key}` : undefined}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "72px 1fr 120px 20px",

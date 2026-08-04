@@ -1561,7 +1561,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             style={{ cursor: "pointer", userSelect: "none" }}
             title={showParticipants ? "Hide participants" : "Show participants"}
             aria-expanded={showParticipants}
-            aria-controls={`participants-${video.id}`}
+            aria-controls={showParticipants ? `participants-${video.id}` : undefined}
           >
             {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
           </button>

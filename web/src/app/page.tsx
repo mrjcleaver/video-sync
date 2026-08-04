@@ -318,7 +318,7 @@ export default function Dashboard() {
             className={`btn btn-sm ${showConnections ? "btn-primary" : ""}`}
             onClick={() => setShowConnections((v) => !v)}
             aria-expanded={showConnections}
-            aria-controls="connections-panel"
+            aria-controls={showConnections ? "connections-panel" : undefined}
           >
             {showConnections ? "Hide Connections" : "Connections"}
           </button>
@@ -326,7 +326,7 @@ export default function Dashboard() {
             className={`btn btn-sm ${showLogs ? "btn-primary" : ""}`}
             onClick={() => setShowLogs((v) => !v)}
             aria-expanded={showLogs}
-            aria-controls="event-log"
+            aria-controls={showLogs ? "event-log" : undefined}
           >
             {showLogs ? "Hide Logs" : "View Logs"}
           </button>
@@ -335,7 +335,7 @@ export default function Dashboard() {
             onClick={() => setShowSummaryPrompt(v => !v)}
             title="Edit the org-shared summary prompt and bulk-regenerate unlocked summaries (ADR-046)"
             aria-expanded={showSummaryPrompt}
-            aria-controls="summary-prompt-panel"
+            aria-controls={showSummaryPrompt ? "summary-prompt-panel" : undefined}
           >
             Summary prompt
           </button>
@@ -344,7 +344,7 @@ export default function Dashboard() {
             onClick={() => setShowCatchUp(v => !v)}
             title="Walk recent records and run captions / sibling-link / summary stages automatically (ADR-047)"
             aria-expanded={showCatchUp}
-            aria-controls="catch-up-panel"
+            aria-controls={showCatchUp ? "catch-up-panel" : undefined}
           >
             Catch up
           </button>

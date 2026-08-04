@@ -107,7 +107,7 @@ export default function RulesPanel({
           className="panel-heading-button"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls="ingestion-rules-content"
+          aria-controls={expanded ? "ingestion-rules-content" : undefined}
         >
         <span>Ingestion Rules {rules.length > 0 && `(${rules.length})`}</span>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>

@@ -79,7 +79,7 @@ export default function PostProcessingRulesPanel() {
           className="panel-heading-button"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls="post-processing-rules-content"
+          aria-controls={expanded ? "post-processing-rules-content" : undefined}
         >
         <span>Post-processing Rules {rules.length > 0 && `(${rules.length})`}</span>
         <span style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>

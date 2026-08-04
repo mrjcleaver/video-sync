@@ -18,7 +18,7 @@ export default function HelpTip({ children }: Props) {
           title={open ? "Hide help" : "Show help"}
           aria-label="Help"
           aria-expanded={open}
-          aria-controls={contentId}
+          aria-controls={open ? contentId : undefined}
           style={{
             background: open ? "rgba(56,189,248,0.15)" : "none",
             border: "1px solid var(--border)",

@@ -589,7 +589,7 @@ function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQu
                 style={{ padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 8, width: "100%", border: 0, background: "transparent", color: "inherit", font: "inherit", textAlign: "left" }}
                 onClick={() => setExpanded(isExpanded ? null : entry.video_id)}
                 aria-expanded={isExpanded}
-                aria-controls={`queue-entry-${entry.video_id}`}
+                aria-controls={isExpanded && attrs ? `queue-entry-${entry.video_id}` : undefined}
               >
                 <span style={{ color: statusColor(v?.status), flexShrink: 0, marginTop: 2 }}>●</span>
                 <div style={{ flex: 1, minWidth: 0 }}>

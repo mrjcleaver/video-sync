@@ -22,6 +22,7 @@ describe("shared accessibility behavior", () => {
 
     const button = screen.getByRole("button", { name: "Help" });
     expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.hasAttribute("aria-controls")).toBe(false);
     expect(screen.queryByText("Keyboard help")).toBeNull();
 
     fireEvent.click(button);
@@ -29,6 +30,12 @@ describe("shared accessibility behavior", () => {
     const content = screen.getByText("Keyboard help");
     expect(button.getAttribute("aria-expanded")).toBe("true");
     expect(button.getAttribute("aria-controls")).toBe(content.id);
+    expect(document.getElementById(content.id)).toBe(content);
+
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.hasAttribute("aria-controls")).toBe(false);
+    expect(document.getElementById(content.id)).toBeNull();
   });
 
   it("reports import selection and labels the shared date range", () => {
