@@ -165,7 +165,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
       lines.map(async (line): Promise<FetchedItem & { fetchError?: string }> => {
         const { platform, id, raw } = detect(line);
         if (!id || platform === "unknown") {
-          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL — expected YouTube or Loom" };
+          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL. Expected YouTube or Loom." };
         }
         const sourceId = `${platform}-${id}`;
         const alreadyIn = videoStore.getAll().some(v => v.source_id === sourceId);
@@ -243,8 +243,9 @@ export default function URLImport({ onImported, onEvent }: Props) {
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Import from URL</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flex: 1 }}>
           <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={fetchAll}
             disabled={loading || !input.trim()}
@@ -257,32 +258,28 @@ export default function URLImport({ onImported, onEvent }: Props) {
       <HelpTip>
         Paste one or more YouTube or Loom URLs, one per line. Supports{" "}
         <code>youtube.com/watch</code>, <code>youtube.com/live</code>, <code>youtu.be</code>,
-        and <code>loom.com/share</code>. Metadata is fetched automatically — review the
+        and <code>loom.com/share</code>. Metadata is fetched automatically. Review the
         previews, then import selected.
       </HelpTip>
 
-      <textarea
-        value={input}
-        onChange={e => { setInput(e.target.value); setItems([]); setGlobalError(null); }}
-        onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) fetchAll(); }}
-        placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\n…"}
-        rows={3}
-        style={{
-          width: "100%",
-          marginTop: 8,
-          padding: "6px 8px",
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 6,
-          color: "var(--text)",
-          fontSize: "0.8rem",
-          fontFamily: "monospace",
-          resize: "vertical",
-          boxSizing: "border-box",
-        }}
-      />
+      <div className="form-field url-import-field">
+        <label htmlFor="url-import-input">Video URLs</label>
+        <textarea
+          id="url-import-input"
+          value={input}
+          onChange={e => { setInput(e.target.value); setItems([]); setGlobalError(null); }}
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) fetchAll(); }}
+          placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123"}
+          rows={4}
+          aria-describedby="url-import-help"
+          aria-invalid={!!globalError}
+        />
+        <span id="url-import-help" className="field-help">
+          One URL per line. Press Ctrl+Enter or Command+Enter to fetch.
+        </span>
+      </div>
 
-      {globalError && <div className="zoom-import-error">{globalError}</div>}
+      {globalError && <div className="zoom-import-error" role="alert">{globalError}</div>}
 
       {items.length > 0 && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -301,7 +298,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {item.fetchError ? (
-                    <div style={{ fontSize: "0.8rem", color: "var(--red)" }}>{item.fetchError}</div>
+                    <div style={{ fontSize: "0.8rem", color: "var(--red)" }} role="alert">{item.fetchError}</div>
                   ) : (
                     <>
                       <div style={{ fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.3 }}>{item.title}</div>

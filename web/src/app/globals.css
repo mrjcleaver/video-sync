@@ -106,9 +106,9 @@ body {
 }
 
 .form-grid label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  font-size: 0.82rem;
+  color: #b8b8b8;
+  margin-bottom: 6px;
   display: block;
 }
 
@@ -442,10 +442,10 @@ body {
 
 .form-field label {
   display: block;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  margin-bottom: 3px;
-  color: var(--text-muted);
+  margin-bottom: 5px;
+  color: #b8b8b8;
 }
 
 .form-field input {
@@ -477,7 +477,7 @@ body {
   margin-top: 10px;
 }
 
-.btn-primary {
+.credential-form .btn-primary {
   background: var(--accent);
   color: #fff;
   border: none;
@@ -870,6 +870,38 @@ body {
   border: 1px solid var(--accent);
   background: var(--bg);
   margin-top: 12px;
+}
+
+/* Accessible import form patterns */
+.field-help {
+  display: block;
+  margin-top: 5px;
+  color: #a3a3a3;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.url-import-field {
+  margin-top: 14px;
+}
+
+.url-import-field textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: 0.82rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@media (max-width: 720px) {
+  .container { padding: 16px 12px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .full-width { grid-column: auto; }
+  .zoom-import-header { align-items: flex-start; gap: 10px; flex-wrap: wrap; }
 }
 
 /* Burndown Stats */
