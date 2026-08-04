@@ -204,13 +204,23 @@ describe("panel accessibility", () => {
     expect(overviewTab.getAttribute("aria-selected")).toBe("true");
     expect(overviewTab.hasAttribute("aria-controls")).toBe(true);
     expect(calendarTab.hasAttribute("aria-controls")).toBe(false);
+    expect(overviewTab.getAttribute("tabindex")).toBe("0");
+    expect(calendarTab.getAttribute("tabindex")).toBe("-1");
     expect(screen.getByRole("tabpanel").textContent).toContain("Overview content");
 
-    fireEvent.click(calendarTab);
+    overviewTab.focus();
+    fireEvent.keyDown(overviewTab, { key: "ArrowRight" });
     expect(calendarTab.getAttribute("aria-selected")).toBe("true");
     expect(calendarTab.hasAttribute("aria-controls")).toBe(true);
     expect(overviewTab.hasAttribute("aria-controls")).toBe(false);
+    expect(document.activeElement).toBe(calendarTab);
+    expect(calendarTab.getAttribute("tabindex")).toBe("0");
+    expect(overviewTab.getAttribute("tabindex")).toBe("-1");
     expect(screen.getByRole("tabpanel").textContent).toContain("Calendar content");
+
+    fireEvent.keyDown(calendarTab, { key: "Home" });
+    expect(document.activeElement).toBe(overviewTab);
+    expect(overviewTab.getAttribute("aria-selected")).toBe("true");
   });
 
   it("associates the summary prompt fields with their visible labels", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { type BackfillProfile, loadProfiles } from "../lib/backfill";
 import BackfillOverview from "./BackfillOverview";
@@ -13,6 +13,8 @@ interface Props {
 }
 
 const TAB_KEY = "video-sync:sync-status-tab";
+const SYNC_STATUS_TABS = ["overview", "calendar"] as const;
+type SyncStatusTab = (typeof SYNC_STATUS_TABS)[number];
 
 /**
  * SyncStatusPanel - top-level "what's been synced" view, lifted out of
@@ -25,7 +27,7 @@ const TAB_KEY = "video-sync:sync-status-tab";
  */
 export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
   const panelId = useId();
-  const [activeTab, setActiveTab] = useState<"overview" | "calendar">(() => {
+  const [activeTab, setActiveTab] = useState<SyncStatusTab>(() => {
     try {
       const v = localStorage.getItem(TAB_KEY);
       return v === "calendar" ? "calendar" : "overview";
@@ -36,9 +38,24 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
   const [profiles] = useState<BackfillProfile[]>(() => loadProfiles());
   const [profileId, setProfileId] = useState<string>(() => profiles[0]?.id ?? "__all__");
 
-  function selectTab(tab: "overview" | "calendar") {
+  function selectTab(tab: SyncStatusTab) {
     setActiveTab(tab);
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* ignore */ }
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentTab: SyncStatusTab) {
+    const currentIndex = SYNC_STATUS_TABS.indexOf(currentTab);
+    let nextTab: SyncStatusTab | undefined;
+
+    if (event.key === "ArrowRight") nextTab = SYNC_STATUS_TABS[(currentIndex + 1) % SYNC_STATUS_TABS.length];
+    if (event.key === "ArrowLeft") nextTab = SYNC_STATUS_TABS[(currentIndex - 1 + SYNC_STATUS_TABS.length) % SYNC_STATUS_TABS.length];
+    if (event.key === "Home") nextTab = SYNC_STATUS_TABS[0];
+    if (event.key === "End") nextTab = SYNC_STATUS_TABS[SYNC_STATUS_TABS.length - 1];
+    if (!nextTab) return;
+
+    event.preventDefault();
+    selectTab(nextTab);
+    document.getElementById(`${panelId}-${nextTab}-tab`)?.focus();
   }
 
   // Derive an "All videos" profile from the actual data so the view works
@@ -103,7 +120,7 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
       </HelpTip>
 
       <div className="filter-tabs sync-status-tabs" style={{ marginBottom: 12 }} role="tablist" aria-label="Sync status view">
-        {(["overview", "calendar"] as const).map(t => (
+        {SYNC_STATUS_TABS.map(t => (
           <button
             key={t}
             id={`${panelId}-${t}-tab`}
@@ -111,8 +128,10 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
             role="tab"
             aria-selected={activeTab === t}
             aria-controls={activeTab === t ? `${panelId}-${t}-panel` : undefined}
+            tabIndex={activeTab === t ? 0 : -1}
             className={`filter-tab ${activeTab === t ? "active" : ""}`}
             onClick={() => selectTab(t)}
+            onKeyDown={(event) => handleTabKeyDown(event, t)}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
