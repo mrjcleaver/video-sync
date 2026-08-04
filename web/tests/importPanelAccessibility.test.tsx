@@ -44,6 +44,18 @@ describe("ImportPanel accessibility", () => {
     expect(screen.getByRole("region", { name: "URL" }).textContent).toContain("URL source");
   });
 
+  it("only references the import panel that is present in the DOM", () => {
+    render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Meetings" }).getAttribute("aria-controls")).toBe("import-panel-meetings");
+    expect(screen.getByRole("button", { name: "URL" }).hasAttribute("aria-controls")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "URL" }));
+
+    expect(screen.getByRole("button", { name: "Meetings" }).hasAttribute("aria-controls")).toBe(false);
+    expect(screen.getByRole("button", { name: "URL" }).getAttribute("aria-controls")).toBe("import-panel-url");
+  });
+
   it("moves between import tabs with arrow keys", () => {
     render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
 

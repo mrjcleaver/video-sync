@@ -83,7 +83,7 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
             id={`import-tab-${id}`}
             type="button"
             aria-pressed={active === id}
-            aria-controls={`import-panel-${id}`}
+            aria-controls={active === id ? `import-panel-${id}` : undefined}
             onClick={() => selectTab(id)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
             style={{
