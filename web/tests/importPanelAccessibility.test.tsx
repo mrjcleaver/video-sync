@@ -47,13 +47,17 @@ describe("ImportPanel accessibility", () => {
   it("only references the import panel that is present in the DOM", () => {
     render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Meetings" }).getAttribute("aria-controls")).toBe("import-panel-meetings");
+    const meetingsButton = screen.getByRole("button", { name: "Meetings" });
+    expect(meetingsButton.getAttribute("aria-controls")).toBe("import-panel-meetings");
+    expect(document.getElementById(meetingsButton.getAttribute("aria-controls")!)).toBeTruthy();
     expect(screen.getByRole("button", { name: "URL" }).hasAttribute("aria-controls")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "URL" }));
 
     expect(screen.getByRole("button", { name: "Meetings" }).hasAttribute("aria-controls")).toBe(false);
-    expect(screen.getByRole("button", { name: "URL" }).getAttribute("aria-controls")).toBe("import-panel-url");
+    const urlButton = screen.getByRole("button", { name: "URL" });
+    expect(urlButton.getAttribute("aria-controls")).toBe("import-panel-url");
+    expect(document.getElementById(urlButton.getAttribute("aria-controls")!)).toBeTruthy();
   });
 
   it("moves between import tabs with arrow keys", () => {

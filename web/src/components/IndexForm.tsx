@@ -67,7 +67,7 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
           className="btn btn-sm"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls="manual-video-form"
+          aria-controls={expanded ? "manual-video-form" : undefined}
         >
           {expanded ? "Collapse" : "Manual entry"}
         </button>

@@ -14,9 +14,13 @@ describe("import form accessibility", () => {
 
     const toggle = screen.getByRole("button", { name: "Manual entry" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.hasAttribute("aria-controls")).toBe(false);
     fireEvent.click(toggle);
 
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const formId = toggle.getAttribute("aria-controls");
+    expect(formId).toBe("manual-video-form");
+    expect(document.getElementById(formId!)).toBeTruthy();
     expect(screen.getByLabelText("Title *")).toBeTruthy();
     expect(screen.getByLabelText("Platform")).toBeTruthy();
     expect(screen.getByLabelText("Source ID")).toBeTruthy();
@@ -24,6 +28,11 @@ describe("import form accessibility", () => {
     expect(screen.getByLabelText("Description")).toBeTruthy();
     expect(screen.getByLabelText("Download URL")).toBeTruthy();
     expect(screen.getByLabelText("Tags (comma-separated)")).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.hasAttribute("aria-controls")).toBe(false);
+    expect(document.getElementById("manual-video-form")).toBeNull();
   });
 
   it("labels the URL input and associates its keyboard instructions", () => {
