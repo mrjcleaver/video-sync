@@ -196,10 +196,30 @@ body {
 
 .video-card-meta {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 16px;
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-bottom: 10px;
+}
+
+.video-meta-control {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.video-meta-control:hover { color: var(--text); }
+.video-meta-control:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .video-card-tags {
@@ -220,9 +240,34 @@ body {
 
 .video-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
+}
+
+.video-action-notice {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 0.78rem;
+}
+
+.video-action-notice-error { border-color: #b91c1c; color: #ff9a9a; }
+.video-action-notice-success { border-color: #16803b; color: #8ce5ad; }
+
+.video-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 6px 8px;
+  border: 1px solid #b91c1c;
+  border-radius: 7px;
+  background: #210d0d;
+  font-size: 0.75rem;
 }
 
 /* Notes */
@@ -240,6 +285,7 @@ body {
 
 .note-input {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   margin-top: 8px;
 }
@@ -340,10 +386,62 @@ body {
 
 .location-add-form {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   margin-top: 8px;
   flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.video-card-inline-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.video-card-field {
+  display: flex;
+  flex: 1 1 130px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-card-field-wide { flex-basis: 190px; }
+
+.video-card-field > span {
+  color: #b8b8b8;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.video-card-field input,
+.video-card-field select,
+.video-card-inline-form input,
+.video-card-inline-form select {
+  min-height: 34px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.video-card-form-actions {
+  display: flex;
   align-items: center;
+  gap: 6px;
+  min-height: 34px;
 }
 
 .location-add-form select,
@@ -360,6 +458,14 @@ body {
 .location-add-form input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+@media (max-width: 700px) {
+  .video-card { padding: 14px 16px; }
+  .video-card-meta { column-gap: 12px; row-gap: 8px; }
+  .video-card-field { flex-basis: 100%; }
+  .video-card-form-actions { width: 100%; }
+  .video-delete-confirm { width: 100%; margin-left: 0; flex-wrap: wrap; }
 }
 
 /* Connections Panel */

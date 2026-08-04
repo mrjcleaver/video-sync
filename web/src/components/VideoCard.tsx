@@ -126,6 +126,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [recoverError, setRecoverError] = useState<string | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupCandidates, setLookupCandidates] = useState<import("../lib/youtubeUploadsCache").MatchCandidate[] | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const videoLog = useMemo<LogRecord[]>(() => {
     if (!showLog) return [];
@@ -498,10 +500,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     const ytCreds = connections["YouTube"]?.credentials;
     if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      alert("YouTube not authorized. Configure and authorize YouTube in Connections first.");
+      setActionNotice({ tone: "error", text: "YouTube is not authorized. Configure and authorize YouTube in Connections first." });
       return;
     }
 
+    setActionNotice(null);
     setShowPreview(false);
     setUploading(true);
     const isZoomSource = video.download_url.startsWith("zoom://");
@@ -1144,7 +1147,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     const ytCreds = connections["YouTube"]?.credentials;
     if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      alert("YouTube not authorized. Configure YouTube in Connections first.");
+      setActionNotice({ tone: "error", text: "YouTube is not authorized. Configure YouTube in Connections first." });
       return;
     }
 
@@ -1173,6 +1176,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               r.mark_failed(JSON.stringify({ error_message: "YouTube video not found" }))
             );
             onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube video not found`, { video_id: video.id });
+            setActionNotice({ tone: "error", text: "YouTube status check failed. The video was not found." });
             onMutated();
           } catch { /* ignore if status transition not allowed */ }
           return;
@@ -1198,6 +1202,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           );
         } catch { /* ignore if transition not allowed */ }
         onEvent(`VideoFailed: "${video.title}"${dateTag(video.recorded_at)} — YouTube ${data.status}`, { video_id: video.id });
+        setActionNotice({ tone: "error", text: `YouTube reported ${data.status}. The record was marked failed.` });
         onMutated();
         return;
       }
@@ -1216,11 +1221,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         return;
       }
       onEvent(`LocationStatusUpdated: "${video.title}"${dateTag(video.recorded_at)} YouTube/${loc.external_id} -> ${data.status}`, { video_id: video.id });
+      setActionNotice({ tone: "success", text: `YouTube status updated to ${data.status}.` });
       onMutated();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       onEvent(`YouTubeStatusCheckFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
-      alert(`YouTube status check failed: ${msg}`);
+      setActionNotice({ tone: "error", text: `YouTube status check failed: ${msg}` });
     } finally {
       setCheckingStatus(null);
     }
@@ -1554,13 +1560,16 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
         {video.participants.length > 0 && (
-          <span
+          <button
+            type="button"
+            className="video-meta-control"
             onClick={() => setShowParticipants(v => !v)}
-            style={{ cursor: "pointer", userSelect: "none" }}
             title={showParticipants ? "Hide participants" : "Show participants"}
+            aria-expanded={showParticipants}
+            aria-controls={`video-participants-${video.id}`}
           >
             {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
-          </span>
+          </button>
         )}
         {/* Drive folder link — opens the artifacts folder (transcript,
             description, summary, chat) for this record. */}
@@ -1652,21 +1661,27 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         ))}
         {/* Catalog UUID — clickable to copy. Useful when correlating with
             server logs, .meta.json files, or webhook payloads. */}
-        <span
-          onClick={() => {
-            navigator.clipboard?.writeText(video.id).catch(() => {});
+        <button
+          type="button"
+          className="video-meta-control"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(video.id);
+              setActionNotice({ tone: "success", text: "Catalog ID copied." });
+            } catch {
+              setActionNotice({ tone: "error", text: "Catalog ID could not be copied." });
+            }
           }}
           title="Click to copy the catalog ID"
           style={{
-            cursor: "pointer",
             fontFamily: "monospace",
             fontSize: "0.7rem",
-            color: "var(--text-muted)",
             userSelect: "all",
           }}
+          aria-label={`Copy catalog ID ${video.id}`}
         >
           {video.id.slice(0, 8)}…
-        </span>
+        </button>
       </div>
 
       {/* ADR-046 slice 5 — "last regenerated" detail. Shown whenever a
@@ -1687,7 +1702,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       )}
 
       {showParticipants && video.participants.length > 0 && (
-        <div style={{
+        <div id={`video-participants-${video.id}`} style={{
           marginBottom: 8, padding: "6px 10px",
           background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
           display: "flex", flexWrap: "wrap", gap: 4,
@@ -1727,7 +1742,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             {generatingDescription ? "Generating…" : "✨ Generate from transcript"}
           </button>
           {descriptionError && (
-            <span style={{ color: "var(--red)" }}>Error: {descriptionError.slice(0, 100)}</span>
+            <span role="alert" style={{ color: "var(--red)" }}>Error: {descriptionError.slice(0, 100)}</span>
           )}
         </div>
       ) : null}
@@ -1756,7 +1771,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 {loomFetching ? "Fetching…" : "Fetch Loom info"}
               </button>
               {loomError && (
-                <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{loomError}</span>
+                <span role="alert" style={{ color: "var(--red)", fontSize: "0.7rem" }}>{loomError}</span>
               )}
             </div>
           )}
@@ -1843,7 +1858,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               </>
             ) : null}
             {transcriptError && (
-              <span style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
+              <span role="alert" style={{ color: "var(--red)", fontSize: "0.7rem" }}>{transcriptError}</span>
             )}
           </div>
           {showTranscriptPreview && video.transcript_text && (
@@ -1938,8 +1953,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 className="location-remove"
                 onClick={() => removeLocation(loc)}
                 title="Remove location"
+                aria-label={`Remove ${loc.platform} location ${loc.external_id}`}
               >
-                x
+                ×
               </button>
             </div>
           ))}
@@ -1948,34 +1964,49 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               className="btn btn-sm"
               style={{ marginTop: 6 }}
               onClick={() => setShowLocationForm(true)}
+              aria-expanded={showLocationForm}
+              aria-controls={`location-form-${video.id}`}
             >
-              + Location
+              Add location
             </button>
           )}
           {showLocationForm && (
-            <div className="location-add-form">
-              <select value={locPlatform} onChange={(e) => setLocPlatform(e.target.value)}>
-                {PLATFORMS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <input
-                placeholder="External ID"
-                value={locExternalId}
-                onChange={(e) => setLocExternalId(e.target.value)}
-              />
-              <input
-                placeholder="URL (optional)"
-                value={locExternalUrl}
-                onChange={(e) => setLocExternalUrl(e.target.value)}
-              />
-              <select value={locRole} onChange={(e) => setLocRole(e.target.value)}>
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-              <button className="btn btn-sm btn-primary" onClick={addLocation}>Add</button>
-              <button className="btn btn-sm" onClick={() => setShowLocationForm(false)}>Cancel</button>
+            <div id={`location-form-${video.id}`} className="location-add-form">
+              <label className="video-card-field">
+                <span>Platform</span>
+                <select value={locPlatform} onChange={(e) => setLocPlatform(e.target.value)}>
+                  {PLATFORMS.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="video-card-field">
+                <span>External ID</span>
+                <input
+                  value={locExternalId}
+                  onChange={(e) => setLocExternalId(e.target.value)}
+                />
+              </label>
+              <label className="video-card-field video-card-field-wide">
+                <span>URL (optional)</span>
+                <input
+                  type="url"
+                  value={locExternalUrl}
+                  onChange={(e) => setLocExternalUrl(e.target.value)}
+                />
+              </label>
+              <label className="video-card-field">
+                <span>Role</span>
+                <select value={locRole} onChange={(e) => setLocRole(e.target.value)}>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="video-card-form-actions">
+                <button type="button" className="btn btn-sm btn-primary" onClick={addLocation}>Add location</button>
+                <button type="button" className="btn btn-sm" onClick={() => setShowLocationForm(false)}>Cancel</button>
+              </div>
             </div>
           )}
         </div>
@@ -2019,28 +2050,37 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           )}
           {!showLinkForm ? (
-            <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(true)}>
-              + Link upstream
+            <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(true)} aria-expanded={showLinkForm} aria-controls={`upstream-link-form-${video.id}`}>
+              Link upstream
             </button>
           ) : (
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-              <select value={linkPlatform} onChange={(e) => setLinkPlatform(e.target.value)} style={{ fontSize: "0.75rem" }}>
-                {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <input
-                placeholder="External ID"
-                value={linkExternalId}
-                onChange={(e) => setLinkExternalId(e.target.value)}
-                style={{ fontSize: "0.75rem", flex: 1, minWidth: 120 }}
-              />
-              <select value={linkRelation} onChange={(e) => setLinkRelation(e.target.value)} style={{ fontSize: "0.75rem" }}>
-                <option value="SameEvent">Same session</option>
-                <option value="TranscribedFrom">Transcribed from</option>
-                <option value="ScreenRecordingOf">Screen recording of</option>
-                <option value="ClipOf">Clip of</option>
-              </select>
-              <button className="btn btn-sm btn-primary" style={{ fontSize: "0.7rem" }} onClick={addUpstreamLink}>Add</button>
-              <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(false)}>Cancel</button>
+            <div id={`upstream-link-form-${video.id}`} className="video-card-inline-form">
+              <label className="video-card-field">
+                <span>Platform</span>
+                <select value={linkPlatform} onChange={(e) => setLinkPlatform(e.target.value)}>
+                  {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className="video-card-field video-card-field-wide">
+                <span>External ID</span>
+                <input
+                  value={linkExternalId}
+                  onChange={(e) => setLinkExternalId(e.target.value)}
+                />
+              </label>
+              <label className="video-card-field">
+                <span>Relationship</span>
+                <select value={linkRelation} onChange={(e) => setLinkRelation(e.target.value)}>
+                  <option value="SameEvent">Same session</option>
+                  <option value="TranscribedFrom">Transcribed from</option>
+                  <option value="ScreenRecordingOf">Screen recording of</option>
+                  <option value="ClipOf">Clip of</option>
+                </select>
+              </label>
+              <div className="video-card-form-actions">
+                <button type="button" className="btn btn-sm btn-primary" onClick={addUpstreamLink}>Add link</button>
+                <button type="button" className="btn btn-sm" onClick={() => setShowLinkForm(false)}>Cancel</button>
+              </div>
             </div>
           )}
         </div>
@@ -2056,13 +2096,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           ))}
           <div className="note-input">
-            <input
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addNote()}
-              placeholder="Add a note..."
-            />
-            <button className="btn btn-sm" onClick={addNote}>
+            <label className="video-card-field video-card-field-wide">
+              <span>Note</span>
+              <input
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addNote()}
+              />
+            </label>
+            <button type="button" className="btn btn-sm" onClick={addNote}>
               Add
             </button>
           </div>
@@ -2087,18 +2129,20 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {showPreview && publishAttrs && (
         <div className="rule-form" style={{ marginBottom: 8 }}>
           <div style={{ fontSize: "0.7rem", color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>
-            Publish preview — confirm before uploading
+            Publish preview. Confirm before uploading.
           </div>
           <div className="form-field">
-            <label>Title</label>
+            <label htmlFor={`publish-title-${video.id}`}>Title</label>
             <input
+              id={`publish-title-${video.id}`}
               value={publishAttrs.title}
               onChange={(e) => setPublishAttrs({ ...publishAttrs, title: e.target.value })}
             />
           </div>
           <div className="form-field">
-            <label>Description</label>
+            <label htmlFor={`publish-description-${video.id}`}>Description</label>
             <textarea
+              id={`publish-description-${video.id}`}
               value={publishAttrs.description}
               onChange={(e) => setPublishAttrs({ ...publishAttrs, description: e.target.value })}
               rows={3}
@@ -2106,8 +2150,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             />
           </div>
           <div className="form-field">
-            <label>Tags (comma-separated)</label>
+            <label htmlFor={`publish-tags-${video.id}`}>Tags (comma-separated)</label>
             <input
+              id={`publish-tags-${video.id}`}
               value={publishAttrs.tags.join(", ")}
               onChange={(e) =>
                 setPublishAttrs({
@@ -2118,8 +2163,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             />
           </div>
           <div className="form-field">
-            <label>Privacy</label>
+            <label htmlFor={`publish-privacy-${video.id}`}>Privacy</label>
             <select
+              id={`publish-privacy-${video.id}`}
               value={publishAttrs.privacy_status}
               onChange={(e) => setPublishAttrs({ ...publishAttrs, privacy_status: e.target.value as PublishAttributes["privacy_status"] })}
               style={{ width: "100%", fontSize: "0.75rem", padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
@@ -2131,9 +2177,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           </div>
           {/* Trim offset */}
           <div className="form-field">
-            <label>Trim start (seconds)</label>
+            <label htmlFor={`publish-trim-${video.id}`}>Trim start (seconds)</label>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
+                id={`publish-trim-${video.id}`}
                 type="number"
                 min={0}
                 value={publishAttrs.trim_start_seconds}
@@ -2151,7 +2198,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
             {publishAttrs.trim_start_seconds > 600 && (
               <div style={{ fontSize: "0.72rem", color: "#f5a623", marginTop: 4 }}>
-                ⚠ Trimming {Math.round(publishAttrs.trim_start_seconds / 60)} minutes — confirm this is correct, or set to 0 to upload without trim.
+                Trimming {Math.round(publishAttrs.trim_start_seconds / 60)} minutes. Confirm this is correct, or set to 0 to upload without trim.
               </div>
             )}
           </div>
@@ -2181,10 +2228,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               Burn captions into clips
             </label>
             <div>
-              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>
-                Clip prompt (optional — e.g. "moments with audience questions")
-              </div>
+              <label htmlFor={`shorts-prompt-${video.id}`} style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>
+                Clip prompt (optional, for example "moments with audience questions")
+              </label>
               <input
+                id={`shorts-prompt-${video.id}`}
                 type="text"
                 value={shortsPrompt}
                 onChange={(e) => setShortsPrompt(e.target.value)}
@@ -2193,10 +2241,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               />
             </div>
             {shortsError && (
-              <div style={{ fontSize: "0.8rem", color: "var(--red)" }}>{shortsError}</div>
+              <div role="alert" style={{ fontSize: "0.8rem", color: "var(--red)" }}>{shortsError}</div>
             )}
             {shortsLoading && (
-              <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{shortsPhase || "Working…"}</div>
+              <div role="status" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{shortsPhase || "Working…"}</div>
             )}
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn btn-sm btn-primary" onClick={generateShorts} disabled={shortsLoading}>
@@ -2280,11 +2328,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           )}
 
           {/* Manual paste fallback */}
-          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
-            Or paste a watch URL / Studio URL / 11-char ID:
-          </div>
+          <label htmlFor={`recover-youtube-${video.id}`} style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
+            Or paste a watch URL, Studio URL, or 11-character ID
+          </label>
           <div style={{ display: "flex", gap: 6 }}>
             <input
+              id={`recover-youtube-${video.id}`}
               type="text"
               value={recoverInput}
               onChange={e => setRecoverInput(e.target.value)}
@@ -2308,7 +2357,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </button>
           </div>
           {recoverError && (
-            <div style={{ marginTop: 6, fontSize: "0.72rem", color: "var(--red)" }}>{recoverError}</div>
+            <div role="alert" style={{ marginTop: 6, fontSize: "0.72rem", color: "var(--red)" }}>{recoverError}</div>
           )}
         </div>
       )}
@@ -2336,6 +2385,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {actionNotice && (
+        <div
+          className={`video-action-notice video-action-notice-${actionNotice.tone}`}
+          role={actionNotice.tone === "error" ? "alert" : "status"}
+        >
+          {actionNotice.text}
         </div>
       )}
 
@@ -2464,7 +2522,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           </button>
         )}
         {summaryError && (
-          <span style={{ fontSize: "0.7rem", color: "var(--red)", marginLeft: 4 }}>
+          <span role="alert" style={{ fontSize: "0.7rem", color: "var(--red)", marginLeft: 4 }}>
             Summary error: {summaryError.slice(0, 90)}
           </span>
         )}
@@ -2472,6 +2530,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           className="btn btn-sm"
           style={{ fontSize: "0.72rem" }}
           onClick={() => setShowProvenance((v) => !v)}
+          aria-expanded={showProvenance}
         >
           {showProvenance ? "Hide provenance" : "Provenance"}
         </button>
@@ -2488,19 +2547,34 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             + Note
           </button>
         )}
-        <button
-          className="btn btn-sm btn-red"
-          style={{ marginLeft: "auto" }}
-          onClick={() => {
-            if (window.confirm(`Delete "${video.title}"${dateTag(video.recorded_at)}? This cannot be undone.`)) {
-              videoStore.remove(video.id);
-              onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
-              onMutated();
-            }
-          }}
-        >
-          Delete
-        </button>
+        {confirmingDelete ? (
+          <div className="video-delete-confirm" role="alert">
+            <span>Delete &quot;{video.title}&quot;? This cannot be undone.</span>
+            <button type="button" className="btn btn-sm" onClick={() => setConfirmingDelete(false)} autoFocus>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-red"
+              onClick={() => {
+                videoStore.remove(video.id);
+                onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+                onMutated();
+              }}
+            >
+              Delete video
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-sm btn-red"
+            style={{ marginLeft: "auto" }}
+            onClick={() => setConfirmingDelete(true)}
+          >
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );
