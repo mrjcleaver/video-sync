@@ -112,7 +112,7 @@ describe("VideoCard accessibility", () => {
   });
 
   it("confirms location removal, restores focus on cancel, and announces success", async () => {
-    const mutate = vi.spyOn(videoStore, "mutate").mockImplementation(() => {});
+    const mutate = vi.spyOn(videoStore, "mutate").mockReturnValue("[]");
     render(<VideoCard video={baseVideo} onMutated={vi.fn()} onEvent={vi.fn()} />);
 
     const remove = screen.getByRole("button", { name: "Remove Zoom location zoom-123" });
@@ -160,7 +160,7 @@ describe("VideoCard accessibility", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Publish…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "YouTube", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: /^YouTube$/ }));
     expect((await screen.findByRole("status")).textContent).toContain("Uploading to YouTube");
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { level: 3 })));
   });
@@ -174,7 +174,7 @@ describe("VideoCard accessibility", () => {
       status: 500,
       json: async () => ({ error: "Upload exploded" }),
     })));
-    const mutate = vi.spyOn(videoStore, "mutate").mockImplementation(() => {});
+    const mutate = vi.spyOn(videoStore, "mutate").mockReturnValue("[]");
 
     render(
       <VideoCard
@@ -185,7 +185,7 @@ describe("VideoCard accessibility", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Publish…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "YouTube", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: /^YouTube$/ }));
     expect((await screen.findByRole("alert")).textContent).toContain("YouTube publishing failed: Upload exploded");
     mutate.mockRestore();
   });
