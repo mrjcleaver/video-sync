@@ -54,7 +54,7 @@ const STATUS_COLOR: Record<StageStatus, string> = {
   skipped: "var(--text-muted)",
   "n/a": "var(--text-muted)",
   failed: "var(--red)",
-  needs_review: "#fbbf24",
+  needs_review: "var(--yellow)",
 };
 
 export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) {
@@ -350,7 +350,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
         padding: 16,
         zIndex: 100,
         overflowY: "auto",
-        boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+        boxShadow: "var(--overlay-shadow)",
       }}
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -405,7 +405,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
 
         {/* Live per-record progress */}
         {orderedIds.length > 0 && (
-          <div style={{ marginTop: 8, padding: 10, background: "rgba(125,211,252,0.05)", border: "1px solid rgba(125,211,252,0.2)", borderRadius: 4, fontSize: "0.78rem", maxHeight: "50vh", overflowY: "auto" }}>
+          <div style={{ marginTop: 8, padding: 10, background: "var(--info-soft)", border: "1px solid var(--info-border)", borderRadius: 4, fontSize: "0.78rem", maxHeight: "50vh", overflowY: "auto" }}>
             {orderedIds.map(id => {
               const row = rows[id];
               if (!row) return null;
@@ -478,7 +478,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
                 <div
                   key={i}
                   style={{
-                    color: line.level === "error" ? "var(--red)" : line.level === "warn" ? "#fbbf24" : "var(--text)",
+                    color: line.level === "error" ? "var(--red)" : line.level === "warn" ? "var(--yellow)" : "var(--text)",
                   }}
                 >
                   <span style={{ color: "var(--text-muted)" }}>{line.ts}</span> {line.text}
@@ -489,7 +489,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
         )}
 
         {summary && (
-          <div style={{ marginTop: 12, padding: 10, background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4, fontSize: "0.85rem" }}>
+          <div style={{ marginTop: 12, padding: 10, background: "var(--success-soft)", border: "1px solid var(--success-border)", borderRadius: 4, fontSize: "0.85rem" }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               {runState === "complete" ? "Catch-up complete" : "Catch-up cancelled"}
             </div>
@@ -498,7 +498,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
               {summary.capHit && <> · <strong>stopped at cost cap</strong></>}
             </div>
             {summary.taggedCount > 0 && (
-              <div style={{ marginTop: 6, padding: 8, background: "rgba(168,85,247,0.08)", border: "1px dashed rgba(168,85,247,0.4)", borderRadius: 4 }}>
+              <div style={{ marginTop: 6, padding: 8, background: "var(--purple-soft)", border: "1px dashed var(--purple-border)", borderRadius: 4 }}>
                 <div style={{ marginBottom: 6 }}>
                   Tagged <strong>{summary.taggedCount}</strong> record{summary.taggedCount === 1 ? "" : "s"} with{" "}
                   <code style={{ background: "var(--bg)", padding: "1px 5px", borderRadius: 3, fontSize: "0.8rem" }}>{summary.jobTag}</code>.
@@ -530,7 +530,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             broadcaster-platform pairs. Idempotent; safe to re-run. */}
         <div style={{
           marginTop: 16, padding: 10,
-          background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 4,
+          background: "var(--purple-soft)", border: "1px solid var(--purple-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>🔧 Broadcast-pair migration (ADR-049 slice 5)</div>
@@ -565,7 +565,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             auto-ingested via ADR-049/050 C3. */}
         <div style={{
           marginTop: 12, padding: 10,
-          background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4,
+          background: "var(--success-soft)", border: "1px solid var(--success-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>📺 YouTube row backfill (ADR-049/050 C1-A)</div>
@@ -605,7 +605,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
             generates / refreshes the 📄 badge. */}
         <div style={{
           marginTop: 12, padding: 10,
-          background: "rgba(96,165,250,0.05)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: 4,
+          background: "var(--info-soft)", border: "1px solid var(--info-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>📄 Summary badge backfill (ADR-052)</div>

@@ -15,7 +15,7 @@ function scrollToVideo(id: string) {
   const el = document.getElementById(`video-card-${id}`);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.style.outline = "2px solid var(--primary, #6366f1)";
+    el.style.outline = "2px solid var(--accent)";
     setTimeout(() => { el.style.outline = ""; }, 2000);
   }
 }
@@ -77,7 +77,7 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
 
       <div style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: "0.75rem", color: "var(--text-muted)" }}>
         <span style={{ color: "var(--green)" }}>● {published} published</span>
-        <span style={{ color: "#fbbf24" }}>● {queued} in backlog</span>
+        <span style={{ color: "var(--yellow)" }}>● {queued} in backlog</span>
         <span style={{ color: "var(--text-muted)" }}>○ {gaps} gaps</span>
       </div>
 
@@ -133,8 +133,8 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
 
       <div style={{ marginTop: 10, fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 12, flexWrap: "wrap" }}>
         <span><span style={{ color: "var(--green)" }}>●</span> Published</span>
-        <span><span style={{ color: "#a78bfa" }}>●</span> Approved</span>
-        <span><span style={{ color: "#fbbf24" }}>●</span> InScope</span>
+        <span><span style={{ color: "var(--purple)" }}>●</span> Approved</span>
+        <span><span style={{ color: "var(--yellow)" }}>●</span> InScope</span>
         <span><span style={{ color: "var(--red)" }}>●</span> Failed</span>
         <span><span style={{ color: "var(--border)" }}>●</span> Gap</span>
       </div>

@@ -16,12 +16,12 @@ export default function HelpTip({ children }: Props) {
           title={open ? "Hide help" : "Show help"}
           aria-label="Help"
           style={{
-            background: open ? "rgba(56,189,248,0.15)" : "none",
+            background: open ? "var(--info-soft)" : "none",
             border: "1px solid var(--border)",
             borderRadius: 12,
             padding: "1px 8px",
             fontSize: "0.68rem",
-            color: open ? "#38bdf8" : "var(--text-muted)",
+            color: open ? "var(--info)" : "var(--text-muted)",
             cursor: "pointer",
             display: "inline-flex",
             alignItems: "center",
@@ -37,8 +37,8 @@ export default function HelpTip({ children }: Props) {
           style={{
             marginTop: 6,
             padding: "10px 14px",
-            background: "rgba(56,189,248,0.05)",
-            border: "1px solid rgba(56,189,248,0.18)",
+            background: "var(--info-soft)",
+            border: "1px solid var(--info-border)",
             borderRadius: 8,
             fontSize: "0.8rem",
             color: "var(--text-muted)",

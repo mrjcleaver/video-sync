@@ -74,7 +74,7 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
               color: active === id ? "var(--text)" : "var(--text-muted)",
               background: "none",
               border: "none",
-              borderBottom: active === id ? "2px solid var(--primary, #6366f1)" : "2px solid transparent",
+              borderBottom: active === id ? "2px solid var(--accent)" : "2px solid transparent",
               cursor: "pointer",
               marginBottom: -1,
             }}

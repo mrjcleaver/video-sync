@@ -306,7 +306,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
                     <>
                       <div style={{ fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.3 }}>{item.title}</div>
                       <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", gap: 8 }}>
-                        <span style={{ textTransform: "capitalize", color: item.platform === "youtube" ? "#ff4444" : "#6366f1" }}>
+                        <span style={{ textTransform: "capitalize", color: item.platform === "youtube" ? "var(--red)" : "var(--accent)" }}>
                           {item.platform}
                         </span>
                         {item.channelOrAuthor && <span>{item.channelOrAuthor}</span>}

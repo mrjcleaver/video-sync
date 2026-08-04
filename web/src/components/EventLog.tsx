@@ -9,10 +9,10 @@ interface Props {
 }
 
 const LEVEL_COLOR: Record<string, string> = {
-  debug: "#64748b",
-  info: "#38bdf8",
-  warn: "#fbbf24",
-  error: "#f87171",
+  debug: "var(--neutral)",
+  info: "var(--info)",
+  warn: "var(--yellow)",
+  error: "var(--red)",
 };
 
 export default function EventLog({ events, forceShow = false }: Props) {
@@ -78,7 +78,7 @@ export default function EventLog({ events, forceShow = false }: Props) {
           {[...stored].reverse().slice(0, 200).map((r, i) => (
             <div key={i} className="event-entry" style={{ fontFamily: "monospace", fontSize: "0.72rem", display: "flex", gap: 8 }}>
               <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{r.ts.slice(11, 19)}</span>
-              <span style={{ color: LEVEL_COLOR[r.level] ?? "#94a3b8", flexShrink: 0, width: 42 }}>
+              <span style={{ color: LEVEL_COLOR[r.level] ?? "var(--neutral)", flexShrink: 0, width: 42 }}>
                 {r.level.toUpperCase()}
               </span>
               <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{r.component}</span>

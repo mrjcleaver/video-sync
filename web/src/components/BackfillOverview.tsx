@@ -29,26 +29,26 @@ function extractYouTubeId(url: string | null | undefined): string | null {
 // YouTube lozenge: privacy-aware label. Always prefixed "YT:" so it's
 // obviously YouTube vs. other destination platforms.
 const PRIVACY_COLOR: Record<PrivacyStatus, { bg: string; fg: string; border: string; label: string }> = {
-  public:   { bg: "rgba(34,197,94,0.12)",  fg: "#22c55e", border: "rgba(34,197,94,0.3)",  label: "YT: Public" },
-  unlisted: { bg: "rgba(250,204,21,0.12)", fg: "#facc15", border: "rgba(250,204,21,0.3)", label: "YT: Unlisted" },
-  private:  { bg: "rgba(248,113,113,0.12)",fg: "#f87171", border: "rgba(248,113,113,0.3)",label: "YT: Private" },
-  unknown:  { bg: "rgba(148,163,184,0.12)",fg: "#94a3b8", border: "rgba(148,163,184,0.3)",label: "YouTube" },
+  public:   { bg: "var(--success-soft)", fg: "var(--green)", border: "var(--success-border)", label: "YT: Public" },
+  unlisted: { bg: "var(--warning-soft)", fg: "var(--yellow)", border: "var(--warning-border)", label: "YT: Unlisted" },
+  private:  { bg: "var(--danger-soft)", fg: "var(--red)", border: "var(--danger-border)", label: "YT: Private" },
+  unknown:  { bg: "var(--neutral-soft)", fg: "var(--neutral)", border: "var(--neutral-border)", label: "YouTube" },
 };
 
 // Kaltura lozenge — single style; we don't track per-entry privacy.
 const KALTURA_STYLE = {
-  bg: "rgba(168,85,247,0.12)",
-  fg: "#a855f7",
-  border: "rgba(168,85,247,0.3)",
+  bg: "var(--purple-soft)",
+  fg: "var(--purple)",
+  border: "var(--purple-border)",
 };
 
 // ADR-044: five-state Kaltura lozenge mirroring the YouTube privacy lozenge.
 const KALTURA_STATE_STYLE: Record<KalturaState, { bg: string; fg: string; border: string; label: string; textDecoration?: string; opacity?: number }> = {
-  ready:      { bg: "rgba(168,85,247,0.18)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kaltura" },
-  processing: { bg: "rgba(168,85,247,0.06)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kal: processing" },
-  live:       { bg: "rgba(244,63,94,0.18)",  fg: "#fb7185", border: "rgba(244,63,94,0.45)",  label: "Kal: LIVE" },
-  absent:     { bg: "rgba(168,85,247,0.04)", fg: "#a855f7", border: "rgba(168,85,247,0.15)", label: "no Kaltura", textDecoration: "line-through", opacity: 0.55 },
-  unknown:    { bg: "rgba(148,163,184,0.06)",fg: "#94a3b8", border: "rgba(148,163,184,0.2)", label: "Kaltura ?" },
+  ready:      { bg: "var(--purple-soft)", fg: "var(--purple)", border: "var(--purple-border)", label: "Kaltura" },
+  processing: { bg: "var(--purple-soft)", fg: "var(--purple)", border: "var(--purple-border)", label: "Kal: processing" },
+  live:       { bg: "var(--danger-soft)", fg: "var(--red)", border: "var(--danger-border)", label: "Kal: LIVE" },
+  absent:     { bg: "var(--purple-soft)", fg: "var(--purple)", border: "var(--purple-border)", label: "no Kaltura", textDecoration: "line-through" },
+  unknown:    { bg: "var(--neutral-soft)", fg: "var(--neutral)", border: "var(--neutral-border)", label: "Kaltura ?" },
 };
 
 /**
@@ -68,9 +68,9 @@ function resolveKalturaState(recordId: string, kalturaDestUrl: string | null | u
 
 // Drive lozenge — opens the Drive folder for this record's artifacts.
 const DRIVE_STYLE = {
-  bg: "rgba(56,189,248,0.06)",
-  fg: "#7dd3fc",
-  border: "rgba(56,189,248,0.2)",
+  bg: "var(--info-soft)",
+  fg: "var(--info)",
+  border: "var(--info-border)",
 };
 
 // ADR-046 lozenge styles live in SummaryLozenge.tsx (shared with VideoCard).
@@ -94,7 +94,7 @@ function scrollToVideo(id: string) {
   const el = document.getElementById(`video-card-${id}`);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.style.outline = "2px solid var(--primary, #6366f1)";
+    el.style.outline = "2px solid var(--accent)";
     setTimeout(() => { el.style.outline = ""; }, 2000);
   }
 }
@@ -311,8 +311,8 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12, fontSize: "0.78rem", alignItems: "center" }}>
         <span style={{ fontWeight: 600 }}>{pct}% published</span>
         <span style={{ color: "var(--green)" }}>{totals.published} published</span>
-        <span style={{ color: "#a78bfa" }}>{totals.approved} approved</span>
-        <span style={{ color: "#fbbf24" }}>{totals.backlog} in backlog</span>
+        <span style={{ color: "var(--purple)" }}>{totals.approved} approved</span>
+        <span style={{ color: "var(--yellow)" }}>{totals.backlog} in backlog</span>
         <span style={{ color: "var(--red)" }}>{totals.failed} failed</span>
         <span style={{ color: "var(--text-muted)" }}>{totals.gaps} gaps</span>
         {estDays != null && (
@@ -402,9 +402,9 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
                 {/* Stacked bar */}
                 <div style={{ height: 12, borderRadius: 3, background: "var(--bg)", overflow: "hidden", display: "flex" }}>
                   {s.published > 0 && <div style={{ width: `${pubW}%`, background: "var(--green)", height: "100%" }} />}
-                  {s.approved > 0 && <div style={{ width: `${appW}%`, background: "#a78bfa", height: "100%" }} />}
+                  {s.approved > 0 && <div style={{ width: `${appW}%`, background: "var(--purple)", height: "100%" }} />}
                   {s.failed > 0 && <div style={{ width: `${failW}%`, background: "var(--red)", height: "100%" }} />}
-                  {s.in_backlog > 0 && <div style={{ width: `${backW}%`, background: "#fbbf24", height: "100%" }} />}
+                  {s.in_backlog > 0 && <div style={{ width: `${backW}%`, background: "var(--yellow)", height: "100%" }} />}
                 </div>
 
                 <span style={{ color: "var(--text-muted)", textAlign: "right", fontSize: "0.7rem" }}>
@@ -429,8 +429,8 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
       <div style={{ marginTop: 10, fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontWeight: 600 }}>Status:</span>
         <LegendBar color="var(--green)" label="Published" />
-        <LegendBar color="#a78bfa" label="Approved" />
-        <LegendBar color="#fbbf24" label="Backlog" />
+        <LegendBar color="var(--purple)" label="Approved" />
+        <LegendBar color="var(--yellow)" label="Backlog" />
         <LegendBar color="var(--red)" label="Failed" />
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", border: "1.5px solid var(--border)", display: "inline-block" }} />
@@ -438,8 +438,8 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
         </span>
 
         <span style={{ marginLeft: 10, fontWeight: 600 }}>Source:</span>
-        <FilterChip id="src:Fireflies" label="Fireflies" filters={filters} onToggle={toggleFilter} bg="rgba(245,158,11,0.12)" fg="#f59e0b" border="rgba(245,158,11,0.3)" />
-        <FilterChip id="src:Zoom" label="Zoom" filters={filters} onToggle={toggleFilter} bg="rgba(56,189,248,0.12)" fg="#38bdf8" border="rgba(56,189,248,0.3)" />
+        <FilterChip id="src:Fireflies" label="Fireflies" filters={filters} onToggle={toggleFilter} bg="var(--warning-soft)" fg="var(--yellow)" border="var(--warning-border)" />
+        <FilterChip id="src:Zoom" label="Zoom" filters={filters} onToggle={toggleFilter} bg="var(--info-soft)" fg="var(--info)" border="var(--info-border)" />
         <FilterChip id="src:Kaltura" label="Kaltura" filters={filters} onToggle={toggleFilter} bg={KALTURA_STYLE.bg} fg={KALTURA_STYLE.fg} border={KALTURA_STYLE.border} />
 
         <span style={{ marginLeft: 10, fontWeight: 600 }}>YouTube:</span>
@@ -458,7 +458,7 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
             />
           );
         })}
-        <FilterChip id="yt:none" label="No YT" filters={filters} onToggle={toggleFilter} bg="rgba(148,163,184,0.06)" fg="#94a3b8" border="rgba(148,163,184,0.2)" />
+        <FilterChip id="yt:none" label="No YT" filters={filters} onToggle={toggleFilter} bg="var(--neutral-soft)" fg="var(--neutral)" border="var(--neutral-border)" />
 
         <span style={{ marginLeft: 10, fontWeight: 600 }}>Other:</span>
         <FilterChip id="kaltura" label="Kaltura" filters={filters} onToggle={toggleFilter} bg={KALTURA_STYLE.bg} fg={KALTURA_STYLE.fg} border={KALTURA_STYLE.border} />
@@ -627,7 +627,7 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
               padding: "3px 4px",
               fontSize: "0.75rem",
               borderRadius: 4,
-              background: slot.is_target && !v ? "rgba(128,128,128,0.04)" : "transparent",
+              background: slot.is_target && !v ? "var(--neutral-soft)" : "transparent",
               cursor: v ? "pointer" : "default",
             }}
           >
@@ -677,9 +677,9 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
                 onClick={e => e.stopPropagation()}
                 style={{
                   ...LINK_STYLE,
-                  background: "rgba(56,189,248,0.1)",
-                  color: "#38bdf8",
-                  border: "1px solid rgba(56,189,248,0.25)",
+                  background: "var(--info-soft)",
+                  color: "var(--info)",
+                  border: "1px solid var(--info-border)",
                 }}
               >
                 {v!.source_platform}

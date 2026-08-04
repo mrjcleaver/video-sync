@@ -118,8 +118,8 @@ export default function YouTubeCallback() {
       justifyContent: "center",
       height: "60vh",
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      color: "#e5e5e5",
-      background: "#0a0a0a",
+      color: "var(--text)",
+      background: "var(--bg)",
       fontSize: "1rem",
     }}>
       <Suspense fallback={<p>Loading...</p>}>

@@ -153,7 +153,7 @@ function fmtDate(iso: string) {
 
 const LINK_COLOR: Record<LinkKind, string> = {
   id_match:   "var(--green)",
-  time_match: "#f5a623",
+  time_match: "var(--yellow)",
   zoom_only:  "var(--text-muted)",
   ff_only:    "var(--text-muted)",
 };
@@ -533,8 +533,8 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
                     <span className="zoom-import-topic">{s.title}</span>
                     <span style={{
                       fontSize: "0.62rem", padding: "1px 5px", borderRadius: 8,
-                      background: s.zoom ? "var(--accent)" : "transparent",
-                      color: s.zoom ? "#fff" : "var(--text-muted)",
+                      background: s.zoom ? "var(--accent-surface)" : "transparent",
+                      color: s.zoom ? "var(--on-accent)" : "var(--text-muted)",
                       border: s.zoom ? "none" : "1px solid var(--border)",
                       opacity: s.zoom ? 1 : 0.45,
                     }}>Zoom</span>
@@ -560,7 +560,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
                         : 0;
                       if (preRunMin <= 5) return null;
                       return (
-                        <span style={{ color: "#f5a623", marginLeft: 6 }} title={`Fireflies started ~${preRunMin} min before Zoom — likely includes pre-meeting coordination. Consider trimming (ADR-021).`}>
+                        <span style={{ color: "var(--yellow)", marginLeft: 6 }} title={`Fireflies started ~${preRunMin} min before Zoom — likely includes pre-meeting coordination. Consider trimming (ADR-021).`}>
                           ⚠ {preRunMin}m pre-run
                         </span>
                       );
@@ -577,7 +577,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
                             href={yt.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: "#e00", fontSize: "0.65rem", textDecoration: "none" }}
+                            style={{ color: "var(--red)", fontSize: "0.65rem", textDecoration: "none" }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             ▶ YouTube
@@ -589,7 +589,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
                           )}
                         </span>
                       ) : (
-                        <span style={{ color: "#e00", marginLeft: 6, fontSize: "0.65rem" }}>
+                        <span style={{ color: "var(--red)", marginLeft: 6, fontSize: "0.65rem" }}>
                           ▶ YouTube ({yt.id}){statsLabel}
                         </span>
                       );

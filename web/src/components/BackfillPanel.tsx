@@ -523,7 +523,7 @@ interface QueueTabProps {
 
 const PRIVACY_COLOR: Record<string, string> = {
   public: "var(--green)",
-  unlisted: "#fbbf24",
+  unlisted: "var(--yellow)",
   private: "var(--red)",
 };
 
@@ -611,13 +611,13 @@ function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQu
                       </span>
                     )}
                     {hasTranscript && (
-                      <span style={{ fontSize: "0.68rem", padding: "1px 6px", borderRadius: 10, background: "rgba(56,189,248,0.12)", color: "#38bdf8" }}>
+                      <span style={{ fontSize: "0.68rem", padding: "1px 6px", borderRadius: 10, background: "var(--info-soft)", color: "var(--info)" }}>
                         transcript
                       </span>
                     )}
                     {profile && <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>profile: {profile.name || "(unnamed)"}</span>}
                     {entry.attempts > 0 && <span style={{ fontSize: "0.7rem", color: "var(--red)" }}>attempt {entry.attempts}</span>}
-                    {isDeferred && <span style={{ fontSize: "0.7rem", color: "#f97316" }}>retry {entry.retry_after?.slice(0, 10)}</span>}
+                    {isDeferred && <span style={{ fontSize: "0.7rem", color: "var(--orange)" }}>retry {entry.retry_after?.slice(0, 10)}</span>}
                     <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "auto" }}>{isExpanded ? "▲" : "▼"}</span>
                   </div>
                 </div>

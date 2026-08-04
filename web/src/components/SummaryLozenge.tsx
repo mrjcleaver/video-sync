@@ -14,14 +14,14 @@ import type { SummaryCountsJSON } from "../lib/wasm";
 import { getCurrentPromptVersion } from "../lib/summaryPromptClient";
 
 const STYLE = {
-  bg: "rgba(168,247,209,0.10)",
-  fg: "#86efac",
-  border: "rgba(134,239,172,0.35)",
+  bg: "var(--success-soft)",
+  fg: "var(--green)",
+  border: "var(--success-border)",
 };
 const ABSENT_STYLE = {
-  bg: "rgba(148,163,184,0.05)",
-  fg: "#94a3b8",
-  border: "rgba(148,163,184,0.18)",
+  bg: "var(--neutral-soft)",
+  fg: "var(--neutral)",
+  border: "var(--neutral-border)",
 };
 
 const BASE: React.CSSProperties = {
@@ -64,7 +64,6 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
           background: ABSENT_STYLE.bg,
           color: ABSENT_STYLE.fg,
           border: `1px solid ${ABSENT_STYLE.border}`,
-          opacity: 0.6,
         }}
       >
         📄 —
@@ -90,10 +89,9 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
       title={tooltipParts.join(" · ")}
       style={{
         ...BASE,
-        background: STYLE.bg,
-        color: STYLE.fg,
-        border: `1px solid ${STYLE.border}`,
-        opacity: stale ? 0.55 : 1,
+        background: stale ? "var(--warning-soft)" : STYLE.bg,
+        color: stale ? "var(--yellow)" : STYLE.fg,
+        border: `1px solid ${stale ? "var(--warning-border)" : STYLE.border}`,
       }}
     >
       {label}

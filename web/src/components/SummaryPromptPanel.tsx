@@ -257,7 +257,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
         padding: 16,
         zIndex: 100,
         overflowY: "auto",
-        boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+        boxShadow: "var(--overlay-shadow)",
       }}
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -266,7 +266,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
         </div>
 
         {!isAdmin && (
-          <div style={{ padding: 12, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
+          <div style={{ padding: 12, background: "var(--danger-soft)", border: "1px solid var(--danger-border)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
             Admin role required to edit the prompt or run bulk regeneration. You can still see the current prompt below.
           </div>
         )}
@@ -362,7 +362,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
               </div>
 
               {runState !== "idle" && (
-                <div style={{ marginTop: 12, padding: 10, background: "rgba(125,211,252,0.05)", border: "1px solid rgba(125,211,252,0.2)", borderRadius: 4, fontSize: "0.82rem" }}>
+                <div style={{ marginTop: 12, padding: 10, background: "var(--info-soft)", border: "1px solid var(--info-border)", borderRadius: 4, fontSize: "0.82rem" }}>
                   <div style={{ marginBottom: 4 }}>
                     Status: <strong>{runState}</strong> · {runProgress.processed}/{runProgress.total} done, {runProgress.failed} failed · spent {formatUsd(runProgress.costSoFar)} / cap {formatUsd(costCapUsd)}
                   </div>

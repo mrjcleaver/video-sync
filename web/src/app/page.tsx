@@ -25,6 +25,7 @@ import EventLog from "../components/EventLog";
 import ErrorBoundary from "../components/ErrorBoundary";
 import ShortsPanel from "../components/ShortsPanel";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
+import ThemeSelector from "../components/ThemeSelector";
 
 function timeAgo(iso: string): string {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -194,7 +195,7 @@ export default function Dashboard() {
       const el = document.getElementById(`video-card-${videoId}`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.style.outline = "2px solid var(--primary, #6366f1)";
+        el.style.outline = "2px solid var(--accent)";
         setTimeout(() => { el.style.outline = ""; }, 2000);
       }
     }, 50);
@@ -290,10 +291,10 @@ export default function Dashboard() {
       {actorState.error && (
         <div style={{
           padding: "10px 14px",
-          background: "rgba(248,113,113,0.1)",
-          border: "1px solid rgba(248,113,113,0.3)",
+          background: "var(--danger-soft)",
+          border: "1px solid var(--danger-border)",
           borderRadius: 6,
-          color: "#f87171",
+          color: "var(--red)",
           fontSize: "0.85rem",
           marginBottom: 12,
         }}>
@@ -305,6 +306,7 @@ export default function Dashboard() {
         <h1>Video Sync</h1>
         <BuildBadge />
         <div className="stats">
+          <ThemeSelector />
           <span className="stat-badge">{videos.length} total</span>
           {counts["Discovered"] && (
             <span className="stat-badge">{counts["Discovered"]} to review</span>

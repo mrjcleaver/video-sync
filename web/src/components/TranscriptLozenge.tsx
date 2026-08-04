@@ -16,19 +16,19 @@ import { useState } from "react";
 import { videoStore } from "../lib/store";
 
 const PRESENT_STYLE: React.CSSProperties = {
-  background: "rgba(125,211,252,0.12)",
-  color: "#7dd3fc",
-  border: "1px solid rgba(125,211,252,0.35)",
+  background: "var(--info-soft)",
+  color: "var(--info)",
+  border: "1px solid var(--info-border)",
 };
 const MISSING_STYLE: React.CSSProperties = {
-  background: "rgba(148,163,184,0.05)",
-  color: "#94a3b8",
-  border: "1px solid rgba(148,163,184,0.18)",
+  background: "var(--neutral-soft)",
+  color: "var(--neutral)",
+  border: "1px solid var(--neutral-border)",
 };
 const FETCHABLE_STYLE: React.CSSProperties = {
-  background: "rgba(168,85,247,0.10)",
-  color: "#c4b5fd",
-  border: "1px solid rgba(168,85,247,0.35)",
+  background: "var(--purple-soft)",
+  color: "var(--purple)",
+  border: "1px solid var(--purple-border)",
   cursor: "pointer",
 };
 
@@ -121,7 +121,7 @@ export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcri
   }
 
   return (
-    <span title="No transcript available for this record" style={{ ...BASE, ...MISSING_STYLE, opacity: 0.6 }}>
+    <span title="No transcript available for this record" style={{ ...BASE, ...MISSING_STYLE }}>
       📝 —
     </span>
   );

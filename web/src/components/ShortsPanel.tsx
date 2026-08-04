@@ -172,7 +172,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
             textAlign: "center",
             fontWeight: 700,
             fontSize: "0.8rem",
-            color: score && score >= 70 ? "var(--green)" : score && score >= 40 ? "#f5a623" : "var(--text-muted)",
+            color: score && score >= 70 ? "var(--green)" : score && score >= 40 ? "var(--yellow)" : "var(--text-muted)",
             background: "var(--bg)",
             border: "1px solid var(--border)",
             borderRadius: 4,
@@ -192,7 +192,7 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
                 href={`https://www.youtube.com/watch?v=${parentYtId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#e00", textDecoration: "none" }}
+                style={{ color: "var(--red)", textDecoration: "none" }}
               >
                 ▶ source
               </a>
@@ -242,8 +242,8 @@ export default function ShortsPanel({ videos, onMutated, onEvent }: Props) {
             <span
               style={{
                 marginLeft: 8,
-                background: "#f5a623",
-                color: "#000",
+                background: "var(--yellow)",
+                color: "var(--on-yellow)",
                 borderRadius: 10,
                 padding: "1px 8px",
                 fontSize: "0.75rem",

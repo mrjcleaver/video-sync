@@ -339,12 +339,12 @@ export function statusColor(status: string | undefined): string {
   if (!status) return "var(--text-muted)";
   return {
     Published: "var(--green)",
-    Publishing: "#4fa3e0",
-    Approved: "#a78bfa",
-    InScope: "#fbbf24",
+    Publishing: "var(--accent)",
+    Approved: "var(--purple)",
+    InScope: "var(--yellow)",
     Discovered: "var(--text-muted)",
     Failed: "var(--red)",
-    ToRetry: "#f97316",
+    ToRetry: "var(--orange)",
     Skipped: "var(--text-muted)",
   }[status] ?? "var(--text-muted)";
 }

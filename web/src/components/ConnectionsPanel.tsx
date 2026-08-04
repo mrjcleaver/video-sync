@@ -389,7 +389,7 @@ export default function ConnectionsPanel({ open }: Props) {
                   <span style={{ color: "var(--green)" }}>● Override active (your browser)</span>
                 )}
                 {p.name !== "YouTube" && status.source === "shared" && (
-                  <span style={{ color: "#a78bfa" }}>
+                  <span style={{ color: "var(--purple)" }}>
                     ● Shared default
                     {status.sharedSetBy ? ` · set by ${status.sharedSetBy}` : ""}
                     {status.sharedSetAt ? ` on ${status.sharedSetAt.slice(0, 10)}` : ""}
@@ -429,7 +429,7 @@ export default function ConnectionsPanel({ open }: Props) {
                       className="btn btn-sm"
                       onClick={() => openEditor(p, "shared")}
                       title="Set the org-wide default for this platform"
-                      style={{ borderColor: "#a78bfa", color: "#a78bfa" }}
+                      style={{ borderColor: "var(--purple)", color: "var(--purple)" }}
                     >
                       {status.source === "shared" || sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured
                         ? "Edit shared default…"
@@ -480,15 +480,15 @@ export default function ConnectionsPanel({ open }: Props) {
                 <div className="credential-form" onClick={(e) => e.stopPropagation()}>
                   {editor.mode === "shared" && (
                     <div style={{
-                      background: "rgba(168,85,247,0.08)",
-                      border: "1px solid rgba(168,85,247,0.3)",
+                      background: "var(--purple-soft)",
+                      border: "1px solid var(--purple-border)",
                       borderRadius: 6,
                       padding: "6px 10px",
                       marginBottom: 8,
                       fontSize: "0.75rem",
                       color: "var(--text)",
                     }}>
-                      <strong style={{ color: "#a78bfa" }}>⚠ Editing shared default.</strong>{" "}
+                      <strong style={{ color: "var(--purple)" }}>⚠ Editing shared default.</strong>{" "}
                       Saving here writes to Google Secret Manager and affects every operator
                       who doesn&apos;t have a local override. To test changes against your own
                       account first, cancel and choose <em>Override locally</em> instead.

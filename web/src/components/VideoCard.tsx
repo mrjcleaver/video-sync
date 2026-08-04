@@ -1438,11 +1438,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {autoSuggestion && (
         <div style={{
           marginTop: 6, padding: "6px 10px",
-          background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)", borderRadius: 6,
+          background: "var(--info-soft)", border: "1px solid var(--info-border)", borderRadius: 6,
           display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
         }}>
           <span>
-            <span style={{ color: "#38bdf8", fontWeight: 600 }}>Possible YouTube match:</span>{" "}
+            <span style={{ color: "var(--info)", fontWeight: 600 }}>Possible YouTube match:</span>{" "}
             <span style={{ color: "var(--text-muted)" }}>
               {autoSuggestion.upload.title}
               {autoSuggestion.upload.publishedAt && ` · ${autoSuggestion.upload.publishedAt.slice(0, 10)}`}
@@ -1485,11 +1485,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {siblingSuggestion && (
         <div style={{
           marginTop: 6, padding: "6px 10px",
-          background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6,
+          background: "var(--purple-soft)", border: "1px solid var(--purple-border)", borderRadius: 6,
           display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
         }}>
           <span>
-            <span style={{ color: "#a78bfa", fontWeight: 600 }}>Possibly same event:</span>{" "}
+            <span style={{ color: "var(--purple)", fontWeight: 600 }}>Possibly same event:</span>{" "}
             <span style={{ color: "var(--text-muted)" }}>
               {siblingSuggestion.video.source_platform}: {siblingSuggestion.video.title}
               {siblingSuggestion.video.recorded_at && ` · ${siblingSuggestion.video.recorded_at.slice(0, 10)}`}
@@ -1543,7 +1543,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               target="_blank"
               rel="noopener noreferrer"
               title={`Open on ${tooltip}`}
-              style={{ color: "var(--primary, #6366f1)", textDecoration: "none" }}
+              style={{ color: "var(--accent)", textDecoration: "none" }}
             >
               {video.source_platform}
             </a>
@@ -1573,9 +1573,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             fontSize: "0.7rem",
             padding: "1px 6px",
             borderRadius: 10,
-            background: "rgba(56,189,248,0.06)",
-            color: "#7dd3fc",
-            border: "1px solid rgba(56,189,248,0.2)",
+            background: "var(--info-soft)",
+            color: "var(--info)",
+            border: "1px solid var(--info-border)",
             textDecoration: "none",
           }}
         >
@@ -1619,9 +1619,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(248,113,113,0.10)",
-              color: "#fb7185",
-              border: "1px solid rgba(248,113,113,0.35)",
+              background: "var(--danger-soft)",
+              color: "var(--red)",
+              border: "1px solid var(--danger-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -1640,9 +1640,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(245,158,11,0.10)",
-              color: "#f59e0b",
-              border: "1px solid rgba(245,158,11,0.35)",
+              background: "var(--warning-soft)",
+              color: "var(--yellow)",
+              border: "1px solid var(--warning-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -2072,11 +2072,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {/* Fireflies publish warnings */}
       {showPreview && video.source_platform === "Fireflies" && (
         <>
-          <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 6 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--yellow)", background: "var(--bg-card)", border: "1px solid var(--yellow)", borderRadius: 6, padding: "6px 10px", marginBottom: 6 }}>
             Fireflies CDN URLs expire. Download the video file from Fireflies and upload manually, or use the original Zoom recording instead.
           </div>
           {(!video.upstream_links || video.upstream_links.length === 0) && (
-            <div style={{ fontSize: "0.75rem", color: "#f5a623", background: "var(--bg-card)", border: "1px solid #f5a623", borderRadius: 6, padding: "6px 10px", marginBottom: 8 }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--yellow)", background: "var(--bg-card)", border: "1px solid var(--yellow)", borderRadius: 6, padding: "6px 10px", marginBottom: 8 }}>
               No linked Zoom recording — Fireflies recordings start when the bot joins, which may be before the session goes live (e.g. pre-meeting coordination). Consider setting a trim offset or linking the Zoom source via Provenance.
             </div>
           )}
@@ -2150,7 +2150,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               )}
             </div>
             {publishAttrs.trim_start_seconds > 600 && (
-              <div style={{ fontSize: "0.72rem", color: "#f5a623", marginTop: 4 }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--yellow)", marginTop: 4 }}>
                 ⚠ Trimming {Math.round(publishAttrs.trim_start_seconds / 60)} minutes — confirm this is correct, or set to 0 to upload without trim.
               </div>
             )}
@@ -2327,7 +2327,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               {[...videoLog].reverse().map((r, i) => (
                 <div key={i} style={{ fontFamily: "monospace", fontSize: "0.7rem", display: "flex", gap: 6 }}>
                   <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{r.ts.slice(11, 19)}</span>
-                  <span style={{ color: r.level === "error" ? "var(--red)" : r.level === "warn" ? "#fbbf24" : "var(--text-muted)", flexShrink: 0, width: 38 }}>
+                  <span style={{ color: r.level === "error" ? "var(--red)" : r.level === "warn" ? "var(--yellow)" : "var(--text-muted)", flexShrink: 0, width: 38 }}>
                     {r.level}
                   </span>
                   <span>{r.msg}</span>

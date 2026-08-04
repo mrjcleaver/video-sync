@@ -262,7 +262,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
                     {" · "}
                     <span title={`${Math.round(e.duration_seconds / 60)} min`}>{fmtDuration(e.duration_seconds)}</span>
                     {e.is_live && (
-                      <span style={{ color: "#a855f7", marginLeft: 4 }}>● live</span>
+                      <span style={{ color: "var(--purple)", marginLeft: 4 }}>● live</span>
                     )}
                   </span>
                 </div>

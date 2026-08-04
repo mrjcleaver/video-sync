@@ -240,8 +240,8 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
                       {when ? new Date(when).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
                       {" · "}
                       <span title={`${Math.round(b.duration_seconds / 60)} min`}>{fmtDuration(b.duration_seconds)}</span>
-                      {b.liveBroadcastContent === "live" && <span style={{ color: "#f87171", marginLeft: 6, fontWeight: 600 }}>● LIVE</span>}
-                      {b.liveBroadcastContent === "upcoming" && <span style={{ color: "#a78bfa", marginLeft: 6 }}>scheduled</span>}
+                      {b.liveBroadcastContent === "live" && <span style={{ color: "var(--red)", marginLeft: 6, fontWeight: 600 }}>● LIVE</span>}
+                      {b.liveBroadcastContent === "upcoming" && <span style={{ color: "var(--purple)", marginLeft: 6 }}>scheduled</span>}
                       {b.liveBroadcastContent === "completed" && <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>completed</span>}
                     </span>
                   </div>
