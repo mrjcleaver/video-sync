@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import HelpTip from "./HelpTip";
+import ConfirmDialog from "./ConfirmDialog";
 import { useCurrentActor } from "../lib/useCurrentActor";
 
 const STORAGE_KEY = "video-sync:connections";
@@ -81,11 +82,11 @@ const PLATFORMS: PlatformInfo[] = [
     credentialType: "OAUTH2",
     fields: [
       { key: "googleApiKey", label: "Google API Key (for YouTube Data API metadata lookups)", type: "password", placeholder: "AIza...", required: false },
-      { key: "ytCookies", label: "YouTube Cookies (Netscape format — required to download videos via yt-dlp)", type: "password", placeholder: "Export with browser extension e.g. 'Get cookies.txt LOCALLY', paste here", required: false },
+      { key: "ytCookies", label: "YouTube Cookies (Netscape format, required to download videos via yt-dlp)", type: "password", placeholder: "Export with browser extension e.g. 'Get cookies.txt LOCALLY', paste here", required: false },
       { key: "clientId", label: "Client ID", type: "text", placeholder: "Google OAuth Client ID", required: true },
       { key: "clientSecret", label: "Client Secret", type: "password", placeholder: "Google OAuth Client Secret", required: true },
       { key: "channelId", label: "Channel ID", type: "text", placeholder: "UC... channel ID", required: true },
-      { key: "refreshToken", label: "Refresh Token (optional — paste to skip OAuth)", type: "password", placeholder: "Paste from OAuth Playground or existing token", required: false },
+      { key: "refreshToken", label: "Refresh Token (optional, paste to skip OAuth)", type: "password", placeholder: "Paste from OAuth Playground or existing token", required: false },
     ],
     // ADR-054 — only the public Google API Key is org-wide shareable.
     // OAuth credentials stay per-operator (ADR-042 brand-account audit).
@@ -156,6 +157,10 @@ interface EditorState {
   mode: EditorMode;
 }
 
+type PendingAction =
+  | { kind: "delete-shared"; platform: string }
+  | { kind: "drop-override"; platform: string };
+
 export default function ConnectionsPanel({ open }: Props) {
   const [connections, setConnections] = useState<Record<string, ConnectionState>>({});
   const [sharedMeta, setSharedMeta] = useState<Record<string, SharedMetaEntry>>({});
@@ -163,6 +168,8 @@ export default function ConnectionsPanel({ open }: Props) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [savingShared, setSavingShared] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [notice, setNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const actorState = useCurrentActor();
   const isAdmin = actorState.actor?.role === "Admin";
 
@@ -190,6 +197,7 @@ export default function ConnectionsPanel({ open }: Props) {
       : {}; // Always start blank for shared edits — secret values are write-only
     setDraft({ ...seed });
     setErrors({});
+    setNotice(null);
     setEditor({ platform: platform.name, mode });
   }
 
@@ -241,6 +249,7 @@ export default function ConnectionsPanel({ open }: Props) {
           return;
         }
         setRefreshTick(t => t + 1);
+        setNotice({ tone: "success", text: `${platform.name} shared credentials saved.` });
         closeEditor();
       } catch (err) {
         setErrors({ _form: `Network error: ${String(err)}` });
@@ -255,6 +264,7 @@ export default function ConnectionsPanel({ open }: Props) {
       };
       setConnections(next);
       saveConnections(next);
+      setNotice({ tone: "success", text: `${platform.name} local override saved.` });
       closeEditor();
     }
   }
@@ -267,26 +277,37 @@ export default function ConnectionsPanel({ open }: Props) {
     closeEditor();
   }
 
-  async function handleDeleteShared(platformName: string) {
+  async function deleteSharedCredential(platformName: string) {
     if (!isSharedPlatformName(platformName)) return;
     if (!isAdmin) return;
-    if (!confirm(`Remove the shared ${platformName} credential? Operators without their own override will fall back to "unconfigured".`)) return;
     setSavingShared(true);
     try {
       const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(platformName)}`, { method: "DELETE" });
       if (!res.ok) {
-        alert(`Delete failed (${res.status})`);
+        setNotice({ tone: "error", text: `Could not remove the shared ${platformName} credentials (${res.status}).` });
         return;
       }
       setRefreshTick(t => t + 1);
+      setNotice({ tone: "success", text: `${platformName} shared credentials removed.` });
+    } catch (err) {
+      setNotice({ tone: "error", text: `Could not remove the shared ${platformName} credentials: ${String(err)}` });
     } finally {
       setSavingShared(false);
+      setPendingAction(null);
     }
   }
 
   function handleDropOverride(platformName: string) {
-    if (!confirm(`Drop your local ${platformName} override and use the shared default instead?`)) return;
+    const hasSharedDefault = isSharedPlatformName(platformName)
+      && sharedMeta[sharedPlatformKey(platformName)]?.configured;
     handleDisconnect(platformName);
+    setNotice({
+      tone: "success",
+      text: hasSharedDefault
+        ? `${platformName} local override removed. The shared default is now active.`
+        : `${platformName} local override removed. This connection is now unconfigured.`,
+    });
+    setPendingAction(null);
   }
 
   function handleReauthorize(platformName: string) {
@@ -307,7 +328,7 @@ export default function ConnectionsPanel({ open }: Props) {
   function handleYouTubeAuth() {
     const yt = connections["YouTube"];
     if (!yt?.credentials?.clientId) {
-      alert("Please configure YouTube Client ID and Client Secret first.");
+      setNotice({ tone: "error", text: "Configure the YouTube Client ID and Client Secret before authorizing YouTube." });
       return;
     }
     window.location.href = `/api/youtube/auth?clientId=${encodeURIComponent(yt.credentials.clientId)}`;
@@ -345,11 +366,20 @@ export default function ConnectionsPanel({ open }: Props) {
         (browser localStorage) takes precedence over the org&apos;s{" "}
         <strong>shared default</strong> (Google Secret Manager, set by a key admin).
         <br /><br />
-        <strong>Kaltura</strong> is shared-only — its admin secret is too privileged
+        <strong>Kaltura</strong> is shared-only. Its admin secret is too privileged
         for per-operator overrides. <strong>YouTube</strong> is per-operator only,
         so brand-account uploads carry the actual operator&apos;s identity (audit
         and copyright trail).
       </HelpTip>
+
+      {notice && (
+        <div
+          className={`form-message form-message-${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+        >
+          {notice.text}
+        </div>
+      )}
 
       <div className="connections-grid">
         {PLATFORMS.map((p) => {
@@ -380,7 +410,7 @@ export default function ConnectionsPanel({ open }: Props) {
                 )}
                 {p.name === "YouTube" && status.source === "none" && (
                   <span>
-                    ○ Per-user — not yet authorised. YouTube credentials are deliberately
+                    ○ Per-user. Not yet authorized. YouTube credentials are deliberately
                     not shared so that uploads carry your identity inside the brand
                     account (accountability + Content ID audit).
                   </span>
@@ -409,6 +439,7 @@ export default function ConnectionsPanel({ open }: Props) {
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                   {showOverrideEdit && (
                     <button
+                      type="button"
                       className="btn btn-sm"
                       onClick={() => openEditor(p, "override")}
                     >
@@ -417,8 +448,9 @@ export default function ConnectionsPanel({ open }: Props) {
                   )}
                   {status.source === "override" && sharedSupported && sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured && (
                     <button
+                      type="button"
                       className="btn btn-sm"
-                      onClick={() => handleDropOverride(p.name)}
+                      onClick={() => setPendingAction({ kind: "drop-override", platform: p.name })}
                       title="Use the shared default instead of your local override"
                     >
                       Drop override → use shared
@@ -426,20 +458,22 @@ export default function ConnectionsPanel({ open }: Props) {
                   )}
                   {sharedSupported && isAdmin && (
                     <button
+                      type="button"
                       className="btn btn-sm"
                       onClick={() => openEditor(p, "shared")}
                       title="Set the org-wide default for this platform"
                       style={{ borderColor: "#a78bfa", color: "#a78bfa" }}
                     >
                       {status.source === "shared" || sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured
-                        ? "Edit shared default…"
-                        : "Set as shared default…"}
+                        ? "Edit shared default"
+                        : "Set shared default"}
                     </button>
                   )}
                   {sharedSupported && isAdmin && sharedMeta[sharedPlatformKey(p.name as SharedPlatformName)]?.configured && (
                     <button
+                      type="button"
                       className="btn btn-sm btn-danger"
-                      onClick={() => handleDeleteShared(p.name)}
+                      onClick={() => setPendingAction({ kind: "delete-shared", platform: p.name })}
                       title="Remove the shared default — operators without overrides will see 'not configured'"
                       disabled={savingShared}
                     >
@@ -460,6 +494,7 @@ export default function ConnectionsPanel({ open }: Props) {
                           : "Authorized"}
                       </span>
                       <button
+                        type="button"
                         className="btn btn-sm"
                         style={{ marginLeft: 8, fontSize: "0.65rem" }}
                         onClick={() => handleReauthorize("YouTube")}
@@ -468,7 +503,7 @@ export default function ConnectionsPanel({ open }: Props) {
                       </button>
                     </>
                   ) : (
-                    <button className="btn btn-sm btn-primary" onClick={handleYouTubeAuth}>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={handleYouTubeAuth}>
                       Authorize YouTube
                     </button>
                   )}
@@ -488,7 +523,7 @@ export default function ConnectionsPanel({ open }: Props) {
                       fontSize: "0.75rem",
                       color: "var(--text)",
                     }}>
-                      <strong style={{ color: "#a78bfa" }}>⚠ Editing shared default.</strong>{" "}
+                      <strong style={{ color: "#a78bfa" }}>Editing shared default.</strong>{" "}
                       Saving here writes to Google Secret Manager and affects every operator
                       who doesn&apos;t have a local override. To test changes against your own
                       account first, cancel and choose <em>Override locally</em> instead.
@@ -496,7 +531,7 @@ export default function ConnectionsPanel({ open }: Props) {
                   )}
                   {editor.mode === "override" && (
                     <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: 6 }}>
-                      Local override — saved only in this browser&apos;s localStorage.
+                      Local override. Saved only in this browser&apos;s local storage.
                     </div>
                   )}
                   {editor.mode === "shared" && p.sharedEligibleFields && (
@@ -524,15 +559,18 @@ export default function ConnectionsPanel({ open }: Props) {
                           });
                         }}
                         autoComplete="off"
+                        aria-invalid={!!errors[f.key]}
+                        aria-describedby={errors[f.key] ? `${p.name}-${f.key}-error` : undefined}
                       />
-                      {errors[f.key] && <span className="field-error">{errors[f.key]}</span>}
+                      {errors[f.key] && <span id={`${p.name}-${f.key}-error`} className="field-error" role="alert">{errors[f.key]}</span>}
                     </div>
                   ))}
                   {errors._form && (
-                    <div className="field-error" style={{ marginBottom: 6 }}>{errors._form}</div>
+                    <div className="field-error" role="alert" style={{ marginBottom: 6 }}>{errors._form}</div>
                   )}
                   <div className="form-actions">
                     <button
+                      type="button"
                       className="btn btn-primary"
                       onClick={() => handleSave(p)}
                       disabled={savingShared}
@@ -542,11 +580,11 @@ export default function ConnectionsPanel({ open }: Props) {
                         : (status.source === "override" ? "Update override" : "Save override")}
                     </button>
                     {editor.mode === "override" && status.source === "override" && (
-                      <button className="btn btn-danger" onClick={() => handleDisconnect(p.name)}>
+                      <button type="button" className="btn btn-danger" onClick={() => setPendingAction({ kind: "drop-override", platform: p.name })}>
                         Drop override
                       </button>
                     )}
-                    <button className="btn btn-sm" onClick={closeEditor}>
+                    <button type="button" className="btn btn-sm" onClick={closeEditor}>
                       Cancel
                     </button>
                   </div>
@@ -556,6 +594,26 @@ export default function ConnectionsPanel({ open }: Props) {
           );
         })}
       </div>
+      <ConfirmDialog
+        open={!!pendingAction}
+        title={pendingAction?.kind === "delete-shared" ? "Remove shared credentials?" : "Drop local override?"}
+        description={pendingAction?.kind === "delete-shared"
+          ? `Operators without their own ${pendingAction.platform} override will see this connection as unconfigured.`
+          : pendingAction && isSharedPlatformName(pendingAction.platform) && sharedMeta[sharedPlatformKey(pendingAction.platform)]?.configured
+            ? `Your browser will stop using its ${pendingAction.platform} credentials and use the shared default instead.`
+            : `Your browser will remove its ${pendingAction?.platform ?? "local"} credentials. This connection will become unconfigured.`}
+        confirmLabel={pendingAction?.kind === "delete-shared" ? "Remove shared credentials" : "Drop override"}
+        busy={savingShared}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => {
+          if (!pendingAction) return;
+          if (pendingAction.kind === "delete-shared") {
+            void deleteSharedCredential(pendingAction.platform);
+          } else {
+            handleDropOverride(pendingAction.platform);
+          }
+        }}
+      />
     </div>
   );
 }

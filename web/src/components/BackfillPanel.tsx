@@ -14,6 +14,7 @@ import {
   MONTH_NAMES,
 } from "../lib/backfill";
 import HelpTip from "./HelpTip";
+import ConfirmDialog from "./ConfirmDialog";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
@@ -284,7 +285,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
       <div className="zoom-import-header">
         <h2>Backfill Uploader</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {status && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{status}</span>}
+          {status && <span role="status" style={{ fontSize: "0.75rem", color: "var(--text-muted)", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{status}</span>}
           {serverState && (
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
               {uploadsToday} / {profiles[0]?.max_uploads_per_day ?? "?"} today
@@ -319,7 +320,7 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
 
       <div className="filter-tabs" style={{ marginBottom: 12 }}>
         {(["profiles", "queue"] as const).map(t => (
-          <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)}>
+          <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)} aria-pressed={activeTab === t}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "queue" && readyEntries.length > 0 ? ` (${readyEntries.length})` : ""}
           </button>
@@ -378,6 +379,8 @@ interface ProfilesTabProps {
 const ALL_PLATFORMS = ["Zoom", "Fireflies", "Loom"];
 
 function ProfilesTab({ profiles, editing, onSave, onEdit, onDelete, onNew, onCancel }: ProfilesTabProps) {
+  const [pendingDelete, setPendingDelete] = useState<BackfillProfile | null>(null);
+
   if (editing) {
     return <ProfileEditor profile={editing} onSave={onSave} onCancel={onCancel} />;
   }
@@ -409,12 +412,23 @@ function ProfilesTab({ profiles, editing, onSave, onEdit, onDelete, onNew, onCan
             )}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="btn btn-sm" onClick={() => onEdit(p)}>Edit</button>
-            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => onDelete(p.id)}>Delete</button>
+            <button type="button" className="btn btn-sm" onClick={() => onEdit(p)}>Edit</button>
+            <button type="button" className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => setPendingDelete(p)}>Delete</button>
           </div>
         </div>
       ))}
-      <button className="btn btn-sm btn-primary" onClick={onNew} style={{ marginTop: 4 }}>+ New Profile</button>
+      <button type="button" className="btn btn-sm btn-primary" onClick={onNew} style={{ marginTop: 4 }}>New profile</button>
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete backfill profile?"
+        description={`This removes ${pendingDelete?.name || "the unnamed profile"}. Existing queued videos are not removed.`}
+        confirmLabel="Delete profile"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) onDelete(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+      />
     </div>
   );
 }
@@ -446,67 +460,83 @@ function ProfileEditor({ profile, onSave, onCancel }: { profile: BackfillProfile
     setCriteria("days_of_week", days.includes(d) ? days.filter(x => x !== d) : [...days, d].sort());
   }
 
-  const inputStyle = { padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" };
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: "0.8rem" }}>Name</label>
-        <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Live Vibe Coding" style={{ ...inputStyle, flex: "1 1 180px" }} />
-        <label style={{ fontSize: "0.8rem" }}>
+    <form className="compact-form" onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+      <fieldset className="compact-form-section">
+        <legend>Profile details</legend>
+        <label className="compact-field compact-field-wide" htmlFor="backfill-profile-name">
+          <span>Name</span>
+          <input id="backfill-profile-name" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Live Vibe Coding" required />
+        </label>
+        <label className="form-checkbox" style={{ gridColumn: "span 4", alignSelf: "end" }}>
           <input type="checkbox" checked={form.enabled} onChange={e => set("enabled", e.target.checked)} style={{ marginRight: 4 }} />
           Enabled
         </label>
-      </div>
+      </fieldset>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: "0.8rem" }}>Platforms:</span>
+      <fieldset className="compact-form-section">
+        <legend>Source and schedule</legend>
+        <div className="choice-group" role="group" aria-label="Source platforms">
         {ALL_PLATFORMS.map(p => (
-          <button key={p} className={`btn btn-sm ${form.source_platforms.includes(p) ? "btn-primary" : ""}`} style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => togglePlatform(p)}>{p}</button>
+          <button type="button" key={p} className={`btn btn-sm ${form.source_platforms.includes(p) ? "btn-primary" : ""}`} aria-pressed={form.source_platforms.includes(p)} onClick={() => togglePlatform(p)}>{p}</button>
         ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: "0.8rem" }}>Date from</label>
-        <input type="date" value={form.date_from} onChange={e => set("date_from", e.target.value)} style={inputStyle} />
-        <label style={{ fontSize: "0.8rem" }}>to</label>
-        <input type="date" value={form.date_to ?? ""} onChange={e => set("date_to", e.target.value || undefined)} style={inputStyle} />
-      </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: "0.8rem" }}>Target days:</span>
+        </div>
+        <label className="compact-field" htmlFor="backfill-date-from">
+          <span>Date from</span>
+          <input id="backfill-date-from" type="date" value={form.date_from} onChange={e => set("date_from", e.target.value)} />
+        </label>
+        <label className="compact-field" htmlFor="backfill-date-to">
+          <span>Date to</span>
+          <input id="backfill-date-to" type="date" value={form.date_to ?? ""} onChange={e => set("date_to", e.target.value || undefined)} />
+        </label>
+        <div className="choice-group" role="group" aria-label="Target days">
         {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, i) => (
-          <button key={d} className={`btn btn-sm ${(form.criteria.days_of_week ?? []).includes(i) ? "btn-primary" : ""}`} style={{ padding: "2px 6px", fontSize: "0.7rem" }} onClick={() => toggleDay(i)}>{d}</button>
+          <button type="button" key={d} className={`btn btn-sm ${(form.criteria.days_of_week ?? []).includes(i) ? "btn-primary" : ""}`} aria-pressed={(form.criteria.days_of_week ?? []).includes(i)} onClick={() => toggleDay(i)}>{d}</button>
         ))}
-      </div>
+        </div>
+      </fieldset>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: "0.8rem" }}>Min duration (min)</label>
-        <input type="number" value={form.criteria.min_duration_minutes ?? ""} onChange={e => setCriteria("min_duration_minutes", e.target.value ? Number(e.target.value) : undefined)} style={{ ...inputStyle, width: 70 }} />
-        <label style={{ fontSize: "0.8rem" }}>Max</label>
-        <input type="number" value={form.criteria.max_duration_minutes ?? ""} onChange={e => setCriteria("max_duration_minutes", e.target.value ? Number(e.target.value) : undefined)} style={{ ...inputStyle, width: 70 }} />
-        <label style={{ fontSize: "0.8rem" }}>Title regex</label>
-        <input value={form.criteria.title_pattern ?? ""} onChange={e => setCriteria("title_pattern", e.target.value || undefined)} placeholder="e.g. Vibe Coding" style={{ ...inputStyle, flex: "1 1 140px" }} />
-      </div>
+      <fieldset className="compact-form-section">
+        <legend>Selection criteria</legend>
+        <label className="compact-field" htmlFor="backfill-min-duration">
+          <span>Minimum duration (minutes)</span>
+          <input id="backfill-min-duration" type="number" min={0} value={form.criteria.min_duration_minutes ?? ""} onChange={e => setCriteria("min_duration_minutes", e.target.value ? Number(e.target.value) : undefined)} />
+        </label>
+        <label className="compact-field" htmlFor="backfill-max-duration">
+          <span>Maximum duration (minutes)</span>
+          <input id="backfill-max-duration" type="number" min={0} value={form.criteria.max_duration_minutes ?? ""} onChange={e => setCriteria("max_duration_minutes", e.target.value ? Number(e.target.value) : undefined)} />
+        </label>
+        <label className="compact-field compact-field-wide" htmlFor="backfill-title-pattern">
+          <span>Title pattern</span>
+          <input id="backfill-title-pattern" value={form.criteria.title_pattern ?? ""} onChange={e => setCriteria("title_pattern", e.target.value || undefined)} placeholder="e.g. Vibe Coding" />
+        </label>
+      </fieldset>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: "0.8rem" }}>Default privacy</label>
-        <select value={form.default_privacy} onChange={e => set("default_privacy", e.target.value as BackfillProfile["default_privacy"])} style={inputStyle}>
+      <fieldset className="compact-form-section">
+        <legend>Publishing limits</legend>
+        <label className="compact-field" htmlFor="backfill-privacy">
+          <span>Default privacy</span>
+          <select id="backfill-privacy" value={form.default_privacy} onChange={e => set("default_privacy", e.target.value as BackfillProfile["default_privacy"])}>
           <option value="private">private</option>
           <option value="unlisted">unlisted</option>
           <option value="public">public</option>
-        </select>
-        <label style={{ fontSize: "0.8rem" }}>Max uploads/day</label>
-        <input type="number" min={1} max={50} value={form.max_uploads_per_day} onChange={e => set("max_uploads_per_day", Number(e.target.value))} style={{ ...inputStyle, width: 60 }} />
-        <label style={{ fontSize: "0.8rem" }}>Window start (UTC hour)</label>
-        <input type="number" min={0} max={23} value={form.upload_window_start_hour} onChange={e => set("upload_window_start_hour", Number(e.target.value))} style={{ ...inputStyle, width: 50 }} />
-      </div>
+          </select>
+        </label>
+        <label className="compact-field" htmlFor="backfill-upload-limit">
+          <span>Maximum uploads per day</span>
+          <input id="backfill-upload-limit" type="number" min={1} max={50} value={form.max_uploads_per_day} onChange={e => set("max_uploads_per_day", Number(e.target.value))} />
+        </label>
+        <label className="compact-field" htmlFor="backfill-window-start">
+          <span>Window start (UTC hour)</span>
+          <input id="backfill-window-start" type="number" min={0} max={23} value={form.upload_window_start_hour} onChange={e => set("upload_window_start_hour", Number(e.target.value))} />
+        </label>
+      </fieldset>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn btn-primary btn-sm" onClick={() => onSave(form)}>Save Profile</button>
-        <button className="btn btn-sm" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn btn-primary">Save profile</button>
+        <button type="button" className="btn" onClick={onCancel}>Cancel</button>
       </div>
-    </div>
+    </form>
   );
 }
 

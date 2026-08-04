@@ -382,8 +382,8 @@ body {
 
 .connections-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
 }
 
 .connection-card {
@@ -391,7 +391,7 @@ body {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
-  cursor: pointer;
+  cursor: default;
   transition: border-color 0.15s;
 }
 
@@ -448,6 +448,14 @@ body {
   color: var(--text-muted);
 }
 
+.form-field .field-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #b8b8b8;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
 .form-field input {
   width: 100%;
   padding: 6px 8px;
@@ -487,7 +495,8 @@ body {
   cursor: pointer;
 }
 
-.btn-danger {
+.credential-form .btn-danger,
+.connection-card .btn-danger {
   background: var(--red, #e74c3c);
   color: #fff;
   border: none;
@@ -657,7 +666,7 @@ body {
 .rule-form {
   padding: 14px;
   border-radius: 8px;
-  border: 1px solid var(--accent);
+  border: 1px solid #2d4f78;
   background: var(--bg);
   margin-top: 12px;
 }
@@ -783,15 +792,26 @@ body {
   font-size: 0.72rem;
 }
 
+/* Accessible configuration form and feedback patterns */
 .form-message {
-  margin: 8px 0;
-  color: var(--text-muted);
+  margin: 10px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
   font-size: 0.78rem;
   line-height: 1.45;
 }
 
 .form-message-error {
-  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  color: #ff8a8a;
+}
+
+.form-message-success {
+  border-color: color-mix(in srgb, var(--green) 50%, var(--border));
+  color: #7ee7a4;
 }
 
 .summary-prompt-save-row {
@@ -955,6 +975,135 @@ body {
     margin-left: 0 !important;
     margin-top: 4px;
   }
+}
+
+.compact-form {
+  display: grid;
+  gap: 16px;
+}
+
+.compact-form-section {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.compact-form-section legend {
+  padding: 0 6px;
+  color: #c7c7c7;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.compact-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  grid-column: span 4;
+}
+
+.compact-field-wide { grid-column: span 8; }
+.compact-field-full { grid-column: 1 / -1; }
+
+.compact-field > span,
+.compact-field > label {
+  color: #b8b8b8;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.compact-field input,
+.compact-field select {
+  min-height: 36px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.choice-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  grid-column: 1 / -1;
+}
+
+.choice-group .btn { min-height: 36px; }
+
+.form-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: #b8b8b8;
+  font-size: 0.8rem;
+}
+
+.form-checkbox input { accent-color: var(--accent); }
+
+.connection-card .btn {
+  max-width: 100%;
+  min-height: 32px;
+  white-space: normal;
+  text-align: left;
+}
+
+.confirm-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-width: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #454545;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+}
+
+.confirm-dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
+.confirm-dialog-content { padding: 22px; }
+
+.confirm-dialog h2 {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.confirm-dialog p {
+  color: #b8b8b8;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.confirm-dialog .btn-red {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+@media (max-width: 720px) {
+  .container { padding: 16px 12px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .full-width { grid-column: auto; }
+  .compact-field,
+  .compact-field-wide { grid-column: 1 / -1; }
+  .compact-form-section { grid-template-columns: 1fr; padding: 12px; }
+  .connections-grid { grid-template-columns: 1fr; }
+  .zoom-import-header { align-items: flex-start; gap: 10px; flex-wrap: wrap; }
 }
 
 /* Burndown Stats */

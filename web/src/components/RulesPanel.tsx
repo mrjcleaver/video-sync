@@ -11,6 +11,7 @@ import {
 } from "../lib/rules";
 import { videoStore } from "../lib/store";
 import HelpTip from "./HelpTip";
+import ConfirmDialog from "./ConfirmDialog";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -42,6 +43,7 @@ export default function RulesPanel({
   const [rules, setRules] = useState<IngestionRule[]>(() => loadRules());
   const [editing, setEditing] = useState<IngestionRule | null>(null);
   const [dryRunResult, setDryRunResult] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<IngestionRule | null>(null);
 
   const persist = useCallback(
     (updated: IngestionRule[]) => {
@@ -101,12 +103,16 @@ export default function RulesPanel({
 
   return (
     <div className="rules-panel">
-      <h2
-        style={{ cursor: "pointer" }}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span>Ingestion Rules {rules.length > 0 && `(${rules.length})`}</span>
-        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <h2>
+        <button
+          type="button"
+          className="panel-heading-button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="ingestion-rules-content"
+        >
+          <span>Ingestion rules {rules.length > 0 && `(${rules.length})`}</span>
+          <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {isRunnerRunning && (
             <span style={{ fontSize: "0.7rem", color: "var(--green)" }}>running</span>
           )}
@@ -116,11 +122,12 @@ export default function RulesPanel({
             </span>
           )}
           <span style={{ fontSize: "0.8rem" }}>{expanded ? "\u25B2" : "\u25BC"}</span>
-        </span>
+          </span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id="ingestion-rules-content">
           <HelpTip>
             Ingestion rules auto-classify recordings as they arrive. Each rule has criteria
             (title pattern, day of week, duration range, date window) and an action:{" "}
@@ -132,19 +139,19 @@ export default function RulesPanel({
           </HelpTip>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <button className="btn btn-sm btn-primary" onClick={() => startEdit()}>
-              Add Rule
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+              Add rule
             </button>
-            <button className="btn btn-sm" onClick={dryRun}>
-              Dry Run
+            <button type="button" className="btn btn-sm" onClick={dryRun}>
+              Dry run
             </button>
-            <button className="btn btn-sm btn-green" onClick={onRunNow}>
-              Run Now
+            <button type="button" className="btn btn-sm btn-green" onClick={onRunNow}>
+              Run now
             </button>
           </div>
 
           {dryRunResult && (
-            <div style={{ fontSize: "0.8rem", color: "var(--accent)", marginBottom: 8 }}>
+            <div role="status" style={{ fontSize: "0.8rem", color: "var(--accent)", marginBottom: 8 }}>
               {dryRunResult}
             </div>
           )}
@@ -162,6 +169,7 @@ export default function RulesPanel({
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>
@@ -182,14 +190,15 @@ export default function RulesPanel({
                 >
                   {rule.action.replace("_", " ")}
                 </span>
-                <button className="btn btn-sm" onClick={() => startEdit(rule)}>
+                <button type="button" className="btn btn-sm" onClick={() => startEdit(rule)}>
                   Edit
                 </button>
                 <button
+                  type="button"
                   className="btn btn-sm btn-red"
-                  onClick={() => deleteRule(rule.id)}
+                  onClick={() => setPendingDelete(rule)}
                 >
-                  Del
+                  Delete
                 </button>
               </div>
               {rule.criteria.title_pattern && (
@@ -205,8 +214,9 @@ export default function RulesPanel({
           {editing && (
             <div className="rule-form">
               <div className="form-field">
-                <label>Name</label>
+                <label htmlFor="ingestion-rule-name">Name</label>
                 <input
+                  id="ingestion-rule-name"
                   value={editing.name}
                   onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                   placeholder="Rule name"
@@ -215,8 +225,9 @@ export default function RulesPanel({
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div className="form-field">
-                  <label>Priority (lower = first)</label>
+                  <label htmlFor="ingestion-rule-priority">Priority (lower = first)</label>
                   <input
+                    id="ingestion-rule-priority"
                     type="number"
                     value={editing.priority}
                     onChange={(e) =>
@@ -225,8 +236,9 @@ export default function RulesPanel({
                   />
                 </div>
                 <div className="form-field">
-                  <label>Action</label>
+                  <label htmlFor="ingestion-rule-action">Action</label>
                   <select
+                    id="ingestion-rule-action"
                     value={editing.action}
                     onChange={(e) =>
                       setEditing({ ...editing, action: e.target.value as RuleAction })
@@ -249,8 +261,9 @@ export default function RulesPanel({
               </div>
 
               <div className="form-field">
-                <label>Title pattern (regex)</label>
+                <label htmlFor="ingestion-rule-title-pattern">Title pattern (regex)</label>
                 <input
+                  id="ingestion-rule-title-pattern"
                   value={editing.criteria.title_pattern ?? ""}
                   onChange={(e) =>
                     updateCriteria({ title_pattern: e.target.value || undefined })
@@ -260,8 +273,9 @@ export default function RulesPanel({
               </div>
 
               <div className="form-field">
-                <label>Title exclude (regex)</label>
+                <label htmlFor="ingestion-rule-title-exclude">Title exclude (regex)</label>
                 <input
+                  id="ingestion-rule-title-exclude"
                   value={editing.criteria.title_exclude ?? ""}
                   onChange={(e) =>
                     updateCriteria({ title_exclude: e.target.value || undefined })
@@ -271,17 +285,19 @@ export default function RulesPanel({
               </div>
 
               <div className="form-field">
-                <label>Days of week</label>
-                <div style={{ display: "flex", gap: 4 }}>
+                <span className="field-label">Days of week</span>
+                <div role="group" aria-label="Days of week" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                   {DAYS.map((label, i) => (
                     <button
                       key={i}
+                      type="button"
                       className={`btn btn-sm ${
                         (editing.criteria.days_of_week ?? []).includes(i)
                           ? "btn-primary"
                           : ""
                       }`}
                       onClick={() => toggleDay(i)}
+                      aria-pressed={(editing.criteria.days_of_week ?? []).includes(i)}
                       style={{ minWidth: 36 }}
                     >
                       {label}
@@ -292,8 +308,9 @@ export default function RulesPanel({
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div className="form-field">
-                  <label>Min duration (min)</label>
+                  <label htmlFor="ingestion-rule-min-duration">Minimum duration (minutes)</label>
                   <input
+                    id="ingestion-rule-min-duration"
                     type="number"
                     value={editing.criteria.min_duration_secs != null ? Math.round(editing.criteria.min_duration_secs / 60) : ""}
                     onChange={(e) =>
@@ -306,8 +323,9 @@ export default function RulesPanel({
                   />
                 </div>
                 <div className="form-field">
-                  <label>Max duration (min)</label>
+                  <label htmlFor="ingestion-rule-max-duration">Maximum duration (minutes)</label>
                   <input
+                    id="ingestion-rule-max-duration"
                     type="number"
                     value={editing.criteria.max_duration_secs != null ? Math.round(editing.criteria.max_duration_secs / 60) : ""}
                     onChange={(e) =>
@@ -323,8 +341,9 @@ export default function RulesPanel({
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div className="form-field">
-                  <label>Date from</label>
+                  <label htmlFor="ingestion-rule-date-from">Date from</label>
                   <input
+                    id="ingestion-rule-date-from"
                     type="date"
                     value={editing.criteria.date_from ?? ""}
                     onChange={(e) =>
@@ -333,8 +352,9 @@ export default function RulesPanel({
                   />
                 </div>
                 <div className="form-field">
-                  <label>Date to</label>
+                  <label htmlFor="ingestion-rule-date-to">Date to</label>
                   <input
+                    id="ingestion-rule-date-to"
                     type="date"
                     value={editing.criteria.date_to ?? ""}
                     onChange={(e) =>
@@ -345,16 +365,27 @@ export default function RulesPanel({
               </div>
 
               <div className="form-actions">
-                <button className="btn btn-sm btn-green" onClick={saveEdit}>
+                <button type="button" className="btn btn-sm btn-green" onClick={saveEdit}>
                   Save
                 </button>
-                <button className="btn btn-sm" onClick={() => setEditing(null)}>
+                <button type="button" className="btn btn-sm" onClick={() => setEditing(null)}>
                   Cancel
                 </button>
               </div>
             </div>
           )}
-        </>
+          <ConfirmDialog
+            open={!!pendingDelete}
+            title="Delete ingestion rule?"
+            description={`This permanently removes ${pendingDelete?.name || "the selected rule"}. Existing video states will not change.`}
+            confirmLabel="Delete rule"
+            onCancel={() => setPendingDelete(null)}
+            onConfirm={() => {
+              if (pendingDelete) deleteRule(pendingDelete.id);
+              setPendingDelete(null);
+            }}
+          />
+        </div>
       )}
     </div>
   );
