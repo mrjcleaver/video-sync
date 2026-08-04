@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { type BackfillProfile, loadProfiles } from "../lib/backfill";
 import BackfillOverview from "./BackfillOverview";
@@ -15,7 +15,7 @@ interface Props {
 const TAB_KEY = "video-sync:sync-status-tab";
 
 /**
- * SyncStatusPanel — top-level "what's been synced" view, lifted out of
+ * SyncStatusPanel - top-level "what's been synced" view, lifted out of
  * BackfillPanel. Shows Overview (month-by-month summary) and Calendar
  * (per-day grid) for the whole catalog.
  *
@@ -24,6 +24,7 @@ const TAB_KEY = "video-sync:sync-status-tab";
  * from the earliest recording to today, all days targeted.
  */
 export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
+  const panelId = useId();
   const [activeTab, setActiveTab] = useState<"overview" | "calendar">(() => {
     try {
       const v = localStorage.getItem(TAB_KEY);
@@ -60,7 +61,7 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
     };
   }, [videos]);
 
-  // Sync Status is a "what's been synced through today" view — it borrows
+  // Sync Status is a "what's been synced through today" view. It borrows
   // the selected profile's source-platform / target-day shape but its
   // date_to is always "today". Otherwise a profile with a stale date_to
   // (e.g. set to two weeks ago when the operator was running a fixed
@@ -74,36 +75,42 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
   );
 
   return (
-    <div className="zoom-import">
-      <div className="zoom-import-header">
-        <h2>Sync Status</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "0.8rem" }}>
+    <section className="zoom-import sync-status-panel" aria-labelledby={`${panelId}-title`}>
+      <div className="zoom-import-header sync-status-header">
+        <h2 id={`${panelId}-title`}>Sync Status</h2>
+        <label className="compact-field sync-status-profile" htmlFor={`${panelId}-profile`}>
+          <span>Profile</span>
           <select
+            id={`${panelId}-profile`}
             value={profileId}
             onChange={e => setProfileId(e.target.value)}
             style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            title="Filter to a backfill profile, or show every video"
           >
             <option value="__all__">All videos</option>
             {profiles.map(p => (
               <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>
             ))}
           </select>
-        </div>
+        </label>
       </div>
 
       <HelpTip>
-        Status of every video being synced — by month (Overview) or by day (Calendar).
+        Status of every video being synced, by month in Overview or by day in Calendar.
         Each row shows where the video has been published: <strong>YouTube</strong> badge
         (privacy-aware), <strong>Kaltura</strong> badge, and a <strong>Drive</strong> link
         to the artifacts folder (transcript, summary, chat, …). Filter to a backfill
         profile if you want to see only target-day coverage.
       </HelpTip>
 
-      <div className="filter-tabs" style={{ marginBottom: 12 }}>
+      <div className="filter-tabs sync-status-tabs" style={{ marginBottom: 12 }} role="tablist" aria-label="Sync status view">
         {(["overview", "calendar"] as const).map(t => (
           <button
             key={t}
+            id={`${panelId}-${t}-tab`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === t}
+            aria-controls={`${panelId}-${t}-panel`}
             className={`filter-tab ${activeTab === t ? "active" : ""}`}
             onClick={() => selectTab(t)}
           >
@@ -112,13 +119,21 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
         ))}
       </div>
 
-      {activeTab === "overview" && (
-        <BackfillOverview videos={videos} profile={profileObj} onNavigateToVideo={onNavigateToVideo} />
-      )}
+      <div
+        id={`${panelId}-${activeTab}-panel`}
+        className="sync-status-content"
+        role="tabpanel"
+        aria-labelledby={`${panelId}-${activeTab}-tab`}
+        tabIndex={0}
+      >
+        {activeTab === "overview" && (
+          <BackfillOverview videos={videos} profile={profileObj} onNavigateToVideo={onNavigateToVideo} />
+        )}
 
-      {activeTab === "calendar" && (
-        <BackfillCalendar videos={videos} profile={profileObj} onNavigateToVideo={onNavigateToVideo} />
-      )}
-    </div>
+        {activeTab === "calendar" && (
+          <BackfillCalendar videos={videos} profile={profileObj} onNavigateToVideo={onNavigateToVideo} />
+        )}
+      </div>
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import {
   loadProcessingRules,
   saveProcessingRules,
@@ -39,6 +39,7 @@ interface Props {
 }
 
 export default function ProcessingRulesPanel({ expanded: initExpanded = false }: Props) {
+  const panelId = useId();
   const [expanded, setExpanded] = useState(initExpanded);
   const [rules, setRules] = useState<ProcessingRule[]>(() => loadProcessingRules());
   const [editing, setEditing] = useState<ProcessingRule | null>(null);
@@ -46,6 +47,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   const [previewResult, setPreviewResult] = useState<ReturnType<typeof applyProcessingRules> | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const persist = useCallback((updated: ProcessingRule[]) => {
     setRules(updated);
@@ -53,23 +57,36 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   }, []);
 
   function toggleEnabled(id: string) {
+    const rule = rules.find((r) => r.id === id);
     persist(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+    if (rule) setStatusMessage(`${rule.name} ${rule.enabled ? "disabled" : "enabled"}.`);
   }
 
   function deleteRule(id: string) {
+    const rule = rules.find((r) => r.id === id);
     persist(rules.filter((r) => r.id !== id));
+    setDeletePendingId(null);
+    if (rule) setStatusMessage(`${rule.name} deleted.`);
   }
 
   function startEdit(rule?: ProcessingRule) {
     setEditing(rule ? JSON.parse(JSON.stringify(rule)) : emptyRule());
     setPreviewResult(null);
+    setDeletePendingId(null);
+    setEditError(null);
   }
 
   function saveEdit() {
-    if (!editing || !editing.name.trim()) return;
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      setEditError("Enter a rule name.");
+      return;
+    }
     const idx = rules.findIndex((r) => r.id === editing.id);
     persist(idx >= 0 ? rules.map((r) => (r.id === editing.id ? editing : r)) : [...rules, editing]);
+    setStatusMessage(`${editing.name} saved.`);
     setEditing(null);
+    setEditError(null);
   }
 
   function updateCriteria(patch: Partial<RuleCriteria>) {
@@ -153,7 +170,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
     const video = previewVideoId
       ? videos.find((v) => v.id === previewVideoId)
       : videos[0];
-    if (!video || !template.trim()) return "—";
+    if (!video || !template.trim()) return "Not available";
     try {
       return renderTemplate(template, video);
     } catch {
@@ -165,15 +182,23 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
 
   return (
     <div className="rules-panel">
-      <h2 style={{ cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
-        <span>Processing Rules {rules.length > 0 && `(${rules.length})`}</span>
-        <span style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+      <h2>
+        <button
+          type="button"
+          className="rules-panel-toggle"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls={`${panelId}-content`}
+        >
+          <span>Processing rules {rules.length > 0 && `(${rules.length})`}</span>
+          <span aria-hidden="true" style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id={`${panelId}-content`}>
           <HelpTip>
-            Processing rules transform video metadata at publish time — before a video is
+            Processing rules transform video metadata at publish time, before a video is
             uploaded to YouTube. Each rule matches recordings by title pattern or day of week,
             then applies transforms to <strong>title</strong> (template or literal),{" "}
             <strong>description</strong> (template, literal, first N chars of transcript, or
@@ -182,33 +207,41 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
             specific video before saving. Rules run in priority order (lower = first).
           </HelpTip>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <button className="btn btn-sm btn-primary" onClick={() => startEdit()}>
-              Add Rule
+          <div className="rule-toolbar">
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+              Add rule
             </button>
-            <select
-              value={previewVideoId}
-              onChange={(e) => setPreviewVideoId(e.target.value)}
-              style={{ fontSize: "0.75rem", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", flex: "1 1 160px", maxWidth: 260 }}
-            >
-              <option value="">Preview on: {videos.length > 0 ? "(first video)" : "no videos"}</option>
-              {videos.map((v) => (
-                <option key={v.id} value={v.id}>{v.title.slice(0, 50)}</option>
-              ))}
-            </select>
+            <label className="compact-field rule-preview-field" htmlFor={`${panelId}-preview-video`}>
+              <span>Preview video</span>
+              <select
+                id={`${panelId}-preview-video`}
+                value={previewVideoId}
+                onChange={(e) => setPreviewVideoId(e.target.value)}
+                style={{ fontSize: "0.75rem", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
+              >
+                <option value="">{videos.length > 0 ? "First video" : "No videos"}</option>
+                {videos.map((v) => (
+                  <option key={v.id} value={v.id}>{v.title.slice(0, 50)}</option>
+                ))}
+              </select>
+            </label>
             {rules.length > 0 && (
-              <button className="btn btn-sm" onClick={runPreview} disabled={previewLoading}>
+              <button type="button" className="btn btn-sm" onClick={runPreview} disabled={previewLoading} aria-busy={previewLoading}>
                 {previewLoading ? "Generating…" : "Preview"}
               </button>
             )}
           </div>
 
+          {statusMessage && (
+            <div className="form-message" role="status" aria-live="polite">{statusMessage}</div>
+          )}
+
           {previewError && (
-            <div style={{ fontSize: "0.8rem", color: "var(--red)", marginBottom: 8 }}>{previewError}</div>
+            <div className="form-message form-message-error" role="alert" style={{ fontSize: "0.8rem", color: "var(--red)", marginBottom: 8 }}>{previewError}</div>
           )}
 
           {previewResult && (
-            <div className="rule-form" style={{ marginBottom: 12 }}>
+            <div className="rule-form" role="status" aria-live="polite" style={{ marginBottom: 12 }}>
               <div style={{ fontSize: "0.7rem", color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>
                 Preview output
               </div>
@@ -222,13 +255,13 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                 ) : (() => {
                   const hasDescTransform = rules.some(r => r.enabled && r.transforms.description);
                   if (!hasDescTransform) {
-                    return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No description transform configured — add one in the rule editor</span>;
+                    return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No description transform configured. Add one in the rule editor.</span>;
                   }
-                  return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>(empty — video has no description and no transcript loaded)</span>;
+                  return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>(empty: video has no description and no transcript loaded)</span>;
                 })()}
               </div>
               <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
-                <strong>Tags:</strong> {previewResult.tags.join(", ") || "—"}
+                <strong>Tags:</strong> {previewResult.tags.join(", ") || "None"}
               </div>
               <div style={{ fontSize: "0.8rem", marginBottom: 4 }}>
                 <strong>Privacy:</strong> {previewResult.privacy_status}
@@ -249,11 +282,12 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
 
           {rules.map((rule) => (
             <div key={rule.id} className="rule-item">
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="rule-item-row">
                 <input
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
@@ -270,8 +304,16 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                 {rule.transforms.trim && (
                   <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>trim</span>
                 )}
-                <button className="btn btn-sm" onClick={() => startEdit(rule)}>Edit</button>
-                <button className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Del</button>
+                <button type="button" className="btn btn-sm" onClick={() => startEdit(rule)}>Edit</button>
+                {deletePendingId === rule.id ? (
+                  <span className="inline-confirm" role="group" aria-label={`Confirm deletion of ${rule.name}`}>
+                    <span>Delete this rule?</span>
+                    <button type="button" className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Yes, delete</button>
+                    <button type="button" className="btn btn-sm" onClick={() => setDeletePendingId(null)} autoFocus>Cancel</button>
+                  </span>
+                ) : (
+                  <button type="button" className="btn btn-sm btn-red" onClick={() => setDeletePendingId(rule.id)}>Delete</button>
+                )}
               </div>
               {rule.transforms.title?.value && (
                 <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 4 }}>
@@ -282,24 +324,28 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
           ))}
 
           {editing && (
-            <div className="rule-form">
-              <div style={{ fontSize: "0.75rem", color: "var(--accent)", marginBottom: 8, fontWeight: 600 }}>
-                {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} Processing Rule
-              </div>
+            <form className="rule-form rule-editor" onSubmit={(event) => { event.preventDefault(); saveEdit(); }} noValidate>
+              <h3 className="rule-editor-title">
+                {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} processing rule
+              </h3>
 
               {/* Name + Priority */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+              <div className="rule-editor-grid rule-editor-grid-name">
                 <div className="form-field">
-                  <label>Name</label>
+                  <label htmlFor={`${panelId}-name`}>Name</label>
                   <input
+                    id={`${panelId}-name`}
                     value={editing.name}
-                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                    onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setEditError(null); }}
                     placeholder="e.g. Live Vibe Coding title"
+                    aria-invalid={!!editError}
+                    aria-describedby={editError ? `${panelId}-error` : undefined}
                   />
                 </div>
                 <div className="form-field">
-                  <label>Priority</label>
+                  <label htmlFor={`${panelId}-priority`}>Priority</label>
                   <input
+                    id={`${panelId}-priority`}
                     type="number"
                     value={editing.priority}
                     onChange={(e) => setEditing({ ...editing, priority: parseInt(e.target.value) || 0 })}
@@ -309,48 +355,50 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
 
               {/* Criteria */}
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Match criteria (leave empty to match all videos)
-              </div>
+              <h4 className="rule-section-title">Match criteria</h4>
+              <p className="field-help">Leave every option empty to match all videos.</p>
               <div className="form-field">
-                <label>Title pattern (regex)</label>
+                <label htmlFor={`${panelId}-title-pattern`}>Title pattern (regex)</label>
                 <input
+                  id={`${panelId}-title-pattern`}
                   value={editing.criteria.title_pattern ?? ""}
                   onChange={(e) => updateCriteria({ title_pattern: e.target.value || undefined })}
                   placeholder="e.g. Live Vibe Coding"
                 />
               </div>
               <div className="form-field">
-                <label>Source platforms</label>
-                <div style={{ display: "flex", gap: 6 }}>
+                <span id={`${panelId}-platforms-label`} className="field-group-label">Source platforms</span>
+                <div className="rule-toggle-group" role="group" aria-labelledby={`${panelId}-platforms-label`}>
                   {["Zoom", "Fireflies", "Loom", "YouTube"].map((p) => (
                     <button
+                      type="button"
                       key={p}
                       className={`btn btn-sm ${(editing.criteria.source_platforms ?? []).includes(p) ? "btn-primary" : ""}`}
+                      aria-pressed={(editing.criteria.source_platforms ?? []).includes(p)}
                       onClick={() => {
                         const cur = editing.criteria.source_platforms ?? [];
                         const next = cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p];
                         updateCriteria({ source_platforms: next.length > 0 ? next : undefined });
                       }}
-                      style={{ minWidth: 72 }}
                     >
                       {p}
                     </button>
                   ))}
                 </div>
-                <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: 2 }}>
+                <div className="field-help">
                   Leave unselected to match any platform. For trim rules, select Zoom and/or Fireflies only.
                 </div>
               </div>
               <div className="form-field">
-                <label>Days of week</label>
-                <div style={{ display: "flex", gap: 4 }}>
+                <span id={`${panelId}-days-label`} className="field-group-label">Days of week</span>
+                <div className="rule-toggle-group" role="group" aria-labelledby={`${panelId}-days-label`}>
                   {DAYS.map((label, i) => (
                     <button
+                      type="button"
                       key={i}
                       className={`btn btn-sm ${(editing.criteria.days_of_week ?? []).includes(i) ? "btn-primary" : ""}`}
+                      aria-pressed={(editing.criteria.days_of_week ?? []).includes(i)}
                       onClick={() => toggleDay(i)}
-                      style={{ minWidth: 36 }}
                     >
                       {label}
                     </button>
@@ -359,9 +407,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
 
               {/* Title transform */}
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Title transform
-              </div>
+              <h4 className="rule-section-title">Title transform</h4>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.75rem" }}>
                   <input
@@ -374,10 +420,11 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
               {editing.transforms.title && (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
+                  <div className="rule-editor-grid rule-editor-grid-value">
                     <div className="form-field">
-                      <label>Mode</label>
+                      <label htmlFor={`${panelId}-title-mode`}>Mode</label>
                       <select
+                        id={`${panelId}-title-mode`}
                         value={editing.transforms.title.mode}
                         onChange={(e) => setTitleTransform({ mode: e.target.value as AttributeTransformMode })}
                         style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)" }}
@@ -387,10 +434,11 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                       </select>
                     </div>
                     <div className="form-field">
-                      <label>
+                      <label htmlFor={`${panelId}-title-value`}>
                         {editing.transforms.title.mode === "template" ? "Template" : "Value"}
                       </label>
                       <input
+                        id={`${panelId}-title-value`}
                         value={editing.transforms.title.value ?? ""}
                         onChange={(e) => setTitleTransform({ value: e.target.value })}
                         placeholder="{{title}} - {{date:D MMM YYYY}}"
@@ -402,16 +450,14 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                       Preview: {previewTemplate(editing.transforms.title.value)}
                     </div>
                   )}
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: 8 }}>
+                  <div className="field-help">
                     Variables: {"{{title}}"} {"{{date:D MMM YYYY}}"} {"{{day}}"} {"{{duration}}"} {"{{source_platform}}"} {"{{description}}"} {"{{tags}}"}
                   </div>
                 </>
               )}
 
               {/* Description transform */}
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Description transform
-              </div>
+              <h4 className="rule-section-title">Description transform</h4>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.75rem" }}>
                   <input
@@ -424,10 +470,11 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
               {editing.transforms.description && (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
+                  <div className="rule-editor-grid rule-editor-grid-value">
                     <div className="form-field">
-                      <label>Mode</label>
+                      <label htmlFor={`${panelId}-description-mode`}>Mode</label>
                       <select
+                        id={`${panelId}-description-mode`}
                         value={editing.transforms.description.mode}
                         onChange={(e) => setDescTransform({ mode: e.target.value as AttributeTransformMode })}
                         style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)" }}
@@ -441,8 +488,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                     {(editing.transforms.description.mode === "template" ||
                       editing.transforms.description.mode === "literal") && (
                       <div className="form-field">
-                        <label>Value</label>
+                        <label htmlFor={`${panelId}-description-value`}>Value</label>
                         <input
+                          id={`${panelId}-description-value`}
                           value={editing.transforms.description.value ?? ""}
                           onChange={(e) => setDescTransform({ value: e.target.value })}
                           placeholder="Recorded {{date:D MMM YYYY}}.\n\n{{description}}"
@@ -451,8 +499,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                     )}
                     {editing.transforms.description.mode === "transcript_extract" && (
                       <div className="form-field">
-                        <label>Max chars</label>
+                        <label htmlFor={`${panelId}-description-max-chars`}>Max chars</label>
                         <input
+                          id={`${panelId}-description-max-chars`}
                           type="number"
                           value={editing.transforms.description.max_chars ?? 800}
                           onChange={(e) => setDescTransform({ max_chars: parseInt(e.target.value) || 800 })}
@@ -467,8 +516,8 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                         : videos[0];
                       if (previewVideo && !previewVideo.transcript_text) {
                         return (
-                          <div style={{ fontSize: "0.7rem", color: "var(--yellow, #f59e0b)", padding: "4px 0" }}>
-                            ⚠ No transcript on selected video. Use "Load Transcript" on the video card first.
+                          <div className="form-message" role="status" style={{ fontSize: "0.7rem", color: "var(--yellow, #f59e0b)", padding: "4px 0" }}>
+                            No transcript is loaded for the selected video. Load its transcript from the video card first.
                           </div>
                         );
                       }
@@ -476,8 +525,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                     })()}
                     {editing.transforms.description.mode === "transcript_llm" && (
                       <div className="form-field">
-                        <label>Fallback template (no transcript)</label>
+                        <label htmlFor={`${panelId}-description-fallback`}>Fallback template (no transcript)</label>
                         <input
+                          id={`${panelId}-description-fallback`}
                           value={editing.transforms.description.value ?? ""}
                           onChange={(e) => setDescTransform({ value: e.target.value })}
                           placeholder="{{description}}"
@@ -489,9 +539,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               )}
 
               {/* Tags transform */}
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Tags transform
-              </div>
+              <h4 className="rule-section-title">Tags transform</h4>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.75rem" }}>
                   <input
@@ -503,10 +551,11 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                 </label>
               </div>
               {editing.transforms.tags && (
-                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
+                <div className="rule-editor-grid rule-editor-grid-value">
                   <div className="form-field">
-                    <label>Mode</label>
+                    <label htmlFor={`${panelId}-tags-mode`}>Mode</label>
                     <select
+                      id={`${panelId}-tags-mode`}
                       value={editing.transforms.tags.mode}
                       onChange={(e) => setTagTransform({ mode: e.target.value as "append" | "replace" })}
                       style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)" }}
@@ -516,8 +565,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                     </select>
                   </div>
                   <div className="form-field">
-                    <label>Tags (comma-separated)</label>
+                    <label htmlFor={`${panelId}-tags-value`}>Tags (comma-separated)</label>
                     <input
+                      id={`${panelId}-tags-value`}
                       value={editing.transforms.tags.tags.join(", ")}
                       onChange={(e) =>
                         setTagTransform({
@@ -531,9 +581,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               )}
 
               {/* Trim transform */}
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Pre-processing: start trim (ADR-021)
-              </div>
+              <h4 className="rule-section-title">Pre-processing: start trim (ADR-021)</h4>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.75rem" }}>
                   <input
@@ -554,8 +602,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
               {editing.transforms.trim && (
                 <div className="form-field">
-                  <label>Snap to</label>
+                  <label htmlFor={`${panelId}-trim-snap`}>Snap to</label>
                   <select
+                    id={`${panelId}-trim-snap`}
                     value={editing.transforms.trim.snap}
                     onChange={(e) =>
                       setEditing({
@@ -577,8 +626,9 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
 
               {/* Privacy */}
               <div className="form-field" style={{ marginTop: 8 }}>
-                <label>Privacy status</label>
+                <label htmlFor={`${panelId}-privacy`}>Privacy status</label>
                 <select
+                  id={`${panelId}-privacy`}
                   value={editing.transforms.privacy_status ?? ""}
                   onChange={(e) =>
                     setEditing({
@@ -600,13 +650,17 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                 </select>
               </div>
 
+              {editError && (
+                <div id={`${panelId}-error`} className="form-message form-message-error" role="alert">{editError}</div>
+              )}
+
               <div className="form-actions">
-                <button className="btn btn-sm btn-green" onClick={saveEdit}>Save</button>
-                <button className="btn btn-sm" onClick={() => setEditing(null)}>Cancel</button>
+                <button type="submit" className="btn btn-sm btn-green">Save rule</button>
+                <button type="button" className="btn btn-sm" onClick={() => { setEditing(null); setEditError(null); }}>Cancel</button>
               </div>
-            </div>
+            </form>
           )}
-        </>
+        </div>
       )}
     </div>
   );

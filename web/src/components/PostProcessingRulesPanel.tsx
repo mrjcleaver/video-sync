@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import {
   loadPostProcessingRules,
   savePostProcessingRules,
@@ -21,9 +21,13 @@ function emptyRule(): PostProcessingRule {
 }
 
 export default function PostProcessingRulesPanel() {
+  const panelId = useId();
   const [expanded, setExpanded] = useState(false);
   const [rules, setRules] = useState<PostProcessingRule[]>(() => loadPostProcessingRules());
   const [editing, setEditing] = useState<PostProcessingRule | null>(null);
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const persist = useCallback((updated: PostProcessingRule[]) => {
     setRules(updated);
@@ -31,24 +35,43 @@ export default function PostProcessingRulesPanel() {
   }, []);
 
   function toggleEnabled(id: string) {
+    const rule = rules.find((r) => r.id === id);
     persist(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+    if (rule) setStatusMessage(`${rule.name} ${rule.enabled ? "disabled" : "enabled"}.`);
   }
 
   function deleteRule(id: string) {
+    const rule = rules.find((r) => r.id === id);
     persist(rules.filter((r) => r.id !== id));
+    setDeletePendingId(null);
+    if (rule) setStatusMessage(`${rule.name} deleted.`);
   }
 
   function startEdit(rule?: PostProcessingRule) {
     setEditing(rule ? JSON.parse(JSON.stringify(rule)) : emptyRule());
+    setEditError(null);
+    setDeletePendingId(null);
   }
 
   function saveEdit() {
-    if (!editing || !editing.name.trim()) return;
-    if (editing.action.type === "webhook" && !editing.action.url.trim()) return;
-    if (editing.action.type === "email" && !editing.action.to.trim()) return;
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      setEditError("Enter a rule name.");
+      return;
+    }
+    if (editing.action.type === "webhook" && !editing.action.url.trim()) {
+      setEditError("Enter a webhook URL.");
+      return;
+    }
+    if (editing.action.type === "email" && !editing.action.to.trim()) {
+      setEditError("Enter an email address.");
+      return;
+    }
     const idx = rules.findIndex((r) => r.id === editing.id);
     persist(idx >= 0 ? rules.map((r) => (r.id === editing.id ? editing : r)) : [...rules, editing]);
+    setStatusMessage(`${editing.name} saved.`);
     setEditing(null);
+    setEditError(null);
   }
 
   function setActionType(type: PostProcessingAction["type"]) {
@@ -58,6 +81,7 @@ export default function PostProcessingRulesPanel() {
         ? { type: "webhook", url: "" }
         : { type: "email", to: "", subject_template: "" };
     setEditing({ ...editing, action });
+    setEditError(null);
   }
 
   function patchAction(patch: Partial<PostProcessingAction>) {
@@ -73,13 +97,21 @@ export default function PostProcessingRulesPanel() {
 
   return (
     <div className="rules-panel">
-      <h2 style={{ cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
-        <span>Post-processing Rules {rules.length > 0 && `(${rules.length})`}</span>
-        <span style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+      <h2>
+        <button
+          type="button"
+          className="rules-panel-toggle"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls={`${panelId}-content`}
+        >
+          <span>Post-processing rules {rules.length > 0 && `(${rules.length})`}</span>
+          <span aria-hidden="true" style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id={`${panelId}-content`}>
           <HelpTip>
             Post-processing rules fire non-blocking after a YouTube upload completes (success or
             failure). Each rule sends a <strong>webhook</strong> POST or a <strong>Gmail email</strong>.
@@ -88,10 +120,14 @@ export default function PostProcessingRulesPanel() {
           </HelpTip>
 
           <div style={{ marginBottom: 12 }}>
-            <button className="btn btn-sm btn-primary" onClick={() => startEdit()}>
-              Add Rule
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+              Add rule
             </button>
           </div>
+
+          {statusMessage && (
+            <div className="form-message" role="status" aria-live="polite">{statusMessage}</div>
+          )}
 
           {rules.length === 0 && (
             <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", padding: "12px 0" }}>
@@ -101,11 +137,12 @@ export default function PostProcessingRulesPanel() {
 
           {rules.map((rule) => (
             <div key={rule.id} className="rule-item">
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="rule-item-row">
                 <input
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
@@ -115,8 +152,16 @@ export default function PostProcessingRulesPanel() {
                 <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>
                   {rule.action.type}
                 </span>
-                <button className="btn btn-sm" onClick={() => startEdit(rule)}>Edit</button>
-                <button className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Del</button>
+                <button type="button" className="btn btn-sm" onClick={() => startEdit(rule)}>Edit</button>
+                {deletePendingId === rule.id ? (
+                  <span className="inline-confirm" role="group" aria-label={`Confirm deletion of ${rule.name}`}>
+                    <span>Delete this rule?</span>
+                    <button type="button" className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Yes, delete</button>
+                    <button type="button" className="btn btn-sm" onClick={() => setDeletePendingId(null)} autoFocus>Cancel</button>
+                  </span>
+                ) : (
+                  <button type="button" className="btn btn-sm btn-red" onClick={() => setDeletePendingId(rule.id)}>Delete</button>
+                )}
               </div>
               <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 4 }}>
                 {rule.action.type === "webhook"
@@ -127,23 +172,27 @@ export default function PostProcessingRulesPanel() {
           ))}
 
           {editing && (
-            <div className="rule-form">
-              <div style={{ fontSize: "0.75rem", color: "var(--accent)", marginBottom: 8, fontWeight: 600 }}>
-                {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} Post-processing Rule
-              </div>
+            <form className="rule-form rule-editor" onSubmit={(event) => { event.preventDefault(); saveEdit(); }} noValidate>
+              <h3 className="rule-editor-title">
+                {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} post-processing rule
+              </h3>
 
               <div className="form-field">
-                <label>Name</label>
+                <label htmlFor={`${panelId}-name`}>Name</label>
                 <input
+                  id={`${panelId}-name`}
                   value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setEditError(null); }}
                   placeholder="e.g. Notify Slack on publish"
+                  aria-invalid={editError === "Enter a rule name."}
+                  aria-describedby={editError ? `${panelId}-error` : undefined}
                 />
               </div>
 
               <div className="form-field">
-                <label>Trigger</label>
+                <label htmlFor={`${panelId}-trigger`}>Trigger</label>
                 <select
+                  id={`${panelId}-trigger`}
                   value={editing.trigger}
                   onChange={(e) => setEditing({ ...editing, trigger: e.target.value as PostProcessingTrigger })}
                   style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)", width: "100%" }}
@@ -154,13 +203,12 @@ export default function PostProcessingRulesPanel() {
                 </select>
               </div>
 
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "8px 0 4px", fontWeight: 600 }}>
-                Action
-              </div>
+              <h4 className="rule-section-title">Action</h4>
 
               <div className="form-field">
-                <label>Type</label>
+                <label htmlFor={`${panelId}-action-type`}>Type</label>
                 <select
+                  id={`${panelId}-action-type`}
                   value={editing.action.type}
                   onChange={(e) => setActionType(e.target.value as PostProcessingAction["type"])}
                   style={{ padding: "5px 8px", fontSize: "0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", color: "var(--text)", width: "100%" }}
@@ -172,11 +220,14 @@ export default function PostProcessingRulesPanel() {
 
               {editing.action.type === "webhook" && (
                 <div className="form-field">
-                  <label>Webhook URL</label>
+                  <label htmlFor={`${panelId}-webhook-url`}>Webhook URL</label>
                   <input
+                    id={`${panelId}-webhook-url`}
                     value={editing.action.url}
-                    onChange={(e) => patchAction({ url: e.target.value })}
+                    onChange={(e) => { patchAction({ url: e.target.value }); setEditError(null); }}
                     placeholder="https://hooks.example.com/..."
+                    aria-invalid={editError === "Enter a webhook URL."}
+                    aria-describedby={editError ? `${panelId}-error` : undefined}
                   />
                 </div>
               )}
@@ -184,21 +235,25 @@ export default function PostProcessingRulesPanel() {
               {editing.action.type === "email" && (
                 <>
                   <div className="form-field">
-                    <label>To address</label>
+                    <label htmlFor={`${panelId}-email-to`}>To address</label>
                     <input
+                      id={`${panelId}-email-to`}
                       value={editing.action.to}
-                      onChange={(e) => patchAction({ to: e.target.value })}
+                      onChange={(e) => { patchAction({ to: e.target.value }); setEditError(null); }}
                       placeholder="you@example.com"
+                      aria-invalid={editError === "Enter an email address."}
+                      aria-describedby={editError ? `${panelId}-error` : undefined}
                     />
                   </div>
                   <div className="form-field">
-                    <label>Subject template (optional)</label>
+                    <label htmlFor={`${panelId}-email-subject`}>Subject template (optional)</label>
                     <input
+                      id={`${panelId}-email-subject`}
                       value={editing.action.subject_template ?? ""}
                       onChange={(e) => patchAction({ subject_template: e.target.value || undefined })}
                       placeholder="Video {{status}}: {{title}}"
                     />
-                    <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: 2 }}>
+                    <div className="field-help">
                       Variables: {"{{title}}"} {"{{status}}"}. Leave empty for default subject.
                     </div>
                   </div>
@@ -208,13 +263,17 @@ export default function PostProcessingRulesPanel() {
                 </>
               )}
 
+              {editError && (
+                <div id={`${panelId}-error`} className="form-message form-message-error" role="alert">{editError}</div>
+              )}
+
               <div className="form-actions">
-                <button className="btn btn-sm btn-green" onClick={saveEdit}>Save</button>
-                <button className="btn btn-sm" onClick={() => setEditing(null)}>Cancel</button>
+                <button type="submit" className="btn btn-sm btn-green">Save rule</button>
+                <button type="button" className="btn btn-sm" onClick={() => { setEditing(null); setEditError(null); }}>Cancel</button>
               </div>
-            </div>
+            </form>
           )}
-        </>
+        </div>
       )}
     </div>
   );

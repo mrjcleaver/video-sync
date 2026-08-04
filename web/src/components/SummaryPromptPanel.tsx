@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * ADR-046 slice 4 — admin panel for editing the org-shared summary
+ * ADR-046 slice 4 - admin panel for editing the org-shared summary
  * prompt and kicking off bulk regeneration of unlocked summaries.
  *
  * Admin-only. The PUT endpoint enforces the role; this UI also hides
  * the editor when the current actor isn't Admin (for clarity, not
- * security — the API is the boundary).
+ * security. The API is the boundary).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import { videoStore } from "../lib/store";
@@ -47,6 +47,10 @@ interface SseRecordDone {
 type RunState = "idle" | "running" | "paused" | "complete" | "cancelled" | "failed";
 
 export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: Props) {
+  const panelId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const actorState = useCurrentActor();
   const isAdmin = actorState.actor?.role === "Admin";
 
@@ -78,6 +82,24 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
       })
       .catch(err => { if (!cancelled) setLoadError(String(err)); });
     return () => { cancelled = true; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    closeButtonRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onCloseRef.current();
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
   }, [open]);
 
   // Eligible records for bulk regen: have a transcript ≥200 chars AND
@@ -140,7 +162,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
     const ac = new AbortController();
     setAbort(ac);
 
-    onEvent?.(`Summary regen started — ${eligible.length} record${eligible.length === 1 ? "" : "s"}, est. ${formatUsd(estimatedBatchCost)}, cap ${formatUsd(costCapUsd)}, prompt v${prompt.version}`);
+    onEvent?.(`Summary regen started: ${eligible.length} record${eligible.length === 1 ? "" : "s"}, est. ${formatUsd(estimatedBatchCost)}, cap ${formatUsd(costCapUsd)}, prompt v${prompt.version}`);
 
     try {
       const res = await fetch("/api/summary/regen", {
@@ -204,17 +226,17 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
           } else if (event === "record_failed") {
             const d = data as { record_id: string; title: string; error: string };
             setRunProgress(p => ({ ...p, failed: p.failed + 1, lastError: d.error, currentTitle: d.title }));
-            onEvent?.(`Regen failed: "${d.title}" — ${d.error}`, { video_id: d.record_id });
+            onEvent?.(`Regen failed: "${d.title}". ${d.error}`, { video_id: d.record_id });
           } else if (event === "paused") {
             const d = data as { reason: string; cost_so_far_usd: number };
             setRunState(d.reason === "cancelled" ? "cancelled" : "paused");
             setRunProgress(p => ({ ...p, costSoFar: d.cost_so_far_usd }));
-            onEvent?.(`Regen ${d.reason === "cancelled" ? "cancelled" : "paused at cost cap"} after ${runProgress.processed}/${runProgress.total} — ${formatUsd(d.cost_so_far_usd)}`);
+            onEvent?.(`Regen ${d.reason === "cancelled" ? "cancelled" : "paused at cost cap"} after ${runProgress.processed}/${runProgress.total}. ${formatUsd(d.cost_so_far_usd)}`);
           } else if (event === "complete") {
             const d = data as { processed: number; failed: number; cost_so_far_usd: number };
             setRunState("complete");
             setRunProgress(p => ({ ...p, processed: d.processed, failed: d.failed, costSoFar: d.cost_so_far_usd, currentTitle: null }));
-            onEvent?.(`Regen complete — ${d.processed} done, ${d.failed} failed, ${formatUsd(d.cost_so_far_usd)}`);
+            onEvent?.(`Regen complete: ${d.processed} done, ${d.failed} failed, ${formatUsd(d.cost_so_far_usd)}`);
           }
         }
       }
@@ -240,11 +262,15 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
   const modelKnown = isKnownModel(model.trim());
 
   return (
-    // Non-blocking side drawer (mirrors CatchUpPanel) — fixed to the
+    // Non-blocking side drawer (mirrors CatchUpPanel), fixed to the
     // right, doesn't intercept clicks on the rest of the dashboard so
     // long bulk-regen runs can stay open while the operator inspects
     // cards in parallel.
     <div
+      className="summary-prompt-panel"
+      role="dialog"
+      aria-labelledby={`${panelId}-title`}
+      aria-busy={saving || runState === "running"}
       style={{
         position: "fixed",
         top: 16,
@@ -261,30 +287,42 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
       }}
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Summary Prompt (ADR-046)</h2>
-          <button className="btn btn-sm" onClick={onClose}>Close</button>
+          <h2 id={`${panelId}-title`} style={{ margin: 0, fontSize: "1.1rem" }}>Summary prompt (ADR-046)</h2>
+          <button ref={closeButtonRef} type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
 
         {!isAdmin && (
-          <div style={{ padding: 12, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
+          <div className="form-message" style={{ padding: 12, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
             Admin role required to edit the prompt or run bulk regeneration. You can still see the current prompt below.
           </div>
         )}
 
         {loadError && (
-          <div style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: 12 }}>
+          <div className="form-message form-message-error" role="alert" style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: 12 }}>
             Failed to load prompt: {loadError}
           </div>
         )}
 
         {prompt && (
           <>
-            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8 }}>
-              Current: <strong>v{prompt.version}</strong> · {prompt.model} · updated {new Date(prompt.updated_at).toLocaleString()} by {prompt.updated_by}
-            </div>
+            <dl className="summary-prompt-meta">
+              <div>
+                <dt>Version</dt>
+                <dd>v{prompt.version}</dd>
+              </div>
+              <div>
+                <dt>Model</dt>
+                <dd>{prompt.model}</dd>
+              </div>
+              <div>
+                <dt>Updated</dt>
+                <dd>{new Date(prompt.updated_at).toLocaleString()} by {prompt.updated_by}</dd>
+              </div>
+            </dl>
 
-            <label style={{ display: "block", fontSize: "0.78rem", marginTop: 8, marginBottom: 4 }}>Prompt text</label>
+            <label htmlFor={`${panelId}-prompt`} style={{ display: "block", fontSize: "0.78rem", marginTop: 8, marginBottom: 4 }}>Prompt text</label>
             <textarea
+              id={`${panelId}-prompt`}
               value={text}
               onChange={e => setText(e.target.value)}
               disabled={!isAdmin || saving}
@@ -292,24 +330,27 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
               style={{ width: "100%", fontFamily: "monospace", fontSize: "0.78rem", padding: 8, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)" }}
             />
 
-            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 280px" }}>
-                <label style={{ display: "block", fontSize: "0.78rem", marginBottom: 4 }}>Model (OpenRouter slug)</label>
+            <div className="summary-prompt-save-row">
+              <div className="summary-prompt-model-field">
+                <label htmlFor={`${panelId}-model`} style={{ display: "block", fontSize: "0.78rem", marginBottom: 4 }}>Model (OpenRouter slug)</label>
                 <input
+                  id={`${panelId}-model`}
                   value={model}
                   onChange={e => setModel(e.target.value)}
                   disabled={!isAdmin || saving}
                   style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", fontFamily: "monospace", fontSize: "0.82rem" }}
                   placeholder="google/gemini-2.5-pro"
+                  aria-describedby={!modelKnown && model.trim() ? `${panelId}-model-help` : undefined}
                 />
                 {!modelKnown && model.trim() && (
-                  <div style={{ fontSize: "0.7rem", color: "var(--yellow, #f5a623)", marginTop: 2 }}>
-                    Unknown model slug — cost estimate falls back to a generic rate.
+                  <div id={`${panelId}-model-help`} className="field-help" style={{ fontSize: "0.7rem", color: "var(--yellow, #f5a623)", marginTop: 2 }}>
+                    Unknown model slug. The cost estimate uses a generic rate.
                   </div>
                 )}
               </div>
               <div>
                 <button
+                  type="button"
                   className="btn btn-sm btn-primary"
                   onClick={savePrompt}
                   disabled={!isAdmin || saving || (text === prompt.text && model === prompt.model)}
@@ -320,7 +361,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
               </div>
             </div>
             {saveError && (
-              <div style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: 8 }}>Save error: {saveError}</div>
+              <div className="form-message form-message-error" role="alert" style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: 8 }}>Save error: {saveError}</div>
             )}
 
             {/* Bulk regen CTA */}
@@ -330,13 +371,14 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
                 {eligible.length} unlocked record{eligible.length === 1 ? "" : "s"} with transcript ready
                 {eligible.length > 0 && <> · est. <strong>{formatUsd(estimatedBatchCost)}</strong> total at the editor's model</>}
                 .
-                Locked records (🔒) are skipped.
+                Locked records are skipped.
               </div>
 
               <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem" }}>
+                <label htmlFor={`${panelId}-cost-cap`} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem" }}>
                   Cost cap
                   <input
+                    id={`${panelId}-cost-cap`}
                     type="number"
                     min={0.5}
                     step={0.5}
@@ -348,21 +390,22 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
                   USD
                 </label>
                 {runState === "running" ? (
-                  <button className="btn btn-sm btn-red" onClick={cancelRegen}>Cancel</button>
+                  <button type="button" className="btn btn-sm btn-red" onClick={cancelRegen}>Cancel</button>
                 ) : (
                   <button
+                    type="button"
                     className="btn btn-sm btn-primary"
                     onClick={startRegen}
                     disabled={!isAdmin || eligible.length === 0}
-                    title={eligible.length === 0 ? "Nothing eligible — every unlocked record with a transcript already gets included" : "Run regeneration"}
+                    title={eligible.length === 0 ? "No eligible records. Every unlocked record with a transcript is included." : "Run regeneration"}
                   >
-                    {runState === "complete" || runState === "cancelled" || runState === "paused" || runState === "failed" ? "Run again" : `Regenerate ${eligible.length} — ${formatUsd(estimatedBatchCost)}`}
+                    {runState === "complete" || runState === "cancelled" || runState === "paused" || runState === "failed" ? "Run again" : `Regenerate ${eligible.length} (${formatUsd(estimatedBatchCost)})`}
                   </button>
                 )}
               </div>
 
               {runState !== "idle" && (
-                <div style={{ marginTop: 12, padding: 10, background: "rgba(125,211,252,0.05)", border: "1px solid rgba(125,211,252,0.2)", borderRadius: 4, fontSize: "0.82rem" }}>
+                <div className="form-message" role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 12, padding: 10, background: "rgba(125,211,252,0.05)", border: "1px solid rgba(125,211,252,0.2)", borderRadius: 4, fontSize: "0.82rem" }}>
                   <div style={{ marginBottom: 4 }}>
                     Status: <strong>{runState}</strong> · {runProgress.processed}/{runProgress.total} done, {runProgress.failed} failed · spent {formatUsd(runProgress.costSoFar)} / cap {formatUsd(costCapUsd)}
                   </div>
@@ -370,16 +413,14 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
                     <div style={{ color: "var(--text-muted)", fontStyle: "italic" }}>Now: {runProgress.currentTitle}</div>
                   )}
                   {runProgress.lastError && (
-                    <div style={{ color: "var(--red)", marginTop: 4 }}>Last error: {runProgress.lastError}</div>
+                    <div className="form-message-error" role="alert" style={{ color: "var(--red)", marginTop: 4 }}>Last error: {runProgress.lastError}</div>
                   )}
-                  <div style={{ height: 4, background: "var(--border)", borderRadius: 2, marginTop: 6, overflow: "hidden" }}>
-                    <div style={{
-                      height: "100%",
-                      width: `${runProgress.total > 0 ? Math.round((runProgress.processed / runProgress.total) * 100) : 0}%`,
-                      background: runState === "failed" ? "var(--red)" : "var(--green)",
-                      transition: "width 0.3s",
-                    }} />
-                  </div>
+                  <progress
+                    className={runState === "failed" ? "summary-progress summary-progress-failed" : "summary-progress"}
+                    value={runProgress.processed}
+                    max={Math.max(runProgress.total, 1)}
+                    aria-label="Regeneration progress"
+                  />
                 </div>
               )}
             </div>

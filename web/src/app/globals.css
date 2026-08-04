@@ -662,6 +662,301 @@ body {
   margin-top: 12px;
 }
 
+/* Accessible, compact rule editors */
+.rules-panel h2 {
+  margin-bottom: 12px;
+}
+
+.rules-panel-toggle {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rule-toolbar {
+  display: grid;
+  grid-template-columns: max-content minmax(12rem, 16rem) max-content;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.compact-field {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.compact-field select {
+  width: 100%;
+}
+
+.rule-editor-title {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.rule-section-title {
+  margin: 14px 0 7px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.rule-editor-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.rule-editor-grid-name {
+  grid-template-columns: minmax(0, 1fr) 5rem;
+}
+
+.rule-editor-grid-value {
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+}
+
+.rule-editor .form-field label,
+.field-group-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #a3a3a3;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.rule-editor .form-field input,
+.rule-editor .form-field select {
+  min-height: 32px;
+}
+
+.rule-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rule-toggle-group .btn {
+  min-width: 3.5rem;
+  justify-content: center;
+}
+
+.field-help {
+  margin: -2px 0 8px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.rule-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inline-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.form-message {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.form-message-error {
+  color: var(--red);
+}
+
+.summary-prompt-save-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.summary-prompt-model-field {
+  min-width: 0;
+}
+
+.summary-prompt-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(10rem, 1fr) minmax(14rem, 1.4fr);
+  gap: 8px 16px;
+  margin: 2px 0 12px;
+}
+
+.summary-prompt-meta div {
+  min-width: 0;
+}
+
+.summary-prompt-meta dt {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.summary-prompt-meta dd {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.summary-progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  background: var(--border);
+  accent-color: var(--green);
+}
+
+.summary-progress-failed {
+  accent-color: var(--red);
+}
+
+.sync-status-header {
+  align-items: end;
+  gap: 16px;
+}
+
+.sync-status-profile {
+  min-width: 10rem;
+}
+
+.rules-panel .btn-primary,
+.summary-prompt-panel .btn-primary,
+.sync-status-panel .filter-tab.active {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: #fff;
+}
+
+.rules-panel .btn-red,
+.summary-prompt-panel .btn-red {
+  border-color: #b91c1c;
+  background: #b91c1c;
+  color: #fff;
+}
+
+.sync-status-content button[title*="Kaltura"] {
+  color: #c084fc !important;
+}
+
+.sync-status-content:focus-visible,
+.rules-panel-toggle:focus-visible,
+.summary-prompt-panel :is(input, select, textarea, button):focus-visible,
+.rules-panel :is(input, select, textarea, button):focus-visible,
+.sync-status-panel :is(input, select, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .rules-panel {
+    padding: 14px 16px;
+  }
+
+  .rule-toolbar,
+  .rule-editor-grid-name,
+  .rule-editor-grid-value,
+  .summary-prompt-save-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rule-toolbar > .btn,
+  .summary-prompt-save-row .btn {
+    justify-self: start;
+  }
+
+  .rule-toggle-group .btn {
+    flex: 1 1 4rem;
+    min-width: 0;
+  }
+
+  .rule-item-row > span[style*="flex: 1"] {
+    min-width: 8rem;
+  }
+
+  .summary-prompt-panel {
+    inset: 8px !important;
+    width: auto !important;
+    padding: 14px !important;
+  }
+
+  .summary-prompt-meta {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .summary-prompt-meta div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .sync-status-header {
+    align-items: start;
+  }
+
+  .sync-status-profile {
+    min-width: 0;
+  }
+
+  .sync-status-content > div > div:nth-child(3) {
+    justify-content: flex-start !important;
+    align-items: stretch !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .sync-status-content > div > div:nth-child(3) > .btn,
+  .sync-status-content > div > div:nth-child(3) > label {
+    flex: 1 1 7rem;
+    min-height: 40px;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .sync-status-content > div > div:nth-child(5) {
+    gap: 8px !important;
+  }
+
+  .sync-status-content > div > div:nth-child(5) > span[style*="font-weight: 600"] {
+    flex-basis: 100%;
+    margin-left: 0 !important;
+    margin-top: 4px;
+  }
+}
+
 /* Burndown Stats */
 .burndown-stats {
   display: flex;
