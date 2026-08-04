@@ -92,22 +92,26 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
             {/* Shared date range — used by both Fireflies and Zoom fetch buttons. */}
             <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px 0", fontSize: "0.82rem", color: "var(--text-muted)", flexWrap: "wrap" }}>
               <span>Date range:</span>
-              <label htmlFor="import-date-from">From</label>
-              <input
-                id="import-date-from"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => onDateFromChange(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
-              <label htmlFor="import-date-to">To</label>
-              <input
-                id="import-date-to"
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
+              <span style={{ display: "inline-flex", gap: 6, alignItems: "center", whiteSpace: "nowrap" }}>
+                <label htmlFor="import-date-from">From</label>
+                <input
+                  id="import-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => onDateFromChange(e.target.value)}
+                  style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+                />
+              </span>
+              <span style={{ display: "inline-flex", gap: 6, alignItems: "center", whiteSpace: "nowrap" }}>
+                <label htmlFor="import-date-to">To</label>
+                <input
+                  id="import-date-to"
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+                />
+              </span>
             </div>
             <FirefliesImport onImported={onImported} onEvent={onEvent} dateFrom={dateFrom} dateTo={dateTo} />
             <div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />

@@ -1543,7 +1543,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               target="_blank"
               rel="noopener noreferrer"
               title={`Open on ${tooltip}`}
-              style={{ color: "var(--primary, #6366f1)", textDecoration: "none" }}
+              style={{ color: "var(--accent-text)", textDecoration: "none" }}
             >
               {video.source_platform}
             </a>

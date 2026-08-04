@@ -365,7 +365,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
         top: 16,
         right: 16,
         bottom: 16,
-        width: "min(640px, calc(100vw - 32px))",
+        width: "min(640px, calc(100% - 32px))",
         background: "var(--bg-card)",
         border: "1px solid var(--border)",
         borderRadius: 8,

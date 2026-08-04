@@ -64,7 +64,6 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
           background: ABSENT_STYLE.bg,
           color: ABSENT_STYLE.fg,
           border: `1px solid ${ABSENT_STYLE.border}`,
-          opacity: 0.6,
         }}
       >
         📄 —
@@ -90,10 +89,9 @@ export function SummaryLozenge({ docId, promptVersion, locked, counts, stopRowCl
       title={tooltipParts.join(" · ")}
       style={{
         ...BASE,
-        background: STYLE.bg,
-        color: STYLE.fg,
-        border: `1px solid ${STYLE.border}`,
-        opacity: stale ? 0.55 : 1,
+        background: stale ? ABSENT_STYLE.bg : STYLE.bg,
+        color: stale ? ABSENT_STYLE.fg : STYLE.fg,
+        border: `1px solid ${stale ? ABSENT_STYLE.border : STYLE.border}`,
       }}
     >
       {label}

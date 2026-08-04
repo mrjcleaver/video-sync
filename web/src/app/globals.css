@@ -15,6 +15,7 @@
   --text-muted: #a3a3a3;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
+  --accent-text: #60a5fa;
   --focus: #93c5fd;
   --green: #22c55e;
   --yellow: #eab308;
@@ -95,6 +96,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 32px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
@@ -103,13 +106,26 @@ textarea {
 .header h1 {
   font-size: 1.5rem;
   font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.header > span {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .header .stats {
   display: flex;
-  gap: 16px;
+  gap: 8px;
+  margin-left: auto;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.header .stats > * {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .stat-badge {
@@ -292,6 +308,7 @@ textarea {
 
 .video-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
@@ -373,7 +390,7 @@ textarea {
 
 .location-platform {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   min-width: 70px;
 }
 
@@ -395,7 +412,7 @@ textarea {
   font-size: 0.8rem;
 }
 
-.location-link:hover { color: var(--accent); text-decoration: underline; }
+.location-link:hover { color: var(--accent-text); text-decoration: underline; }
 
 .location-remove {
   background: none;
