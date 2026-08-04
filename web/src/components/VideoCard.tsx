@@ -469,7 +469,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           const enriched = { ...video, description: summary.summary };
           attrs = applyProcessingRules(rules, enriched);
         } catch (err) {
-          onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
+          onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)}: ${String(err)}`, { video_id: video.id });
           // Fall through with non-LLM attrs
         }
       }
@@ -1296,7 +1296,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             external_id: loc.external_id, })
         )
       );
-      onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`, { video_id: video.id });
+      onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)}: ${loc.platform}/${loc.external_id}`, { video_id: video.id });
       setActionNotice({ tone: "success", text: `${loc.platform} location ${loc.external_id} removed.` });
       setPendingLocationRemoval(null);
       onMutated();
