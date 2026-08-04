@@ -7,7 +7,7 @@ import type { YouTubeVideoInfo } from "../app/api/youtube/video-info/route";
 import type { LoomMetadata } from "../app/api/loom/metadata/route";
 import HelpTip from "./HelpTip";
 
-type Platform = "youtube" | "loom" | "unknown";
+type Platform = "youtube" | "loom" | "zoom-share" | "unknown";
 
 interface DetectedUrl {
   raw: string;
@@ -45,6 +45,11 @@ function detect(input: string): DetectedUrl {
   if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return { raw: s, platform: "youtube", id: s };
   m = s.match(/loom\.com\/(?:share|v)\/([a-f0-9]+)/i);
   if (m) return { raw: s, platform: "loom", id: m[1] };
+  // Zoom public share URLs — the id after `/rec/share/` is a base64
+  // blob that may carry a `.passcode` suffix. We keep the full thing
+  // as-is so the source_id round-trips to the exact playable link.
+  m = s.match(/zoom\.us\/rec\/share\/([A-Za-z0-9_.\-]+)/i);
+  if (m) return { raw: s, platform: "zoom-share", id: m[1] };
   return { raw: s, platform: "unknown", id: null };
 }
 
@@ -165,7 +170,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
       lines.map(async (line): Promise<FetchedItem & { fetchError?: string }> => {
         const { platform, id, raw } = detect(line);
         if (!id || platform === "unknown") {
-          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL — expected YouTube or Loom" };
+          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL — expected YouTube, Loom, or a public Zoom share (zoom.us/rec/share/…)" };
         }
         const sourceId = `${platform}-${id}`;
         const alreadyIn = videoStore.getAll().some(v => v.source_id === sourceId);
@@ -173,7 +178,24 @@ export default function URLImport({ onImported, onEvent }: Props) {
           return { raw, platform, id, title: "", description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Already in catalogue" };
         }
         try {
-          return platform === "youtube" ? await fetchYouTube(id) : await fetchLoom(id, raw);
+          if (platform === "youtube") return await fetchYouTube(id);
+          if (platform === "loom") return await fetchLoom(id, raw);
+          // Zoom-share: no unauthenticated metadata API. We accept
+          // the URL as-is with a placeholder title. A curator can
+          // re-fetch via the authenticated Zoom API later; the raw
+          // share URL is preserved in download_url so it stays
+          // playable end-to-end.
+          return {
+            raw, platform, id,
+            title: `Zoom recording — ${new Date().toISOString().slice(0, 10)}`,
+            description: `Contributor-submitted Zoom share.\nOriginal URL: ${raw}\n\n(Curator: please rename + enrich this record; Zoom's public share page doesn't expose metadata without OAuth.)`,
+            thumbnailUrl: null,
+            durationSeconds: 0,
+            channelOrAuthor: "",
+            publishedAt: "",
+            needsTos: false,
+            extra: { zoom_share_url: raw, contributor_submitted: "1" },
+          };
         } catch (err) {
           return { raw, platform, id, title: "", description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: String(err) };
         }
@@ -201,16 +223,33 @@ export default function URLImport({ onImported, onEvent }: Props) {
     let count = 0;
     for (const item of items) {
       if (!selected.has(item.id) || item.fetchError) continue;
+      const sourcePlatform =
+        item.platform === "youtube"    ? "YouTube"
+      : item.platform === "loom"        ? "Loom"
+      : item.platform === "zoom-share"  ? "Zoom"
+      : "Unknown";
+      // Namespace Zoom-share source_ids with a `zoom-share-` prefix so
+      // they don't collide with OAuth-imported Zoom rows (which use
+      // `zoom-<meeting-uuid>`). The share id is base64 with dots which
+      // survives Rust's SourcePlatformId round-trip fine.
+      const sourceId =
+        item.platform === "youtube"    ? `youtube-${item.id}`
+      : item.platform === "loom"        ? `loom-${item.id}`
+      : item.platform === "zoom-share"  ? `zoom-share-${item.id}`
+      : `${item.platform}-${item.id}`;
+      const downloadUrl =
+        item.platform === "youtube"    ? `youtube://${item.id}`
+      : /* loom / zoom-share */          item.raw;
       const cmd: Record<string, unknown> = {
-        source_id: `${item.platform}-${item.id}`,
-        source_platform: item.platform === "youtube" ? "YouTube" : "Loom",
+        source_id: sourceId,
+        source_platform: sourcePlatform,
         title: item.title,
         description: item.description || undefined,
         // Loom's oEmbed returns fractional seconds (e.g. 7495.15) but the
         // WASM record's duration_seconds is u32. Round to nearest integer.
         duration_seconds: Math.max(0, Math.round(Number(item.durationSeconds) || 0)),
         participants: item.participants ?? [],
-        download_url: item.platform === "youtube" ? `youtube://${item.id}` : item.raw,
+        download_url: downloadUrl,
         thumbnail_url: item.thumbnailUrl || undefined,
         tags: [`${item.platform}-import`],
         recorded_at: item.publishedAt || undefined,
@@ -225,7 +264,12 @@ export default function URLImport({ onImported, onEvent }: Props) {
         videoStore.setTranscript(record.id(), item.transcriptText);
       }
       const transcriptNote = item.transcriptText ? ", transcript included" : "";
-      onEvent(`VideoIndexed: "${item.title}" (${item.platform === "youtube" ? "YouTube" : "Loom"} import${transcriptNote})`);
+      const platformLabel =
+        item.platform === "youtube"    ? "YouTube"
+      : item.platform === "loom"        ? "Loom"
+      : item.platform === "zoom-share"  ? "Zoom share"
+      : item.platform;
+      onEvent(`VideoIndexed: "${item.title}" (${platformLabel} import${transcriptNote})`);
       count++;
     }
     if (count > 0) {
@@ -255,7 +299,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
       </div>
 
       <HelpTip>
-        Paste one or more YouTube or Loom URLs, one per line. Supports{" "}
+        Paste one or more URLs — YouTube, Loom, or a public Zoom share (<code>zoom.us/rec/share/…</code>) — one per line. Supports{" "}
         <code>youtube.com/watch</code>, <code>youtube.com/live</code>, <code>youtu.be</code>,
         and <code>loom.com/share</code>. Metadata is fetched automatically — review the
         previews, then import selected.
@@ -265,7 +309,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
         value={input}
         onChange={e => { setInput(e.target.value); setItems([]); setGlobalError(null); }}
         onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) fetchAll(); }}
-        placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\n…"}
+        placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\nhttps://us06web.zoom.us/rec/share/…\n…"}
         rows={3}
         style={{
           width: "100%",

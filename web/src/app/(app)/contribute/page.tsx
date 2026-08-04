@@ -56,9 +56,9 @@ export default function ContributePage() {
 
       <div className="panel" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ fontSize: "0.88rem", color: "var(--text-muted)", marginBottom: 8 }}>
-          Paste a YouTube or Loom URL to submit a recording. A curator
-          reviews and (if approved) publishes it to the org&apos;s
-          channels. You&apos;ll see it appear in <strong>Your contributions</strong> below.
+          Paste a YouTube, Loom, or public Zoom-share URL to submit a recording.
+          A curator reviews and (if approved) publishes it to the org&apos;s channels.
+          You&apos;ll see it appear in <strong>Your contributions</strong> below.
         </div>
 
         <label style={{ display: "block", marginBottom: 12 }}>
@@ -87,9 +87,14 @@ export default function ContributePage() {
           <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Other sources</summary>
           <div style={{ padding: "8px 4px", color: "var(--text-muted)", fontSize: "0.78rem" }}>
             <p>
-              <strong>Zoom recordings</strong> and <strong>Google Drive files</strong> aren&apos;t yet
-              wired for direct contributor upload. To submit one, drop the shared link into
-              #agentics-contributions on Discord and a curator will ingest it on your behalf.
+              <strong>Zoom share URLs</strong> (<code>zoom.us/rec/share/…</code>): paste directly into the
+              URL box above. The recording page is public, so no OAuth is needed on your side — a curator
+              will re-fetch full metadata later.
+            </p>
+            <p>
+              <strong>Google Drive files</strong> aren&apos;t yet wired for direct contributor upload —
+              drop the shared link into #agentics-contributions on Discord and a curator will ingest
+              it on your behalf.
             </p>
           </div>
         </details>
