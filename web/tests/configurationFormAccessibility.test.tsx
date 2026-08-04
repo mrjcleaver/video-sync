@@ -1,4 +1,5 @@
 import React from "react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import BackfillPanel from "../src/components/BackfillPanel";
@@ -35,6 +36,14 @@ afterEach(() => {
 });
 
 describe("configuration form accessibility", () => {
+  it("keeps rule editors theme-safe and narrow-screen rows wrappable", () => {
+    const css = readFileSync(`${process.cwd()}/src/app/globals.css`, "utf8");
+
+    expect(css).toMatch(/\.rule-form\s*\{[^}]*border:\s*1px solid var\(--text-muted\)/s);
+    expect(css).toMatch(/\.rule-item-name\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+    expect(css).toMatch(/@media \(max-width: 767px\)[\s\S]*\.rule-item-name\s*\{[^}]*flex-basis:/);
+  });
+
   it("exposes ingestion rule fields and toggle state", () => {
     render(
       <RulesPanel
@@ -46,7 +55,9 @@ describe("configuration form accessibility", () => {
     );
 
     const panelToggle = screen.getByRole("button", { name: /Ingestion rules/ });
+    expect(panelToggle.hasAttribute("aria-controls")).toBe(false);
     fireEvent.click(panelToggle);
+    expect(panelToggle.getAttribute("aria-controls")).toBe("ingestion-rules-content");
     fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
 
     expect(screen.getByLabelText("Name")).toBeTruthy();
@@ -63,6 +74,52 @@ describe("configuration form accessibility", () => {
     expect(thursday.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(thursday);
     expect(thursday.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("identifies and focuses a blank ingestion-rule name", () => {
+    render(
+      <RulesPanel
+        isRunnerRunning={false}
+        lastRun={null}
+        matchCount={0}
+        onRunNow={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Ingestion rules/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    const name = screen.getByLabelText("Name");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(name.getAttribute("required")).not.toBeNull();
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(name.getAttribute("aria-describedby")).toBe("ingestion-rule-name-error");
+    expect(screen.getByRole("alert").textContent).toBe("Enter a rule name.");
+    expect(document.activeElement).toBe(name);
+  });
+
+  it("uses wrapping hooks for ingestion-rule rows", () => {
+    localStorage.setItem("video-sync:rules", JSON.stringify([{
+      id: "ingestion-1",
+      name: "A very long ingestion rule name that must wrap at narrow widths",
+      enabled: true,
+      priority: 10,
+      criteria: {},
+      action: "mark_in_scope",
+    }]));
+
+    const { container } = render(
+      <RulesPanel
+        isRunnerRunning={false}
+        lastRun={null}
+        matchCount={0}
+        onRunNow={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Ingestion rules/ }));
+
+    expect(container.querySelector(".rule-item-row")).toBeTruthy();
+    expect(container.querySelector(".rule-item-name")?.textContent).toContain("very long ingestion");
   });
 
   it("groups and labels backfill profile settings", () => {

@@ -666,7 +666,7 @@ body {
 .rule-form {
   padding: 14px;
   border-radius: 8px;
-  border: 1px solid #2d4f78;
+  border: 1px solid var(--text-muted);
   background: var(--bg);
   margin-top: 12px;
 }
@@ -777,6 +777,15 @@ body {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rule-item-name {
+  flex: 1 1 10rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  font-weight: 500;
 }
 
 .inline-confirm {
@@ -924,8 +933,12 @@ body {
     min-width: 0;
   }
 
-  .rule-item-row > span[style*="flex: 1"] {
-    min-width: 8rem;
+  .rule-item-row {
+    align-items: flex-start;
+  }
+
+  .rule-item-name {
+    flex-basis: calc(100% - 2rem);
   }
 
   .summary-prompt-panel {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import ProcessingRulesPanel from "../src/components/ProcessingRulesPanel";
 import PostProcessingRulesPanel from "../src/components/PostProcessingRulesPanel";
-import SummaryPromptPanel from "../src/components/SummaryPromptPanel";
+import SummaryPromptPanel, { SUMMARY_PROMPT_PANEL_ID } from "../src/components/SummaryPromptPanel";
 import SyncStatusPanel from "../src/components/SyncStatusPanel";
 
 const mocks = vi.hoisted(() => ({
@@ -90,6 +90,7 @@ describe("rule editor accessibility", () => {
 
     const disclosure = screen.getByRole("button", { name: "Processing rules" });
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(disclosure.hasAttribute("aria-controls")).toBe(true);
     expect(screen.getByLabelText("Preview video")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
@@ -124,9 +125,14 @@ describe("rule editor accessibility", () => {
     expect(screen.getByRole("group", { name: "Confirm deletion of Notify producer" })).toBeTruthy();
     expect(mocks.savePostProcessingRules).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
     expect(mocks.savePostProcessingRules).toHaveBeenCalledWith([]);
     expect(screen.getByRole("status").textContent).toBe("Notify producer deleted.");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add rule" }));
   });
 
   it("requires an inline confirmation before deleting a processing rule", () => {
@@ -145,8 +151,13 @@ describe("rule editor accessibility", () => {
     expect(screen.getByRole("group", { name: "Confirm deletion of Normalize title" })).toBeTruthy();
     expect(mocks.saveProcessingRules).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
     expect(mocks.saveProcessingRules).toHaveBeenCalledWith([]);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add rule" }));
   });
 
   it("associates post-processing fields with their visible labels", () => {
@@ -159,6 +170,28 @@ describe("rule editor accessibility", () => {
     expect(screen.getByLabelText("Type")).toBeTruthy();
     expect(screen.getByLabelText("Webhook URL")).toBeTruthy();
   });
+
+  it("describes only the invalid post-processing field", () => {
+    render(<PostProcessingRulesPanel />);
+    const disclosure = screen.getByRole("button", { name: "Post-processing rules" });
+    expect(disclosure.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(disclosure);
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+
+    const name = screen.getByLabelText("Name");
+    const webhookUrl = screen.getByLabelText("Webhook URL");
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+
+    expect(name.getAttribute("aria-describedby")).toBeTruthy();
+    expect(webhookUrl.hasAttribute("aria-describedby")).toBe(false);
+
+    fireEvent.change(name, { target: { value: "Notify producer" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+
+    expect(name.hasAttribute("aria-describedby")).toBe(false);
+    expect(webhookUrl.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Enter a webhook URL.");
+  });
 });
 
 describe("panel accessibility", () => {
@@ -166,11 +199,17 @@ describe("panel accessibility", () => {
     render(<SyncStatusPanel videos={[]} />);
 
     expect(screen.getByLabelText("Profile")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+    const overviewTab = screen.getByRole("tab", { name: "Overview" });
+    const calendarTab = screen.getByRole("tab", { name: "Calendar" });
+    expect(overviewTab.getAttribute("aria-selected")).toBe("true");
+    expect(overviewTab.hasAttribute("aria-controls")).toBe(true);
+    expect(calendarTab.hasAttribute("aria-controls")).toBe(false);
     expect(screen.getByRole("tabpanel").textContent).toContain("Overview content");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Calendar" }));
-    expect(screen.getByRole("tab", { name: "Calendar" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(calendarTab);
+    expect(calendarTab.getAttribute("aria-selected")).toBe("true");
+    expect(calendarTab.hasAttribute("aria-controls")).toBe(true);
+    expect(overviewTab.hasAttribute("aria-controls")).toBe(false);
     expect(screen.getByRole("tabpanel").textContent).toContain("Calendar content");
   });
 
@@ -190,6 +229,7 @@ describe("panel accessibility", () => {
     render(<SummaryPromptPanel open videos={[]} onClose={onClose} />);
 
     expect(await screen.findByRole("dialog", { name: "Summary prompt (ADR-046)" })).toBeTruthy();
+    expect(screen.getByRole("dialog").id).toBe(SUMMARY_PROMPT_PANEL_ID);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByLabelText("Prompt text")).toBeTruthy();
     expect(screen.getByLabelText("Model (OpenRouter slug)")).toBeTruthy();

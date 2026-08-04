@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useId } from "react";
+import { useState, useCallback, useEffect, useId, useRef } from "react";
 import {
   loadProcessingRules,
   saveProcessingRules,
@@ -50,6 +50,19 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const addRuleButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [focusAfterDelete, setFocusAfterDelete] = useState<{ target: "delete" | "add"; id: string } | null>(null);
+
+  useEffect(() => {
+    if (deletePendingId !== null || !focusAfterDelete) return;
+    if (focusAfterDelete.target === "delete") {
+      deleteButtonRefs.current.get(focusAfterDelete.id)?.focus();
+    } else {
+      addRuleButtonRef.current?.focus();
+    }
+    setFocusAfterDelete(null);
+  }, [deletePendingId, focusAfterDelete]);
 
   const persist = useCallback((updated: ProcessingRule[]) => {
     setRules(updated);
@@ -65,6 +78,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   function deleteRule(id: string) {
     const rule = rules.find((r) => r.id === id);
     persist(rules.filter((r) => r.id !== id));
+    setFocusAfterDelete({ target: "add", id });
     setDeletePendingId(null);
     if (rule) setStatusMessage(`${rule.name} deleted.`);
   }
@@ -188,7 +202,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
           className="rules-panel-toggle"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls={`${panelId}-content`}
+          aria-controls={expanded ? `${panelId}-content` : undefined}
         >
           <span>Processing rules {rules.length > 0 && `(${rules.length})`}</span>
           <span aria-hidden="true" style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
@@ -208,7 +222,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
           </HelpTip>
 
           <div className="rule-toolbar">
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+            <button ref={addRuleButtonRef} type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
               Add rule
             </button>
             <label className="compact-field rule-preview-field" htmlFor={`${panelId}-preview-video`}>
@@ -290,7 +304,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                   aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
-                <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
+                <span className="rule-item-name">{rule.name}</span>
                 <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>P{rule.priority}</span>
                 {rule.transforms.title && (
                   <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>T</span>
@@ -309,10 +323,21 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                   <span className="inline-confirm" role="group" aria-label={`Confirm deletion of ${rule.name}`}>
                     <span>Delete this rule?</span>
                     <button type="button" className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Yes, delete</button>
-                    <button type="button" className="btn btn-sm" onClick={() => setDeletePendingId(null)} autoFocus>Cancel</button>
+                    <button type="button" className="btn btn-sm" onClick={() => {
+                      setFocusAfterDelete({ target: "delete", id: rule.id });
+                      setDeletePendingId(null);
+                    }} autoFocus>Cancel</button>
                   </span>
                 ) : (
-                  <button type="button" className="btn btn-sm btn-red" onClick={() => setDeletePendingId(rule.id)}>Delete</button>
+                  <button
+                    ref={(element) => {
+                      if (element) deleteButtonRefs.current.set(rule.id, element);
+                      else deleteButtonRefs.current.delete(rule.id);
+                    }}
+                    type="button"
+                    className="btn btn-sm btn-red"
+                    onClick={() => setDeletePendingId(rule.id)}
+                  >Delete</button>
                 )}
               </div>
               {rule.transforms.title?.value && (

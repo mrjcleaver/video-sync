@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   loadRules,
   saveRules,
@@ -44,6 +44,8 @@ export default function RulesPanel({
   const [editing, setEditing] = useState<IngestionRule | null>(null);
   const [dryRunResult, setDryRunResult] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<IngestionRule | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const persist = useCallback(
     (updated: IngestionRule[]) => {
@@ -66,16 +68,23 @@ export default function RulesPanel({
 
   function startEdit(rule?: IngestionRule) {
     setEditing(rule ? { ...rule, criteria: { ...rule.criteria } } : emptyRule());
+    setEditError(null);
   }
 
   function saveEdit() {
-    if (!editing || !editing.name.trim()) return;
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      setEditError("Enter a rule name.");
+      nameInputRef.current?.focus();
+      return;
+    }
     const idx = rules.findIndex((r) => r.id === editing.id);
     const updated = idx >= 0
       ? rules.map((r) => (r.id === editing.id ? editing : r))
       : [...rules, editing];
     persist(updated);
     setEditing(null);
+    setEditError(null);
   }
 
   function dryRun() {
@@ -109,7 +118,7 @@ export default function RulesPanel({
           className="panel-heading-button"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls="ingestion-rules-content"
+          aria-controls={expanded ? "ingestion-rules-content" : undefined}
         >
           <span>Ingestion rules {rules.length > 0 && `(${rules.length})`}</span>
           <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -164,7 +173,7 @@ export default function RulesPanel({
 
           {rules.map((rule) => (
             <div key={rule.id} className="rule-item">
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="rule-item-row">
                 <input
                   type="checkbox"
                   checked={rule.enabled}
@@ -172,7 +181,7 @@ export default function RulesPanel({
                   aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
-                <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>
+                <span className="rule-item-name">
                   {rule.name}
                 </span>
                 <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
@@ -216,11 +225,23 @@ export default function RulesPanel({
               <div className="form-field">
                 <label htmlFor="ingestion-rule-name">Name</label>
                 <input
+                  ref={nameInputRef}
                   id="ingestion-rule-name"
                   value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  onChange={(e) => {
+                    setEditing({ ...editing, name: e.target.value });
+                    setEditError(null);
+                  }}
                   placeholder="Rule name"
+                  required
+                  aria-invalid={!!editError}
+                  aria-describedby={editError ? "ingestion-rule-name-error" : undefined}
                 />
+                {editError && (
+                  <span id="ingestion-rule-name-error" className="field-error" role="alert" aria-live="assertive">
+                    {editError}
+                  </span>
+                )}
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -368,7 +389,7 @@ export default function RulesPanel({
                 <button type="button" className="btn btn-sm btn-green" onClick={saveEdit}>
                   Save
                 </button>
-                <button type="button" className="btn btn-sm" onClick={() => setEditing(null)}>
+                <button type="button" className="btn btn-sm" onClick={() => { setEditing(null); setEditError(null); }}>
                   Cancel
                 </button>
               </div>

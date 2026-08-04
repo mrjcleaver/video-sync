@@ -24,6 +24,8 @@ interface Props {
   onClose: () => void;
 }
 
+export const SUMMARY_PROMPT_PANEL_ID = "summary-prompt-panel";
+
 interface PromptVersion {
   version: number;
   text: string;
@@ -267,6 +269,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
     // long bulk-regen runs can stay open while the operator inspects
     // cards in parallel.
     <div
+      id={SUMMARY_PROMPT_PANEL_ID}
       className="summary-prompt-panel"
       role="dialog"
       aria-labelledby={`${panelId}-title`}

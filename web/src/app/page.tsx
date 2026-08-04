@@ -11,7 +11,7 @@ import { useRuleRunner } from "../lib/useRuleRunner";
 import { useMemoryHealth } from "../lib/useMemoryHealth";
 import ImportPanel from "../components/ImportPanel";
 import ConnectionsPanel from "../components/ConnectionsPanel";
-import SummaryPromptPanel from "../components/SummaryPromptPanel";
+import SummaryPromptPanel, { SUMMARY_PROMPT_PANEL_ID } from "../components/SummaryPromptPanel";
 import CatchUpPanel from "../components/CatchUpPanel";
 import RulesPanel from "../components/RulesPanel";
 import ProcessingRulesPanel from "../components/ProcessingRulesPanel";
@@ -327,6 +327,8 @@ export default function Dashboard() {
           <button
             className={`btn btn-sm ${showSummaryPrompt ? "btn-primary" : ""}`}
             onClick={() => setShowSummaryPrompt(v => !v)}
+            aria-expanded={showSummaryPrompt}
+            aria-controls={showSummaryPrompt ? SUMMARY_PROMPT_PANEL_ID : undefined}
             title="Edit the org-shared summary prompt and bulk-regenerate unlocked summaries (ADR-046)"
           >
             📄 Summary Prompt

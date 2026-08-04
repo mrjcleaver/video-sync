@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useId } from "react";
+import { useState, useCallback, useEffect, useId, useRef } from "react";
 import {
   loadPostProcessingRules,
   savePostProcessingRules,
@@ -28,6 +28,19 @@ export default function PostProcessingRulesPanel() {
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const addRuleButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [focusAfterDelete, setFocusAfterDelete] = useState<{ target: "delete" | "add"; id: string } | null>(null);
+
+  useEffect(() => {
+    if (deletePendingId !== null || !focusAfterDelete) return;
+    if (focusAfterDelete.target === "delete") {
+      deleteButtonRefs.current.get(focusAfterDelete.id)?.focus();
+    } else {
+      addRuleButtonRef.current?.focus();
+    }
+    setFocusAfterDelete(null);
+  }, [deletePendingId, focusAfterDelete]);
 
   const persist = useCallback((updated: PostProcessingRule[]) => {
     setRules(updated);
@@ -43,6 +56,7 @@ export default function PostProcessingRulesPanel() {
   function deleteRule(id: string) {
     const rule = rules.find((r) => r.id === id);
     persist(rules.filter((r) => r.id !== id));
+    setFocusAfterDelete({ target: "add", id });
     setDeletePendingId(null);
     if (rule) setStatusMessage(`${rule.name} deleted.`);
   }
@@ -103,7 +117,7 @@ export default function PostProcessingRulesPanel() {
           className="rules-panel-toggle"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-controls={`${panelId}-content`}
+          aria-controls={expanded ? `${panelId}-content` : undefined}
         >
           <span>Post-processing rules {rules.length > 0 && `(${rules.length})`}</span>
           <span aria-hidden="true" style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
@@ -120,7 +134,7 @@ export default function PostProcessingRulesPanel() {
           </HelpTip>
 
           <div style={{ marginBottom: 12 }}>
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+            <button ref={addRuleButtonRef} type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
               Add rule
             </button>
           </div>
@@ -145,7 +159,7 @@ export default function PostProcessingRulesPanel() {
                   aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
-                <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
+                <span className="rule-item-name">{rule.name}</span>
                 <span className="status-badge" style={{ fontSize: "0.65rem", background: "var(--surface)" }}>
                   {triggerLabel[rule.trigger]}
                 </span>
@@ -157,10 +171,21 @@ export default function PostProcessingRulesPanel() {
                   <span className="inline-confirm" role="group" aria-label={`Confirm deletion of ${rule.name}`}>
                     <span>Delete this rule?</span>
                     <button type="button" className="btn btn-sm btn-red" onClick={() => deleteRule(rule.id)}>Yes, delete</button>
-                    <button type="button" className="btn btn-sm" onClick={() => setDeletePendingId(null)} autoFocus>Cancel</button>
+                    <button type="button" className="btn btn-sm" onClick={() => {
+                      setFocusAfterDelete({ target: "delete", id: rule.id });
+                      setDeletePendingId(null);
+                    }} autoFocus>Cancel</button>
                   </span>
                 ) : (
-                  <button type="button" className="btn btn-sm btn-red" onClick={() => setDeletePendingId(rule.id)}>Delete</button>
+                  <button
+                    ref={(element) => {
+                      if (element) deleteButtonRefs.current.set(rule.id, element);
+                      else deleteButtonRefs.current.delete(rule.id);
+                    }}
+                    type="button"
+                    className="btn btn-sm btn-red"
+                    onClick={() => setDeletePendingId(rule.id)}
+                  >Delete</button>
                 )}
               </div>
               <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 4 }}>
@@ -185,7 +210,7 @@ export default function PostProcessingRulesPanel() {
                   onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setEditError(null); }}
                   placeholder="e.g. Notify Slack on publish"
                   aria-invalid={editError === "Enter a rule name."}
-                  aria-describedby={editError ? `${panelId}-error` : undefined}
+                  aria-describedby={editError === "Enter a rule name." ? `${panelId}-error` : undefined}
                 />
               </div>
 
@@ -227,7 +252,7 @@ export default function PostProcessingRulesPanel() {
                     onChange={(e) => { patchAction({ url: e.target.value }); setEditError(null); }}
                     placeholder="https://hooks.example.com/..."
                     aria-invalid={editError === "Enter a webhook URL."}
-                    aria-describedby={editError ? `${panelId}-error` : undefined}
+                    aria-describedby={editError === "Enter a webhook URL." ? `${panelId}-error` : undefined}
                   />
                 </div>
               )}
@@ -242,7 +267,7 @@ export default function PostProcessingRulesPanel() {
                       onChange={(e) => { patchAction({ to: e.target.value }); setEditError(null); }}
                       placeholder="you@example.com"
                       aria-invalid={editError === "Enter an email address."}
-                      aria-describedby={editError ? `${panelId}-error` : undefined}
+                      aria-describedby={editError === "Enter an email address." ? `${panelId}-error` : undefined}
                     />
                   </div>
                   <div className="form-field">

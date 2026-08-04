@@ -110,7 +110,7 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
             type="button"
             role="tab"
             aria-selected={activeTab === t}
-            aria-controls={`${panelId}-${t}-panel`}
+            aria-controls={activeTab === t ? `${panelId}-${t}-panel` : undefined}
             className={`filter-tab ${activeTab === t ? "active" : ""}`}
             onClick={() => selectTab(t)}
           >
