@@ -107,7 +107,7 @@ body {
 
 .form-grid label {
   font-size: 0.82rem;
-  color: #b8b8b8;
+  color: var(--text-muted);
   margin-bottom: 6px;
   display: block;
 }
@@ -445,7 +445,7 @@ body {
   font-size: 0.75rem;
   font-weight: 500;
   margin-bottom: 5px;
-  color: #b8b8b8;
+  color: var(--text-muted);
 }
 
 .form-field input {
@@ -876,7 +876,7 @@ body {
 .field-help {
   display: block;
   margin-top: 5px;
-  color: #a3a3a3;
+  color: var(--text-muted);
   font-size: 0.72rem;
   line-height: 1.45;
 }
