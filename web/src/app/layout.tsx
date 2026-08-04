@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
+import ThemeRuntime from "../components/ThemeRuntime";
 
 export const metadata: Metadata = {
   title: "Video Sync — Curation Dashboard",
@@ -36,6 +37,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
+        <ThemeRuntime />
         <Providers>{children}</Providers>
       </body>
     </html>

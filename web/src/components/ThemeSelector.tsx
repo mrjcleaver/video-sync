@@ -1,34 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  applyThemePreference,
+  readThemePreference,
+  THEME_STORAGE_KEY,
+  type ThemePreference,
+} from "./theme";
 
-export const THEME_STORAGE_KEY = "video-sync-theme";
-
-export type ThemePreference = "system" | "light" | "dark";
-
-function isThemePreference(value: string | null): value is ThemePreference {
-  return value === "system" || value === "light" || value === "dark";
-}
-
-function getSystemTheme(): Exclude<ThemePreference, "system"> {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-export function applyThemePreference(preference: ThemePreference) {
-  const resolvedTheme = preference === "system" ? getSystemTheme() : preference;
-  const root = document.documentElement;
-  root.dataset.theme = resolvedTheme;
-  root.dataset.themePreference = preference;
-}
-
-function readThemePreference(): ThemePreference {
-  try {
-    const storedPreference = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return isThemePreference(storedPreference) ? storedPreference : "system";
-  } catch {
-    return "system";
-  }
-}
+export { applyThemePreference, THEME_STORAGE_KEY } from "./theme";
+export type { ThemePreference } from "./theme";
 
 export default function ThemeSelector() {
   const [preference, setPreference] = useState<ThemePreference>("system");
@@ -41,18 +22,6 @@ export default function ThemeSelector() {
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!mounted) return;
-
-    applyThemePreference(preference);
-    if (preference !== "system") return;
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = () => applyThemePreference("system");
-    mediaQuery.addEventListener("change", handleSystemThemeChange);
-    return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
-  }, [mounted, preference]);
-
   const updatePreference = (nextPreference: ThemePreference) => {
     setPreference(nextPreference);
     applyThemePreference(nextPreference);
@@ -64,7 +33,7 @@ export default function ThemeSelector() {
   };
 
   return (
-    <div className="theme-control">
+    <div className="theme-control" data-ready={mounted ? "true" : "false"}>
       <label htmlFor="theme-preference">Theme</label>
       <select
         id="theme-preference"

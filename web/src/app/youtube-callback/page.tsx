@@ -4,24 +4,31 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 const STORAGE_KEY = "video-sync:connections";
+type CallbackStatus = {
+  message: string;
+  isError: boolean;
+};
 
 function CallbackHandler() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [status, setStatus] = useState("Completing YouTube authorization...");
+  const [status, setStatus] = useState<CallbackStatus>({
+    message: "Completing YouTube authorization...",
+    isError: false,
+  });
 
   useEffect(() => {
     const code = searchParams.get("code");
     const error = searchParams.get("error");
 
     if (error) {
-      setStatus(`Authorization denied: ${error}`);
+      setStatus({ message: `Authorization denied: ${error}`, isError: true });
       setTimeout(() => router.push("/"), 2000);
       return;
     }
 
     if (!code) {
-      setStatus("No authorization code received.");
+      setStatus({ message: "No authorization code received.", isError: true });
       setTimeout(() => router.push("/"), 2000);
       return;
     }
@@ -39,14 +46,14 @@ function CallbackHandler() {
       clientId = yt.credentials.clientId;
       clientSecret = yt.credentials.clientSecret;
     } catch (err) {
-      setStatus(`Error: ${String(err)}`);
+      setStatus({ message: `Error: ${String(err)}`, isError: true });
       setTimeout(() => router.push("/"), 3000);
       return;
     }
 
     const redirectUri = `${window.location.origin}/youtube-callback`;
 
-    setStatus("Exchanging authorization code for tokens...");
+    setStatus({ message: "Exchanging authorization code for tokens...", isError: false });
     fetch("/api/youtube/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -73,7 +80,7 @@ function CallbackHandler() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
 
         // Fetch the authorized channel info so user knows which channel uploads target
-        setStatus("Verifying channel...");
+        setStatus({ message: "Verifying channel...", isError: false });
         try {
           const chRes = await fetch(
             "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
@@ -91,40 +98,49 @@ function CallbackHandler() {
         } catch { /* non-fatal — channel info is nice-to-have */ }
 
         const chName = yt.credentials.authorizedChannelTitle;
-        setStatus(chName
-          ? `Authorized for channel "${chName}"! Redirecting...`
-          : "YouTube authorized successfully! Redirecting...");
+        setStatus({
+          message: chName
+            ? `Authorized for channel "${chName}". Redirecting...`
+            : "YouTube authorized successfully. Redirecting...",
+          isError: false,
+        });
         setTimeout(() => router.push("/"), 2000);
       })
       .catch((err) => {
         const msg = String(err);
         if (msg.includes("invalid_client")) {
-          setStatus("Authorization failed: Client ID or Client Secret is incorrect. Update your YouTube credentials in Connections and try again.");
+          setStatus({
+            message: "Authorization failed: Client ID or Client Secret is incorrect. Update your YouTube credentials in Connections and try again.",
+            isError: true,
+          });
         } else {
-          setStatus(`Authorization failed: ${msg}`);
+          setStatus({ message: `Authorization failed: ${msg}`, isError: true });
         }
         setTimeout(() => router.push("/"), 6000);
       });
   }, [searchParams, router]);
 
-  return <p>{status}</p>;
+  return (
+    <p
+      role={status.isError ? "alert" : "status"}
+      aria-live={status.isError ? "assertive" : "polite"}
+      aria-atomic="true"
+      className={status.isError ? "callback-status callback-status-error" : "callback-status"}
+    >
+      {status.message}
+    </p>
+  );
 }
 
 export default function YouTubeCallback() {
   return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      height: "60vh",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      color: "var(--text)",
-      background: "var(--bg)",
-      fontSize: "1rem",
-    }}>
-      <Suspense fallback={<p>Loading...</p>}>
-        <CallbackHandler />
-      </Suspense>
-    </div>
+    <main className="callback-page">
+      <section className="callback-card" aria-labelledby="callback-title">
+        <h1 id="callback-title">YouTube authorization</h1>
+        <Suspense fallback={<p role="status" aria-live="polite">Loading authorization details...</p>}>
+          <CallbackHandler />
+        </Suspense>
+      </section>
+    </main>
   );
 }
