@@ -89,7 +89,7 @@ describe("conditional disclosure relationships", () => {
     ["Post-processing Rules", () => <PostProcessingRulesPanel />],
   ])("only points %s at mounted content", (name, build) => {
     const { container } = render(build());
-    const toggle = screen.getByRole("button", { name: new RegExp(`^${name}`) });
+    const toggle = screen.getByRole("button", { name: new RegExp(`^${name}`, "i") });
 
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.hasAttribute("aria-controls")).toBe(false);

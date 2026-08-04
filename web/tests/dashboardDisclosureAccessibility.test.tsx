@@ -40,6 +40,7 @@ vi.mock("@/components/ConnectionsPanel", () => ({
   default: ({ open }: { open: boolean }) => open ? <section id="connections-panel" /> : null,
 }));
 vi.mock("@/components/SummaryPromptPanel", () => ({
+  SUMMARY_PROMPT_PANEL_ID: "summary-prompt-panel",
   default: ({ open }: { open: boolean }) => open ? <div id="summary-prompt-panel" /> : null,
 }));
 vi.mock("@/components/CatchUpPanel", () => ({
