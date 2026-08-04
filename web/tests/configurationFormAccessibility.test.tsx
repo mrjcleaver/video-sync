@@ -39,7 +39,7 @@ describe("configuration form accessibility", () => {
   it("keeps rule editors theme-safe and narrow-screen rows wrappable", () => {
     const css = readFileSync(`${process.cwd()}/src/app/globals.css`, "utf8");
 
-    expect(css).toMatch(/\.rule-form\s*\{[^}]*border:\s*1px solid var\(--text-muted\)/s);
+    expect(css).toMatch(/\.rule-form\s*\{[^}]*border:\s*1px solid var\(--control-border, var\(--text-muted\)\)/s);
     expect(css).toMatch(/\.rule-item-name\s*\{[^}]*overflow-wrap:\s*anywhere/s);
     expect(css).toMatch(/@media \(max-width: 767px\)[\s\S]*\.rule-item-name\s*\{[^}]*flex-basis:/);
   });

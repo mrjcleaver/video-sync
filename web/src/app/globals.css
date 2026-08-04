@@ -666,7 +666,7 @@ body {
 .rule-form {
   padding: 14px;
   border-radius: 8px;
-  border: 1px solid var(--text-muted);
+  border: 1px solid var(--control-border, var(--text-muted));
   background: var(--bg);
   margin-top: 12px;
 }
