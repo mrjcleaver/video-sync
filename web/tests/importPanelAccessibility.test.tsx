@@ -28,8 +28,8 @@ describe("ImportPanel accessibility", () => {
   it("labels the import mode and shared date range", () => {
     render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
 
-    expect(screen.getByRole("tablist", { name: "Import method" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Meetings", selected: true })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Import method" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Meetings", pressed: true })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Date range" })).toBeTruthy();
     expect(screen.getByLabelText("From").getAttribute("type")).toBe("date");
     expect(screen.getByLabelText("To").getAttribute("type")).toBe("date");
@@ -38,20 +38,20 @@ describe("ImportPanel accessibility", () => {
   it("exposes the selected import tab after switching modes", () => {
     render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "URL" }));
+    fireEvent.click(screen.getByRole("button", { name: "URL" }));
 
-    expect(screen.getByRole("tab", { name: "URL", selected: true })).toBeTruthy();
-    expect(screen.getByRole("tabpanel", { name: "URL" }).textContent).toContain("URL source");
+    expect(screen.getByRole("button", { name: "URL", pressed: true })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "URL" }).textContent).toContain("URL source");
   });
 
   it("moves between import tabs with arrow keys", () => {
     render(<ImportPanel onImported={vi.fn()} onEvent={vi.fn()} />);
 
-    const meetingsTab = screen.getByRole("tab", { name: "Meetings" });
+    const meetingsTab = screen.getByRole("button", { name: "Meetings" });
     meetingsTab.focus();
     fireEvent.keyDown(meetingsTab, { key: "ArrowRight" });
 
-    const urlTab = screen.getByRole("tab", { name: "URL", selected: true });
+    const urlTab = screen.getByRole("button", { name: "URL", pressed: true });
     expect(document.activeElement).toBe(urlTab);
   });
 });

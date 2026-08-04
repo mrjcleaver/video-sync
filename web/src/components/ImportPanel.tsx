@@ -76,14 +76,13 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
   return (
     <div className="zoom-import" style={{ padding: 0 }}>
       {/* Tab bar */}
-      <div className="import-tabs" role="tablist" aria-label="Import method">
+      <div className="import-tabs" role="group" aria-label="Import method">
         {TABS.map(({ id, label }, index) => (
           <button
             key={id}
             id={`import-tab-${id}`}
             type="button"
-            role="tab"
-            aria-selected={active === id}
+            aria-pressed={active === id}
             aria-controls={`import-panel-${id}`}
             onClick={() => selectTab(id)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
@@ -109,7 +108,7 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
         {active === "meetings" && (
           <div
             id="import-panel-meetings"
-            role="tabpanel"
+            role="region"
             aria-labelledby="import-tab-meetings"
           >
             {/* Shared date range used by both Fireflies and Zoom fetch buttons. */}
@@ -144,12 +143,12 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
           </div>
         )}
         {active === "url" && (
-          <div id="import-panel-url" role="tabpanel" aria-labelledby="import-tab-url">
+          <div id="import-panel-url" role="region" aria-labelledby="import-tab-url">
             <URLImport onImported={onImported} onEvent={onEvent} />
           </div>
         )}
         {active === "manual" && (
-          <div id="import-panel-manual" role="tabpanel" aria-labelledby="import-tab-manual">
+          <div id="import-panel-manual" role="region" aria-labelledby="import-tab-manual">
             <IndexForm onIndexed={onImported} onEvent={onEvent} />
           </div>
         )}
