@@ -14,6 +14,7 @@ export default function ThemeRuntime() {
       isThemePreference(rootPreference) ? rootPreference : readThemePreference(),
     );
 
+    if (typeof window.matchMedia !== "function") return;
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handleSystemThemeChange = () => {
       if (document.documentElement.dataset.themePreference === "system") {

@@ -7,6 +7,7 @@ export function isThemePreference(value: string | null | undefined): value is Th
 }
 
 function getSystemTheme(): Exclude<ThemePreference, "system"> {
+  if (typeof window.matchMedia !== "function") return "light";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
