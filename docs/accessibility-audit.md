@@ -10,9 +10,9 @@ Routes: `/`, `/youtube-callback`
 
 The first remediation pass fixes the shared accessibility foundation and raises the locally reachable main page Lighthouse accessibility score from 96 to 100. It addresses the original automated contrast failures and additional populated-card contrast failures, adds page landmarks and a skip link, restores visible keyboard focus, makes non-native controls keyboard operable, exposes disclosure state, labels key filters and date inputs, announces status changes, and improves narrow-screen reflow.
 
-The project goal also includes readable responsive layouts and clear information hierarchy. Spacing, padding, typography, grouping, and action clarity should improve without changing product behavior. This pass establishes shared layout behavior; the deeper component-level readability work is scoped in PR 3.
+The project goal also includes readable responsive layouts and clear information hierarchy. Spacing, padding, typography, grouping, and action clarity should improve without changing product behavior. This pass establishes shared layout behavior; deeper component-level work is split across focused import, configuration, video-action, and theme PRs.
 
-This is not a claim of complete WCAG conformance. Lighthouse covers only a subset of accessibility requirements. The review used representative local records for populated calendar, queue, video-card, transcript, participant, and provenance states, but it did not contain connected production data. Credential-dependent integrations and destructive workflows still require validation in an authorized environment. The remaining work is grouped into two follow-up PRs below.
+This is not a claim of complete WCAG conformance. Lighthouse covers only a subset of accessibility requirements. The review used representative local records for populated calendar, queue, video-card, transcript, participant, and provenance states, but it did not contain connected production data. Credential-dependent integrations and destructive workflows still require validation in an authorized environment. The remaining work is grouped into four focused follow-up PRs below.
 
 ## Method and scope
 
@@ -30,14 +30,14 @@ Production at `video-sync.agentics.org` redirects to Google Identity-Aware Proxy
 
 | Area | Features reviewed | PR 1 result | Follow-up |
 | --- | --- | --- | --- |
-| Main shell | Header, skip navigation, primary actions, auth state, search, view and filter controls, empty state | Shared landmarks, focus, labels, state, contrast, and reflow improved | Visual hierarchy and text sizing in PR 3 |
+| Main shell | Header, skip navigation, primary actions, auth state, search, view and filter controls, empty state | Shared landmarks, focus, labels, state, contrast, and reflow improved | Light, Dark, and System theme support in PR 5 |
 | Import | Meetings, Zoom, Fireflies, Kaltura, YouTube Live, URL import, manual import, shared date range | Import mode and date inputs now expose names and state | Complete form-label and error review in PR 2 |
-| Connections | Per-user and shared credentials, YouTube authorization | Section is named and reachable | Inline validation, confirmation, and credential field review in PR 2 |
+| Connections | Per-user and shared credentials, YouTube authorization | Section is named and reachable | Inline validation, confirmation, and credential field review in PR 3 |
 | Sync status | Overview, calendar, profile filter, month expansion, status filters | Filter label, pressed state, calendar semantics, keyboard operation, and populated local state checked | Repeat with production-backed data in PR 2 |
-| Backfill | Profiles, queue, start and stop, refresh, expandable queue entries | Mode state, button names, queue semantics, and keyboard operation added | Form labels and live job feedback in PR 2 |
-| Rules | Ingestion, processing, and post-processing rules | Panel disclosures and enable controls now expose state and keyboard behavior | Every field, condition, error, and destructive action in PR 2 |
-| Video cards | Source and destination metadata, participants, transcript, summary, provenance, publish and link actions | Participant, copy, transcript, and provenance interactions use native controls; populated metadata contrast and action reflow corrected | Full action/form/error audit with connected records in PR 2 |
-| Utilities | Shorts, summary prompt, catch up, event log | Named panels, disclosure state, focus entry and Escape close behavior, status announcements | Dense-content readability in PR 3 |
+| Backfill | Profiles, queue, start and stop, refresh, expandable queue entries | Mode state, button names, queue semantics, and keyboard operation added | Form labels and live job feedback in PR 3 |
+| Rules | Ingestion, processing, and post-processing rules | Panel disclosures and enable controls now expose state and keyboard behavior | Every field, condition, error, and destructive action in PR 3 |
+| Video cards | Source and destination metadata, participants, transcript, summary, provenance, publish and link actions | Participant, copy, transcript, and provenance interactions use native controls; populated metadata contrast and action reflow corrected | Full action, form, and error audit in PR 4 |
+| Utilities | Shorts, summary prompt, catch up, event log | Named panels, disclosure state, focus entry and Escape close behavior, status announcements | Theme-safe status and overlay colors in PR 5 |
 | YouTube callback | Pending, success, and failure states | Semantic main heading and announced status | Validate a real OAuth round trip in PR 2 |
 
 ## PR 1 findings addressed
@@ -73,9 +73,14 @@ Production at `video-sync.agentics.org` redirects to Google Identity-Aware Proxy
 
 Lighthouse uses weighted audits to calculate its accessibility score. A perfect automated score does not mean that a page is fully accessible, and manual checks remain necessary. See [Lighthouse accessibility scoring](https://developer.chrome.com/docs/lighthouse/accessibility/scoring).
 
-## PR 2: forms and operational workflows
+## Follow-up PR series
 
 Priority: high. Validate with seeded representative records and configured test integrations.
+
+- PR 2 covers Meetings, URL, Manual, and dormant import-source forms.
+- PR 3 covers Connections, backfill profiles, ingestion and processing rules, post-processing rules, Sync Status, and destructive confirmations.
+- PR 4 covers video-card location, provenance, note, recovery, publish, status, and delete workflows.
+- PR 5 adds persisted Light, Dark, and System themes using semantic color tokens and repeats contrast and reflow checks in both color schemes.
 
 - Give every field in import, connection, backfill, rules, provenance, publish, and link workflows a persistent programmatic label and associated help or error text.
 - Replace browser `alert` and `confirm` calls with accessible inline or dialog feedback, including focus placement and recovery after errors.
@@ -84,7 +89,7 @@ Priority: high. Validate with seeded representative records and configured test 
 - Run complete keyboard-only flows for creating and editing rules, importing each source, linking provenance, publishing, deleting, and OAuth callback handling.
 - Repeat populated overview, calendar, queue, video-card, and provenance checks against connected API data and real integration failures.
 
-## PR 3: readability and visual consistency
+## Ongoing readability backlog
 
 Priority: medium unless user research identifies a workflow blocker.
 
