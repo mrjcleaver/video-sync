@@ -57,7 +57,7 @@ Production at `video-sync.agentics.org` redirects to Google Identity-Aware Proxy
 | The mobile date range could leave the `To` label separated from its input | Kept each visible date label and input together as a wrapping pair | 1.3.1 Info and Relationships, 1.4.10 Reflow |
 | Populated source links, location labels, and summary lozenges failed minimum contrast | Added a text-safe accent and removed opacity-based status dimming | 1.4.3 Contrast (Minimum) |
 | Small shared buttons made touch use difficult | Increased common button heights and preserved adequate spacing | [2.5.8 Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html) |
-| Motion did not honor system preference | Disabled nonessential transitions and animations for reduced-motion users | Accessibility enhancement beyond the Level AA acceptance set |
+| Motion did not honor system preference | Disabled nonessential transitions and animations for reduced-motion users | Accessibility improvement beyond the Level AA acceptance set |
 
 ## Automated and manual evidence
 
