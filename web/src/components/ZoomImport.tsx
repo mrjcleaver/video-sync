@@ -74,7 +74,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
   const [filterDays, setFilterDays] = useState<Set<number>>(new Set());
 
   async function fetchRecordings() {
-    // ADR-042: don't gate on local creds — the server resolves through
+    // ADR-042: don't gate on local creds because the server resolves through
     // local override → shared default → env var. If nothing is configured
     // anywhere, the server returns 400 with a clear message.
     const creds = getZoomCredentials() ?? {};
@@ -133,7 +133,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...(args.creds ?? {}), meetingUuid: args.meeting_uuid }),
       });
-      if (res.status === 404) return; // no CHAT file for this recording — common, silent
+      if (res.status === 404) return; // no CHAT file for this recording, which is common and silent
       if (!res.ok) {
         onEvent(`Zoom chat fetch failed for "${args.title}": ${res.status}`);
         return;
@@ -253,28 +253,35 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Zoom Recordings</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div className="import-source-actions">
           {!datesAreControlled && (
-            <>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setLocalDateFrom(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
-              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setLocalDateTo(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
-            </>
+            <fieldset className="import-date-range import-date-range-compact">
+              <legend>Date range</legend>
+              <label className="import-field">
+                <span className="import-field-label">From</span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setLocalDateFrom(e.target.value)}
+                />
+              </label>
+              <label className="import-field">
+                <span className="import-field-label">To</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setLocalDateTo(e.target.value)}
+                />
+              </label>
+            </fieldset>
           )}
           <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={fetchRecordings}
             disabled={loading}
+            aria-busy={loading}
+            aria-describedby={error ? "zoom-import-message" : undefined}
           >
             {loading ? "Fetching..." : "Fetch from Zoom"}
           </button>
@@ -289,46 +296,59 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
         transcript file available for that recording.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="zoom-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {fetched && meetings.length > 0 && (
         <>
-          <div className="zoom-import-filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-            <input
-              placeholder="Filter by title..."
-              value={filterTitle}
-              onChange={(e) => setFilterTitle(e.target.value)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 140px" }}
-            />
-            <input
-              placeholder="Min (min)"
-              type="number"
-              value={filterMinLen}
-              onChange={(e) => setFilterMinLen(e.target.value)}
-              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            />
-            <input
-              placeholder="Max (min)"
-              type="number"
-              value={filterMaxLen}
-              onChange={(e) => setFilterMaxLen(e.target.value)}
-              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            />
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Days:</span>
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
-              <button
-                key={d}
-                className={`btn btn-sm ${filterDays.has(i) ? "btn-primary" : ""}`}
-                style={{ padding: "2px 6px", fontSize: "0.7rem" }}
-                onClick={() => setFilterDays((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(i)) next.delete(i); else next.add(i);
-                  return next;
-                })}
-              >
-                {d}
-              </button>
-            ))}
+          <div className="zoom-import-filters">
+            <label className="import-field import-field-grow">
+              <span className="import-field-label">Title</span>
+              <input
+                placeholder="Search titles"
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-number">
+              <span className="import-field-label">Minimum minutes</span>
+              <input
+                type="number"
+                value={filterMinLen}
+                onChange={(e) => setFilterMinLen(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-number">
+              <span className="import-field-label">Maximum minutes</span>
+              <input
+                type="number"
+                value={filterMaxLen}
+                onChange={(e) => setFilterMaxLen(e.target.value)}
+              />
+            </label>
+            <fieldset className="import-option-group">
+              <legend>Days</legend>
+              <div className="import-day-buttons">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
+                  <button
+                    key={d}
+                    type="button"
+                    aria-pressed={filterDays.has(i)}
+                    className={`btn btn-sm ${filterDays.has(i) ? "btn-primary" : ""}`}
+                    onClick={() => setFilterDays((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(i)) next.delete(i); else next.add(i);
+                      return next;
+                    })}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
           </div>
           <div className="zoom-import-list">
             {meetings.filter((m) => {

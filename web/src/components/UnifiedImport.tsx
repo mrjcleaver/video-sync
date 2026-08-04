@@ -231,7 +231,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
       if (!res.ok) return;
       const data = await res.json();
       setYtStats(new Map(Object.entries(data.stats as Record<string, VideoStats>)));
-    } catch { /* non-blocking — stats are decorative */ }
+    } catch { /* non-blocking because stats are decorative */ }
   }, []);
 
   async function fetchAll() {
@@ -262,7 +262,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
           if (!res.ok) errors.push(`Zoom: ${(data.error as string) ?? `HTTP ${res.status}`}`);
           else zooms = (data.meetings as ZoomMeeting[]) ?? [];
         } catch (e) {
-          errors.push(`Zoom: ${e instanceof TypeError && String(e).includes("fetch") ? "Server unreachable — is the dev server running?" : String(e)}`);
+          errors.push(`Zoom: ${e instanceof TypeError && String(e).includes("fetch") ? "Server unreachable. Is the dev server running?" : String(e)}`);
         }
       })(),
       (async () => {
@@ -276,7 +276,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
           if (!res.ok) errors.push(`Fireflies: ${(data.error as string) ?? `HTTP ${res.status}`}`);
           else ffs = (data.transcripts as FFTranscript[]) ?? [];
         } catch (e) {
-          errors.push(`Fireflies: ${e instanceof TypeError && String(e).includes("fetch") ? "Server unreachable — is the dev server running?" : String(e)}`);
+          errors.push(`Fireflies: ${e instanceof TypeError && String(e).includes("fetch") ? "Server unreachable. Is the dev server running?" : String(e)}`);
         }
       })(),
     ]);
@@ -305,7 +305,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
     let titleRe: RegExp | null = null;
     try {
       if (filterTitle) titleRe = new RegExp(filterTitle, "i");
-    } catch { /* invalid regex — ignore */ }
+    } catch { /* invalid regex, ignore */ }
     const minMin = Number(filterMinLen) || 0;
     return sessions.filter((s) => {
       if (titleRe && !titleRe.test(s.title)) return false;
@@ -454,68 +454,93 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Import</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input
-            type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
-          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-          <input
-            type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-          />
-          <button className="btn btn-sm btn-primary" onClick={fetchAll} disabled={loading}>
+        <div className="import-source-actions">
+          <fieldset className="import-date-range import-date-range-compact">
+            <legend>Date range</legend>
+            <label className="import-field">
+              <span className="import-field-label">From</span>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </label>
+            <label className="import-field">
+              <span className="import-field-label">To</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </label>
+          </fieldset>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={fetchAll}
+            disabled={loading}
+            aria-busy={loading}
+            aria-describedby={error ? "unified-import-message" : undefined}
+          >
             {loading ? "Fetching…" : "Fetch Zoom + Fireflies"}
           </button>
-          <button className="btn btn-sm" onClick={bulkMatchProvenance} title="Auto-link all already-imported records by Zoom meeting ID and timestamp">
+          <button type="button" className="btn btn-sm" onClick={bulkMatchProvenance} title="Auto-link all already-imported records by Zoom meeting ID and timestamp">
             Bulk Match Provenance
           </button>
         </div>
       </div>
 
       {fetchStatus && !loading && (
-        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>{fetchStatus}</div>
+        <div className="import-status-message" role="status">{fetchStatus}</div>
       )}
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="unified-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {fetched && sessions.length > 0 && (
         <>
           {/* Filters */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-            <input
-              placeholder="Title filter (regex)…"
-              value={filterTitle}
-              onChange={(e) => setFilterTitle(e.target.value)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 160px" }}
-            />
-            <input
-              placeholder="Min (min)"
-              type="number"
-              value={filterMinLen}
-              onChange={(e) => setFilterMinLen(e.target.value)}
-              style={{ width: 72, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            />
-            {(["All", "Zoom", "Fireflies"] as const).map((src) => (
+          <div className="zoom-import-filters">
+            <label className="import-field import-field-grow">
+              <span className="import-field-label">Title pattern</span>
+              <input
+                placeholder="Regular expression"
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-number">
+              <span className="import-field-label">Minimum minutes</span>
+              <input
+                type="number"
+                value={filterMinLen}
+                onChange={(e) => setFilterMinLen(e.target.value)}
+              />
+            </label>
+            <fieldset className="import-option-group import-source-filter">
+              <legend>Source</legend>
+              <div className="import-day-buttons">
+                {(["All", "Zoom", "Fireflies"] as const).map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    aria-pressed={filterSource === src}
+                    className={`btn btn-sm ${filterSource === src ? "btn-primary" : ""}`}
+                    onClick={() => setFilterSource(src)}
+                  >
+                    {src}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <div className="import-filter-actions">
               <button
-                key={src}
-                className={`btn btn-sm ${filterSource === src ? "btn-primary" : ""}`}
-                style={{ padding: "2px 8px", fontSize: "0.75rem" }}
-                onClick={() => setFilterSource(src)}
+                type="button"
+                className={`btn btn-sm ${hidePublished ? "btn-primary" : ""}`}
+                onClick={() => setHidePublished((v) => !v)}
+                title="Toggle visibility of sessions already published to YouTube"
+                aria-pressed={hidePublished}
               >
-                {src}
+                {hidePublished ? "▶ Hide YouTube" : "▶ Show YouTube"}
               </button>
-            ))}
-            <button
-              className={`btn btn-sm ${hidePublished ? "btn-primary" : ""}`}
-              style={{ fontSize: "0.75rem" }}
-              onClick={() => setHidePublished((v) => !v)}
-              title="Toggle visibility of sessions already published to YouTube"
-            >
-              {hidePublished ? "▶ Hide YouTube" : "▶ Show YouTube"}
-            </button>
-            <button className="btn btn-sm" style={{ fontSize: "0.75rem" }} onClick={selectAll}>
-              Select all ({visible.length})
-            </button>
+              <button type="button" className="btn btn-sm" onClick={selectAll}>
+                Select all ({visible.length})
+              </button>
+            </div>
           </div>
 
           {/* Session list */}
@@ -560,7 +585,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
                         : 0;
                       if (preRunMin <= 5) return null;
                       return (
-                        <span style={{ color: "#f5a623", marginLeft: 6 }} title={`Fireflies started ~${preRunMin} min before Zoom — likely includes pre-meeting coordination. Consider trimming (ADR-021).`}>
+                        <span style={{ color: "#f5a623", marginLeft: 6 }} title={`Fireflies started ~${preRunMin} min before Zoom. It likely includes pre-meeting coordination. Consider trimming (ADR-021).`}>
                           ⚠ {preRunMin}m pre-run
                         </span>
                       );
@@ -609,7 +634,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
       )}
 
       {fetched && sessions.length === 0 && !loading && (
-        <div className="zoom-import-error">No recordings found for this date range.</div>
+        <div className="import-status-message" role="status">No recordings found for this date range.</div>
       )}
     </div>
   );

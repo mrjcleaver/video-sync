@@ -72,7 +72,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
   const [liveOnly, setLiveOnly] = useState(false);
 
   async function fetchEntries() {
-    // ADR-042: Kaltura is shared-only — operators see no override field, so
+    // ADR-042: Kaltura is shared-only. Operators see no override field, so
     // the local creds will normally be null. Server resolves from shared
     // Secret Manager. If neither is configured, server returns 400.
     const creds = getKalturaCredentials();
@@ -129,7 +129,7 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         source_platform: "Kaltura",
         title: e.name,
         description: e.description ?? undefined,
-        // WASM IndexVideo.duration_seconds is a u32 — a fractional value
+        // WASM IndexVideo.duration_seconds is a u32. A fractional value
         // (Kaltura sometimes returns sub-second precision) makes serde
         // throw "invalid type: floating point …, expected u32" and aborts
         // the whole import. Coerce to a non-negative integer, matching
@@ -146,10 +146,10 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
       cmd.metadata_extra = meta;
 
       // Wrap per-entry so one bad record doesn't silently abort the whole
-      // batch — surface the failure to the EventLog and keep going.
+      // batch. Surface the failure to the EventLog and keep going.
       try {
         const record = new WasmVideoRecord(JSON.stringify(cmd));
-        // Record the existing Kaltura entry as a Destination location too —
+        // Record the existing Kaltura entry as a Destination location too.
         // this video is already on Kaltura, so the Kaltura lozenge in
         // Overview should light up immediately.
         videoStore.add(record);
@@ -168,12 +168,12 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
           .then(async r => {
             if (r.status === 404 || r.status === 409 || r.status === 415 || r.status === 422) {
               // Expected misses: no captions / not ready / format unsupported / empty.
-              // Don't spam the EventLog for these — operators don't need a line per record.
+              // Don't spam the EventLog for these. Operators don't need a line per record.
               return null;
             }
             if (!r.ok) {
               const j = await r.json().catch(() => ({}));
-              onEvent(`Kaltura captions failed: "${title}" — ${(j as { error?: string }).error ?? r.status}`, { video_id: recordId });
+              onEvent(`Kaltura captions failed: "${title}". ${(j as { error?: string }).error ?? r.status}`, { video_id: recordId });
               return null;
             }
             const data = await r.json() as { text: string; language?: string; format?: string };
@@ -182,14 +182,14 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
           .then(data => {
             if (!data) return;
             videoStore.setTranscript(recordId, data.text);
-            onEvent(`Kaltura captions imported: "${title}" — ${data.text.split("\n").length} lines (${data.format ?? "?"}, ${data.language ?? "?"})`, { video_id: recordId });
+            onEvent(`Kaltura captions imported: "${title}". ${data.text.split("\n").length} lines (${data.format ?? "?"}, ${data.language ?? "?"})`, { video_id: recordId });
           })
           .catch(err => {
-            onEvent(`Kaltura captions error: "${title}" — ${String(err).slice(0, 120)}`, { video_id: recordId });
+            onEvent(`Kaltura captions error: "${title}". ${String(err).slice(0, 120)}`, { video_id: recordId });
           });
       } catch (err) {
         failed++;
-        onEvent(`Kaltura import failed: "${e.name}" — ${err instanceof Error ? err.message : String(err)}`);
+        onEvent(`Kaltura import failed: "${e.name}". ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     if (skipped > 0) onEvent(`Kaltura import: ${skipped} excluded entr${skipped === 1 ? "y" : "ies"} skipped`);
@@ -212,17 +212,28 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Kaltura Entries</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div className="import-source-actions">
           {!datesAreControlled && (
-            <>
-              <input type="date" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
-              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-              <input type="date" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
-            </>
+            <fieldset className="import-date-range import-date-range-compact">
+              <legend>Date range</legend>
+              <label className="import-field">
+                <span className="import-field-label">From</span>
+                <input type="date" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)} />
+              </label>
+              <label className="import-field">
+                <span className="import-field-label">To</span>
+                <input type="date" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)} />
+              </label>
+            </fieldset>
           )}
-          <button className="btn btn-sm btn-primary" onClick={fetchEntries} disabled={loading}>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={fetchEntries}
+            disabled={loading}
+            aria-busy={loading}
+            aria-describedby={error ? "kaltura-import-message" : undefined}
+          >
             {loading ? "Fetching..." : "Fetch from Kaltura"}
           </button>
         </div>
@@ -232,21 +243,27 @@ export default function KalturaImport({ onImported, onEvent, dateFrom: dateFromP
         Pull entries directly from your Kaltura account into the catalog with{" "}
         <strong>source_platform: Kaltura</strong>. Includes live broadcasts captured
         via streaming software (OBS, Streamyard, Wirecast) that landed on Kaltura
-        as VOD entries — the <em>Live</em> filter narrows to those.
+        as VOD entries. The <em>Live</em> filter narrows to those.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="kaltura-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {fetched && entries.length > 0 && (
         <>
-          <div className="zoom-import-filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-            <input
-              placeholder="Filter by title..."
-              value={filterTitle}
-              onChange={(e) => setFilterTitle(e.target.value)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 140px" }}
-            />
-            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+          <div className="zoom-import-filters">
+            <label className="import-field import-field-grow">
+              <span className="import-field-label">Title</span>
+              <input
+                placeholder="Search titles"
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+            </label>
+            <label className="import-toggle-label">
               <input type="checkbox" checked={liveOnly} onChange={e => setLiveOnly(e.target.checked)} />
               Live only
             </label>

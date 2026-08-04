@@ -31,7 +31,7 @@ interface Props {
 }
 
 function fmtDuration(secs: number): string {
-  if (!secs) return "—";
+  if (!secs) return "Not available";
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = Math.floor(secs % 60);
@@ -181,52 +181,71 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>YouTube Live Broadcasts</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div className="import-source-actions">
           {!datesAreControlled && (
-            <>
-              <input type="date" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
-              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-              <input type="date" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
-            </>
+            <fieldset className="import-date-range import-date-range-compact">
+              <legend>Date range</legend>
+              <label className="import-field">
+                <span className="import-field-label">From</span>
+                <input type="date" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)} />
+              </label>
+              <label className="import-field">
+                <span className="import-field-label">To</span>
+                <input type="date" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)} />
+              </label>
+            </fieldset>
           )}
-          <button className="btn btn-sm btn-primary" onClick={fetchBroadcasts} disabled={loading}>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={fetchBroadcasts}
+            disabled={loading}
+            aria-busy={loading}
+            aria-describedby={error ? "youtube-live-import-message" : undefined}
+          >
             {loading ? "Fetching..." : "Fetch from YouTube"}
           </button>
         </div>
       </div>
 
       <HelpTip>
-        Pulls broadcasts from your YouTube channel — past, currently-live, and
-        upcoming. These are the entries on YouTube Studio&apos;s Live tab,
+        Pulls past, currently-live, and upcoming broadcasts from your YouTube channel.
+        These are the entries on YouTube Studio&apos;s Live tab,
         produced by streaming software (OBS, Streamyard, Wirecast, vMix)
         that ingests via YouTube Live RTMP. <strong>Recorded-at</strong> is
         the actual start time of the broadcast, so the catalog row lands on
         the right day in Sync Status.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="youtube-live-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {fetched && broadcasts.length > 0 && (
         <>
-          <div className="zoom-import-filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-            <input
-              placeholder="Filter by title..."
-              value={filterTitle}
-              onChange={(e) => setFilterTitle(e.target.value)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 140px" }}
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            >
-              <option value="all">All broadcasts</option>
-              <option value="completed">Completed (past)</option>
-              <option value="live">Currently live</option>
-              <option value="upcoming">Upcoming</option>
-            </select>
+          <div className="zoom-import-filters">
+            <label className="import-field import-field-grow">
+              <span className="import-field-label">Title</span>
+              <input
+                placeholder="Search titles"
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-select">
+              <span className="import-field-label">Broadcast status</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              >
+                <option value="all">All broadcasts</option>
+                <option value="completed">Completed (past)</option>
+                <option value="live">Currently live</option>
+                <option value="upcoming">Upcoming</option>
+              </select>
+            </label>
           </div>
           <div className="zoom-import-list">
             {visible.map((b) => {
@@ -237,7 +256,7 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
                   <div>
                     <span className="zoom-import-topic">{b.title}</span>
                     <span className="zoom-import-meta">
-                      {when ? new Date(when).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                      {when ? new Date(when).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Date not available"}
                       {" · "}
                       <span title={`${Math.round(b.duration_seconds / 60)} min`}>{fmtDuration(b.duration_seconds)}</span>
                       {b.liveBroadcastContent === "live" && <span style={{ color: "#f87171", marginLeft: 6, fontWeight: 600 }}>● LIVE</span>}

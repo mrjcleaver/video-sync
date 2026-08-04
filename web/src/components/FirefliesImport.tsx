@@ -49,7 +49,7 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
-  // Local fallback dates — used only when no parent-controlled dates are passed
+  // Local fallback dates are used only when no parent-controlled dates are passed
   // (i.e. component is rendered standalone, not inside the merged Meetings tab).
   const [localDateFrom, setLocalDateFrom] = useState(() => {
     const d = new Date(Date.now() - 30 * 86400000);
@@ -122,7 +122,7 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
         duration_seconds: t.duration_seconds,
         participants: t.participants,
         download_url: t.download_url ?? `fireflies://unknown`,
-        // transcript_text intentionally omitted — stored in JS cache, not WASM heap
+        // transcript_text intentionally omitted because it is stored in the JS cache, not the WASM heap
         tags: t.tags,
         recorded_at: t.recorded_at,
       };
@@ -171,28 +171,35 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Fireflies Transcripts</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div className="import-source-actions">
           {!datesAreControlled && (
-            <>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setLocalDateFrom(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
-              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setLocalDateTo(e.target.value)}
-                style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              />
-            </>
+            <fieldset className="import-date-range import-date-range-compact">
+              <legend>Date range</legend>
+              <label className="import-field">
+                <span className="import-field-label">From</span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setLocalDateFrom(e.target.value)}
+                />
+              </label>
+              <label className="import-field">
+                <span className="import-field-label">To</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setLocalDateTo(e.target.value)}
+                />
+              </label>
+            </fieldset>
           )}
           <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={fetchTranscripts}
             disabled={loading}
+            aria-busy={loading}
+            aria-describedby={error ? "fireflies-import-message" : undefined}
           >
             {loading ? "Fetching..." : "Fetch from Fireflies"}
           </button>
@@ -202,51 +209,64 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
       <HelpTip>
         Import meeting transcripts from Fireflies.ai. Choose a date range and filter by title,
         duration, or day of week. Meetings with a <strong>✓ transcript</strong> badge include
-        full text that will be stored alongside the video record — useful for LLM-generated
+        full text that will be stored alongside the video record. This is useful for LLM-generated
         descriptions in Processing Rules. Your Fireflies API key must be configured in
         Connections first.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="fireflies-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {fetched && transcripts.length > 0 && (
         <>
-          <div className="zoom-import-filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-            <input
-              placeholder="Filter by title..."
-              value={filterTitle}
-              onChange={(e) => setFilterTitle(e.target.value)}
-              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem", flex: "1 1 140px" }}
-            />
-            <input
-              placeholder="Min (min)"
-              type="number"
-              value={filterMinLen}
-              onChange={(e) => setFilterMinLen(e.target.value)}
-              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            />
-            <input
-              placeholder="Max (min)"
-              type="number"
-              value={filterMaxLen}
-              onChange={(e) => setFilterMaxLen(e.target.value)}
-              style={{ width: 80, padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-            />
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Days:</span>
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
-              <button
-                key={d}
-                className={`btn btn-sm ${filterDays.has(i) ? "btn-primary" : ""}`}
-                style={{ padding: "2px 6px", fontSize: "0.7rem" }}
-                onClick={() => setFilterDays((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(i)) next.delete(i); else next.add(i);
-                  return next;
-                })}
-              >
-                {d}
-              </button>
-            ))}
+          <div className="zoom-import-filters">
+            <label className="import-field import-field-grow">
+              <span className="import-field-label">Title</span>
+              <input
+                placeholder="Search titles"
+                value={filterTitle}
+                onChange={(e) => setFilterTitle(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-number">
+              <span className="import-field-label">Minimum minutes</span>
+              <input
+                type="number"
+                value={filterMinLen}
+                onChange={(e) => setFilterMinLen(e.target.value)}
+              />
+            </label>
+            <label className="import-field import-field-number">
+              <span className="import-field-label">Maximum minutes</span>
+              <input
+                type="number"
+                value={filterMaxLen}
+                onChange={(e) => setFilterMaxLen(e.target.value)}
+              />
+            </label>
+            <fieldset className="import-option-group">
+              <legend>Days</legend>
+              <div className="import-day-buttons">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
+                  <button
+                    key={d}
+                    type="button"
+                    aria-pressed={filterDays.has(i)}
+                    className={`btn btn-sm ${filterDays.has(i) ? "btn-primary" : ""}`}
+                    onClick={() => setFilterDays((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(i)) next.delete(i); else next.add(i);
+                      return next;
+                    })}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
           </div>
           <div className="zoom-import-list">
             {visible.map((t) => (

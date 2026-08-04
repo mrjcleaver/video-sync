@@ -132,28 +132,27 @@ export default function YouTubeImport({ onImported, onEvent }: Props) {
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>YouTube Import</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
-          <input
-            type="text"
-            placeholder="Paste YouTube URL or video ID…"
-            value={urlInput}
-            onChange={(e) => handleUrlChange(e.target.value)}
-            onBlur={() => urlInput && fetchPreview(urlInput)}
-            onKeyDown={(e) => e.key === "Enter" && urlInput && fetchPreview(urlInput)}
-            style={{
-              flex: 1,
-              padding: "4px 8px",
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              color: "var(--text)",
-              fontSize: "0.8rem",
-            }}
-          />
+        <div className="import-source-actions import-source-actions-grow">
+          <label className="import-field import-field-grow">
+            <span className="import-field-label">YouTube URL or video ID</span>
+            <input
+              type="text"
+              placeholder="Paste a URL or video ID"
+              value={urlInput}
+              onChange={(e) => handleUrlChange(e.target.value)}
+              onBlur={() => urlInput && fetchPreview(urlInput)}
+              onKeyDown={(e) => e.key === "Enter" && urlInput && fetchPreview(urlInput)}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "youtube-import-message" : undefined}
+            />
+          </label>
           <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={() => fetchPreview(urlInput)}
             disabled={loading || !urlInput.trim()}
+            aria-busy={loading}
+            aria-describedby={error ? "youtube-import-message" : undefined}
           >
             {loading ? "Fetching…" : "Fetch"}
           </button>
@@ -164,11 +163,15 @@ export default function YouTubeImport({ onImported, onEvent }: Props) {
         Import a video already hosted on YouTube by pasting its URL. Supports{" "}
         <code>youtube.com/watch</code>, <code>youtube.com/live</code>, <code>youtu.be</code>, and{" "}
         <code>youtube.com/embed</code> formats. The video will be downloaded via{" "}
-        <strong>yt-dlp</strong> at publish time — ensure you have the rights to reproduce the
+        <strong>yt-dlp</strong> at publish time. Make sure you have the rights to reproduce the
         content before importing.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && (
+        <div id="youtube-import-message" className="zoom-import-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {preview && (
         <div style={{ marginTop: 12, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
@@ -177,7 +180,7 @@ export default function YouTubeImport({ onImported, onEvent }: Props) {
             {preview.thumbnailUrl && (
               <img
                 src={preview.thumbnailUrl}
-                alt="thumbnail"
+                alt=""
                 style={{ width: 140, height: 79, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
               />
             )}
