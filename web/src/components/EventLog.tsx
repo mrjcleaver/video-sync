@@ -43,9 +43,9 @@ export default function EventLog({ events, forceShow = false }: Props) {
   if (!hasContent && !forceShow) return null;
 
   return (
-    <div className="event-log">
+    <section id="event-log" className="event-log" aria-labelledby="event-log-heading">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h2 style={{ margin: 0 }}>
+        <h2 id="event-log-heading" style={{ margin: 0 }}>
           Event Log
           {stored.length > 0 && (
             <span style={{ fontSize: "0.75rem", fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
@@ -58,6 +58,7 @@ export default function EventLog({ events, forceShow = false }: Props) {
             className="btn btn-sm"
             onClick={() => setShowStructured((v) => !v)}
             style={{ fontSize: "0.72rem" }}
+            aria-pressed={showStructured}
           >
             {showStructured ? "Session view" : "Structured view"}
           </button>
@@ -83,7 +84,7 @@ export default function EventLog({ events, forceShow = false }: Props) {
               </span>
               <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{r.component}</span>
               <span>{r.msg}</span>
-              {r.error && <span style={{ color: LEVEL_COLOR.error }}>— {r.error}</span>}
+              {r.error && <span style={{ color: LEVEL_COLOR.error }}>Error: {r.error}</span>}
               {r.duration_ms !== undefined && (
                 <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>{r.duration_ms}ms</span>
               )}
@@ -112,6 +113,6 @@ export default function EventLog({ events, forceShow = false }: Props) {
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

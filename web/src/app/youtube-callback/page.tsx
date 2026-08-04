@@ -92,8 +92,8 @@ function CallbackHandler() {
 
         const chName = yt.credentials.authorizedChannelTitle;
         setStatus(chName
-          ? `Authorized for channel "${chName}"! Redirecting...`
-          : "YouTube authorized successfully! Redirecting...");
+          ? `Authorized for channel "${chName}". Redirecting...`
+          : "YouTube authorized successfully. Redirecting...");
         setTimeout(() => router.push("/"), 2000);
       })
       .catch((err) => {
@@ -107,24 +107,27 @@ function CallbackHandler() {
       });
   }, [searchParams, router]);
 
-  return <p>{status}</p>;
+  return <p role="status" aria-live="polite" aria-atomic="true">{status}</p>;
 }
 
 export default function YouTubeCallback() {
   return (
-    <div style={{
+    <main style={{
       display: "flex",
+      flexDirection: "column",
+      gap: 8,
       alignItems: "center",
       justifyContent: "center",
-      height: "60vh",
+      minHeight: "60dvh",
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       color: "#e5e5e5",
       background: "#0a0a0a",
       fontSize: "1rem",
     }}>
-      <Suspense fallback={<p>Loading...</p>}>
+      <h1 style={{ fontSize: "1.25rem" }}>YouTube authorization</h1>
+      <Suspense fallback={<p role="status">Loading authorization status...</p>}>
         <CallbackHandler />
       </Suspense>
-    </div>
+    </main>
   );
 }

@@ -64,15 +64,15 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
   return (
     <div className="backfill-calendar">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <button className="btn btn-sm" onClick={prevMonth}>‹</button>
+        <button className="btn btn-sm" onClick={prevMonth} aria-label="Show previous month">‹</button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
+          <span aria-live="polite" style={{ fontWeight: 600 }}>{MONTH_NAMES[month]} {year}</span>
           <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
             <input type="checkbox" checked={targetOnly} onChange={e => setTargetOnly(e.target.checked)} />
             Target days only
           </label>
         </div>
-        <button className="btn btn-sm" onClick={nextMonth} disabled={isCurrentMonth}>›</button>
+        <button className="btn btn-sm" onClick={nextMonth} disabled={isCurrentMonth} aria-label="Show next month">›</button>
       </div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: "0.75rem", color: "var(--text-muted)" }}>
@@ -81,9 +81,9 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
         <span style={{ color: "var(--text-muted)" }}>○ {gaps} gaps</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+      <div role="group" aria-label={`${MONTH_NAMES[month]} ${year} video status calendar`} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
         {DAY_NAMES.map(d => (
-          <div key={d} style={{ textAlign: "center", fontSize: "0.65rem", color: "var(--text-muted)", padding: "2px 0", fontWeight: 600 }}>
+          <div aria-hidden="true" key={d} style={{ textAlign: "center", fontSize: "0.65rem", color: "var(--text-muted)", padding: "2px 0", fontWeight: 600 }}>
             {d}
           </div>
         ))}
@@ -101,6 +101,17 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
               key={slot.date}
               title={slot.video ? `${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}\n${slot.video.status}` : slot.is_target ? "No source found" : ""}
               onClick={slot.video ? () => (onNavigateToVideo ?? scrollToVideo)(slot.video!.id) : undefined}
+              onKeyDown={slot.video ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  (onNavigateToVideo ?? scrollToVideo)(slot.video!.id);
+                }
+              } : undefined}
+              role={slot.video ? "button" : undefined}
+              tabIndex={slot.video ? 0 : undefined}
+              aria-label={slot.video
+                ? `${slot.date}: ${(() => { const fv = videoMap.get(slot.video.id); return fv ? getDisplayTitle(fv) : slot.video.title; })()}, ${slot.video.status}`
+                : slot.is_target ? `${slot.date}: no source found` : slot.date}
               style={{
                 padding: "4px 2px",
                 borderRadius: 4,
@@ -115,13 +126,13 @@ export default function BackfillCalendar({ videos, profile, onNavigateToVideo }:
                 {new Date(slot.date + "T00:00:00").getDate()}
               </div>
               {slot.video && (
-                <div style={{
+                <div aria-hidden="true" style={{
                   width: 8, height: 8, borderRadius: "50%",
                   background: color, margin: "2px auto 0",
                 }} />
               )}
               {slot.is_target && !slot.video && (
-                <div style={{
+                <div aria-hidden="true" style={{
                   width: 4, height: 4, borderRadius: "50%",
                   background: "var(--border)", margin: "4px auto 0",
                 }} />

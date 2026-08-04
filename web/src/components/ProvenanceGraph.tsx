@@ -45,7 +45,8 @@ function RealNodeCard({
   const r = node.record;
   const title = r.title.length > 45 ? r.title.slice(0, 44) + "…" : r.title;
   return (
-    <div
+    <button
+      type="button"
       style={{
         background: "var(--bg-card)",
         border: "1px solid var(--border)",
@@ -54,9 +55,13 @@ function RealNodeCard({
         minWidth: 180,
         maxWidth: 220,
         cursor: onJumpTo ? "pointer" : "default",
+        color: "inherit",
+        font: "inherit",
+        textAlign: "left",
       }}
       onClick={() => onJumpTo?.(r.id)}
-      title={onJumpTo ? "Click to jump to card" : undefined}
+      disabled={!onJumpTo}
+      aria-label={onJumpTo ? `Open ${title} in the video list` : undefined}
     >
       <div style={{ fontSize: "0.65rem", color: "var(--accent)", fontWeight: 600, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.04em" }}>
         {platformLabel(r.source_platform)}
@@ -65,7 +70,7 @@ function RealNodeCard({
         {title}
       </div>
       <StatusBadge status={r.status} />
-    </div>
+    </button>
   );
 }
 
@@ -129,7 +134,7 @@ function DestCard({ dest }: { dest: DestinationNode }) {
 
 function Arrow() {
   return (
-    <div style={{
+    <div aria-hidden="true" style={{
       display: "flex",
       alignItems: "center",
       padding: "0 8px",

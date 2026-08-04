@@ -62,11 +62,12 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
   return (
     <div className="zoom-import" style={{ padding: 0 }}>
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+      <div role="group" aria-label="Import method" style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
         {TABS.map(({ id, label }) => (
           <button
             key={id}
             onClick={() => selectTab(id)}
+            aria-pressed={active === id}
             style={{
               padding: "8px 16px",
               fontSize: "0.82rem",
@@ -89,16 +90,19 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
         {active === "meetings" && (
           <>
             {/* Shared date range — used by both Fireflies and Zoom fetch buttons. */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px 0", fontSize: "0.82rem", color: "var(--text-muted)" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px 0", fontSize: "0.82rem", color: "var(--text-muted)", flexWrap: "wrap" }}>
               <span>Date range:</span>
+              <label htmlFor="import-date-from">From</label>
               <input
+                id="import-date-from"
                 type="date"
                 value={dateFrom}
                 onChange={(e) => onDateFromChange(e.target.value)}
                 style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
               />
-              <span>to</span>
+              <label htmlFor="import-date-to">To</label>
               <input
+                id="import-date-to"
                 type="date"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}

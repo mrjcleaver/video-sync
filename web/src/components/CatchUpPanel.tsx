@@ -58,6 +58,8 @@ const STATUS_COLOR: Record<StageStatus, string> = {
 };
 
 export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const actorState = useCurrentActor();
   const [maxRecords, setMaxRecords] = useState(1);
   const [costCapUsd, setCostCapUsd] = useState(10);
@@ -71,6 +73,21 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
   // Rendered log lines streamed live into the panel.
   const [logLines, setLogLines] = useState<Array<{ ts: string; level: "info" | "warn" | "error"; text: string }>>([]);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [open]);
 
   // Eligible records preview: most-recent-first, capped at maxRecords.
   // Same selection the orchestrator uses, so the est. cost matches what
@@ -338,6 +355,11 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
     // clicks on the rest of the dashboard. Long catch-up runs can stay
     // open while the operator inspects cards in parallel.
     <div
+      ref={panelRef}
+      tabIndex={-1}
+      id="catch-up-panel"
+      role="dialog"
+      aria-labelledby="catch-up-heading"
       style={{
         position: "fixed",
         top: 16,
@@ -354,7 +376,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose }: Props) 
       }}
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>🏃 Catch Up (ADR-047)</h2>
+          <h2 id="catch-up-heading" style={{ margin: 0, fontSize: "1.1rem" }}>Catch up</h2>
           <button className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
 

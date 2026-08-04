@@ -1554,13 +1554,17 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         <span>{formatDate(video.recorded_at || video.indexed_at)}</span>
         {video.participants.length > 0 && (
-          <span
+          <button
+            type="button"
+            className="meta-button"
             onClick={() => setShowParticipants(v => !v)}
             style={{ cursor: "pointer", userSelect: "none" }}
             title={showParticipants ? "Hide participants" : "Show participants"}
+            aria-expanded={showParticipants}
+            aria-controls={`participants-${video.id}`}
           >
             {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
-          </span>
+          </button>
         )}
         {/* Drive folder link — opens the artifacts folder (transcript,
             description, summary, chat) for this record. */}
@@ -1652,11 +1656,14 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         ))}
         {/* Catalog UUID — clickable to copy. Useful when correlating with
             server logs, .meta.json files, or webhook payloads. */}
-        <span
+        <button
+          type="button"
+          className="meta-button"
           onClick={() => {
             navigator.clipboard?.writeText(video.id).catch(() => {});
           }}
-          title="Click to copy the catalog ID"
+          title="Copy the catalog ID"
+          aria-label={`Copy catalog ID ${video.id}`}
           style={{
             cursor: "pointer",
             fontFamily: "monospace",
@@ -1666,7 +1673,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           }}
         >
           {video.id.slice(0, 8)}…
-        </span>
+        </button>
       </div>
 
       {/* ADR-046 slice 5 — "last regenerated" detail. Shown whenever a
@@ -1687,7 +1694,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       )}
 
       {showParticipants && video.participants.length > 0 && (
-        <div style={{
+        <div id={`participants-${video.id}`} style={{
           marginBottom: 8, padding: "6px 10px",
           background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
           display: "flex", flexWrap: "wrap", gap: 4,

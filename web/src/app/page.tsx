@@ -234,7 +234,7 @@ export default function Dashboard() {
   [videos, broadcastPairs, showPaired]);
 
   if (!ready) {
-    return <div className="loading">Loading WASM module...</div>;
+    return <main className="loading" role="status" aria-live="polite">Loading video catalog...</main>;
   }
 
   function lastChange(v: VideoRecordJSON): number {
@@ -285,10 +285,12 @@ export default function Dashboard() {
 
   return (
     <ErrorBoundary>
-    <div className="container">
+    <>
+    <a className="skip-link" href="#main-content">Skip to main content</a>
+    <main id="main-content" className="container" tabIndex={-1}>
       {/* ADR-036: surface auth errors instead of silently falling back to admin */}
       {actorState.error && (
-        <div style={{
+        <div role="alert" style={{
           padding: "10px 14px",
           background: "rgba(248,113,113,0.1)",
           border: "1px solid rgba(248,113,113,0.3)",
@@ -301,10 +303,10 @@ export default function Dashboard() {
           Mutating actions (approve, publish, etc.) will fail. Contact your Workspace admin to be added to a video-sync group.
         </div>
       )}
-      <div className="header">
+      <header className="header">
         <h1>Video Sync</h1>
         <BuildBadge />
-        <div className="stats">
+        <nav className="stats" aria-label="Dashboard utilities">
           <span className="stat-badge">{videos.length} total</span>
           {counts["Discovered"] && (
             <span className="stat-badge">{counts["Discovered"]} to review</span>
@@ -315,12 +317,16 @@ export default function Dashboard() {
           <button
             className={`btn btn-sm ${showConnections ? "btn-primary" : ""}`}
             onClick={() => setShowConnections((v) => !v)}
+            aria-expanded={showConnections}
+            aria-controls="connections-panel"
           >
             {showConnections ? "Hide Connections" : "Connections"}
           </button>
           <button
             className={`btn btn-sm ${showLogs ? "btn-primary" : ""}`}
             onClick={() => setShowLogs((v) => !v)}
+            aria-expanded={showLogs}
+            aria-controls="event-log"
           >
             {showLogs ? "Hide Logs" : "View Logs"}
           </button>
@@ -328,15 +334,19 @@ export default function Dashboard() {
             className={`btn btn-sm ${showSummaryPrompt ? "btn-primary" : ""}`}
             onClick={() => setShowSummaryPrompt(v => !v)}
             title="Edit the org-shared summary prompt and bulk-regenerate unlocked summaries (ADR-046)"
+            aria-expanded={showSummaryPrompt}
+            aria-controls="summary-prompt-panel"
           >
-            📄 Summary Prompt
+            Summary prompt
           </button>
           <button
             className={`btn btn-sm ${showCatchUp ? "btn-primary" : ""}`}
             onClick={() => setShowCatchUp(v => !v)}
             title="Walk recent records and run captions / sibling-link / summary stages automatically (ADR-047)"
+            aria-expanded={showCatchUp}
+            aria-controls="catch-up-panel"
           >
-            🏃 Catch Up
+            Catch up
           </button>
           {/* Feedback: link straight to a new GitHub issue. Pre-fills the
               title with the build SHA so engineering can correlate the
@@ -348,7 +358,7 @@ export default function Dashboard() {
             rel="noopener noreferrer"
             title="Open a GitHub issue using the feedback template"
           >
-            Feedback
+            Feedback<span className="visually-hidden"> (opens in a new tab)</span>
           </a>
           <a
             className="btn btn-sm"
@@ -357,10 +367,10 @@ export default function Dashboard() {
             rel="noopener noreferrer"
             title="Open the project wiki in a new tab"
           >
-            Help
+            Help<span className="visually-hidden"> (opens in a new tab)</span>
           </a>
-        </div>
-      </div>
+        </nav>
+      </header>
 
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
@@ -397,10 +407,8 @@ export default function Dashboard() {
 
       <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
 
-      <ShortsPanel videos={videos} onEvent={addEvent} onMutated={refresh} />
-
       {/* Burndown stats */}
-      <div className="burndown-stats">
+      <section className="burndown-stats" aria-label="Catalog summary">
         <span>Total: {videos.length}</span>
         {exclusionCount > 0 && <span>Excluded: {exclusionCount}</span>}
         {Object.entries(counts)
@@ -410,19 +418,21 @@ export default function Dashboard() {
               {status}: {count}
             </span>
           ))}
-      </div>
+      </section>
 
       {/* View switcher */}
-      <div className="filter-tabs" style={{ marginBottom: 0 }}>
+      <div className="filter-tabs" style={{ marginBottom: 0 }} role="group" aria-label="Catalog view">
         <button
           className={`filter-tab ${view === "videos" ? "active" : ""}`}
           onClick={() => setView("videos")}
+          aria-pressed={view === "videos"}
         >
           Videos ({videos.length})
         </button>
         <button
           className={`filter-tab ${view === "provenance" ? "active" : ""}`}
           onClick={() => setView("provenance")}
+          aria-pressed={view === "provenance"}
         >
           Provenance
         </button>
@@ -430,7 +440,7 @@ export default function Dashboard() {
 
       {view === "videos" && (
         <>
-          <div className="filter-tabs">
+          <div className="filter-tabs" role="group" aria-label="Filter videos by status">
             {/* Group: summary tabs */}
             {(["Active", "All", "Done"] as const).map((s) => {
               const count = s === "All" ? videos.length
@@ -442,31 +452,34 @@ export default function Dashboard() {
                   className={`filter-tab ${filter === s ? "active" : ""}`}
                   style={{ fontWeight: 600 }}
                   onClick={() => setFilter(s)}
+                  aria-pressed={filter === s}
                 >
                   {s} ({count})
                 </button>
               );
             })}
             {/* Separator */}
-            <span style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
+            <span aria-hidden="true" style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
             {/* Active sub-statuses */}
             {ACTIVE_STATUSES.map((s) => counts[s] ? (
               <button
                 key={s}
                 className={`filter-tab ${filter === s ? "active" : ""}`}
                 onClick={() => setFilter(s)}
+                aria-pressed={filter === s}
               >
                 {s} ({counts[s]})
               </button>
             ) : null)}
             {/* Separator */}
-            <span style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
+            <span aria-hidden="true" style={{ borderLeft: "1px solid var(--border)", margin: "0 4px", alignSelf: "stretch" }} />
             {/* Done sub-statuses */}
             {DONE_STATUSES.map((s) => counts[s] ? (
               <button
                 key={s}
                 className={`filter-tab ${filter === s ? "active" : ""}`}
                 onClick={() => setFilter(s)}
+                aria-pressed={filter === s}
               >
                 {s} ({counts[s]})
               </button>
@@ -482,10 +495,12 @@ export default function Dashboard() {
           )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, marginTop: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            <span aria-live="polite" style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)" }}>
               {filtered.length}{search.trim() ? ` of ${videos.length}` : ""} video{filtered.length !== 1 ? "s" : ""}
             </span>
+            <label className="visually-hidden" htmlFor="catalog-search">Search videos</label>
             <input
+              id="catalog-search"
               type="search"
               placeholder="Search title, source, date, tags, participants…"
               value={search}
@@ -500,7 +515,7 @@ export default function Dashboard() {
                 flex: "1 1 220px",
                 minWidth: 200,
               }}
-              title="Multiple words AND together — all terms must appear somewhere in the record's title, source, date, id, tags, or participants."
+              title="Multiple words use AND matching. Every term must appear somewhere in the record."
             />
             {search.trim() && (
               <button
@@ -512,13 +527,14 @@ export default function Dashboard() {
                 Clear
               </button>
             )}
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>· Sort:</span>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Sort:</span>
             {(["recorded", "updated"] as const).map((s) => (
               <button
                 key={s}
                 className={`btn btn-sm ${sortBy === s ? "btn-primary" : ""}`}
                 style={{ padding: "1px 8px", fontSize: "0.72rem" }}
                 onClick={() => setSortBy(s)}
+                aria-pressed={sortBy === s}
               >
                 {s === "recorded" ? "Date recorded" : "Last change"}
               </button>
@@ -528,18 +544,19 @@ export default function Dashboard() {
                 className={`btn btn-sm ${showPaired ? "btn-primary" : ""}`}
                 style={{ padding: "1px 8px", fontSize: "0.72rem", marginLeft: 8 }}
                 onClick={() => setShowPaired(v => !v)}
+                aria-pressed={showPaired}
                 title={`Toggle visibility of ${broadcastPairs.destinationRecordIds.size} broadcast-destination record(s) collapsed under their upstream canonical (ADR-049)`}
               >
                 {showPaired
-                  ? `📺 Hide ${broadcastPairs.destinationRecordIds.size} paired`
-                  : `📺 Show ${broadcastPairs.destinationRecordIds.size} paired`}
+                  ? `Hide ${broadcastPairs.destinationRecordIds.size} paired`
+                  : `Show ${broadcastPairs.destinationRecordIds.size} paired`}
               </button>
             )}
           </div>
 
           <div className="video-list">
             {filtered.length === 0 && (
-              <div className="empty-state">
+              <div className="empty-state" role="status">
                 {videos.length === 0
                   ? "No videos indexed yet. Use the Meetings, URL, or Manual import tabs above."
                   : search.trim()
@@ -580,7 +597,8 @@ export default function Dashboard() {
       )}
 
       {showLogs && <EventLog events={events} forceShow />}
-    </div>
+    </main>
+    </>
     </ErrorBoundary>
   );
 }

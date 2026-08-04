@@ -9,7 +9,7 @@
  * security — the API is the boundary).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
 import { videoStore } from "../lib/store";
@@ -47,6 +47,22 @@ interface SseRecordDone {
 type RunState = "idle" | "running" | "paused" | "complete" | "cancelled" | "failed";
 
 export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [open]);
   const actorState = useCurrentActor();
   const isAdmin = actorState.actor?.role === "Admin";
 
@@ -245,6 +261,11 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
     // long bulk-regen runs can stay open while the operator inspects
     // cards in parallel.
     <div
+      ref={panelRef}
+      tabIndex={-1}
+      id="summary-prompt-panel"
+      role="dialog"
+      aria-labelledby="summary-prompt-heading"
       style={{
         position: "fixed",
         top: 16,
@@ -261,7 +282,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
       }}
     >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Summary Prompt (ADR-046)</h2>
+          <h2 id="summary-prompt-heading" style={{ margin: 0, fontSize: "1.1rem" }}>Summary prompt</h2>
           <button className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
 
@@ -272,7 +293,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
         )}
 
         {loadError && (
-          <div style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: 12 }}>
+          <div role="alert" style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: 12 }}>
             Failed to load prompt: {loadError}
           </div>
         )}
@@ -283,8 +304,9 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
               Current: <strong>v{prompt.version}</strong> · {prompt.model} · updated {new Date(prompt.updated_at).toLocaleString()} by {prompt.updated_by}
             </div>
 
-            <label style={{ display: "block", fontSize: "0.78rem", marginTop: 8, marginBottom: 4 }}>Prompt text</label>
+            <label htmlFor="summary-prompt-text" style={{ display: "block", fontSize: "0.78rem", marginTop: 8, marginBottom: 4 }}>Prompt text</label>
             <textarea
+              id="summary-prompt-text"
               value={text}
               onChange={e => setText(e.target.value)}
               disabled={!isAdmin || saving}
@@ -294,8 +316,9 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
 
             <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 280px" }}>
-                <label style={{ display: "block", fontSize: "0.78rem", marginBottom: 4 }}>Model (OpenRouter slug)</label>
+                <label htmlFor="summary-prompt-model" style={{ display: "block", fontSize: "0.78rem", marginBottom: 4 }}>Model (OpenRouter slug)</label>
                 <input
+                  id="summary-prompt-model"
                   value={model}
                   onChange={e => setModel(e.target.value)}
                   disabled={!isAdmin || saving}
@@ -320,7 +343,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
               </div>
             </div>
             {saveError && (
-              <div style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: 8 }}>Save error: {saveError}</div>
+              <div role="alert" style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: 8 }}>Save error: {saveError}</div>
             )}
 
             {/* Bulk regen CTA */}

@@ -66,10 +66,10 @@ export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcri
     const lineCount = (transcriptText as string).split("\n").length;
     return (
       <span
-        title={`Transcript present — ${lineCount} line${lineCount === 1 ? "" : "s"}, ${transcriptText!.length} chars`}
+        title={`Transcript present: ${lineCount} line${lineCount === 1 ? "" : "s"}, ${transcriptText!.length} characters`}
         style={{ ...BASE, ...PRESENT_STYLE }}
       >
-        📝 Transcript ✓
+        Transcript available
       </span>
     );
   }
@@ -77,7 +77,7 @@ export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcri
   // Missing — for Kaltura sources offer a one-click fetch from captions.
   const isKaltura = sourcePlatform === "Kaltura";
 
-  async function fetchFromKaltura(e: React.MouseEvent) {
+  async function fetchFromKaltura(e: React.MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
     if (fetching) return;
     setFetching(true);
@@ -107,22 +107,23 @@ export function TranscriptLozenge({ recordId, sourcePlatform, sourceId, transcri
 
   if (isKaltura) {
     return (
-      <span
+      <button
+        type="button"
         onClick={fetchFromKaltura}
-        role="button"
+        disabled={fetching}
         title={error
           ? `Kaltura captions failed: ${error}. Click to retry.`
-          : "No transcript — click to fetch captions from Kaltura"}
+          : "No transcript. Fetch captions from Kaltura."}
         style={{ ...BASE, ...FETCHABLE_STYLE, opacity: fetching ? 0.6 : 1 }}
       >
-        {fetching ? "📝 Fetching…" : (error ? "📝 Retry fetch" : "📝 Fetch from Kaltura")}
-      </span>
+        {fetching ? "Fetching transcript..." : (error ? "Retry transcript fetch" : "Fetch transcript")}
+      </button>
     );
   }
 
   return (
-    <span title="No transcript available for this record" style={{ ...BASE, ...MISSING_STYLE, opacity: 0.6 }}>
-      📝 —
+    <span title="No transcript available for this record" style={{ ...BASE, ...MISSING_STYLE, opacity: 0.8 }}>
+      No transcript
     </span>
   );
 }

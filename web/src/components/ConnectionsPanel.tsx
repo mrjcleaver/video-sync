@@ -338,8 +338,8 @@ export default function ConnectionsPanel({ open }: Props) {
   if (!open) return null;
 
   return (
-    <div className="connections-panel">
-      <h2>Connections</h2>
+    <section id="connections-panel" className="connections-panel" aria-labelledby="connections-heading">
+      <h2 id="connections-heading">Connections</h2>
       <HelpTip>
         Two sources for credentials (ADR-042): your <strong>local override</strong>{" "}
         (browser localStorage) takes precedence over the org&apos;s{" "}
@@ -477,7 +477,7 @@ export default function ConnectionsPanel({ open }: Props) {
 
               {/* Editor — rendered when this card is being edited */}
               {editingThis && (
-                <div className="credential-form" onClick={(e) => e.stopPropagation()}>
+                <div className="credential-form">
                   {editor.mode === "shared" && (
                     <div style={{
                       background: "rgba(168,85,247,0.08)",
@@ -556,6 +556,6 @@ export default function ConnectionsPanel({ open }: Props) {
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

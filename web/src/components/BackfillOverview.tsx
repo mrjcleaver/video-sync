@@ -38,16 +38,16 @@ const PRIVACY_COLOR: Record<PrivacyStatus, { bg: string; fg: string; border: str
 // Kaltura lozenge — single style; we don't track per-entry privacy.
 const KALTURA_STYLE = {
   bg: "rgba(168,85,247,0.12)",
-  fg: "#a855f7",
+  fg: "#c4b5fd",
   border: "rgba(168,85,247,0.3)",
 };
 
 // ADR-044: five-state Kaltura lozenge mirroring the YouTube privacy lozenge.
 const KALTURA_STATE_STYLE: Record<KalturaState, { bg: string; fg: string; border: string; label: string; textDecoration?: string; opacity?: number }> = {
-  ready:      { bg: "rgba(168,85,247,0.18)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kaltura" },
-  processing: { bg: "rgba(168,85,247,0.06)", fg: "#a855f7", border: "rgba(168,85,247,0.45)", label: "Kal: processing" },
+  ready:      { bg: "rgba(168,85,247,0.18)", fg: "#c4b5fd", border: "rgba(168,85,247,0.45)", label: "Kaltura" },
+  processing: { bg: "rgba(168,85,247,0.06)", fg: "#c4b5fd", border: "rgba(168,85,247,0.45)", label: "Kal: processing" },
   live:       { bg: "rgba(244,63,94,0.18)",  fg: "#fb7185", border: "rgba(244,63,94,0.45)",  label: "Kal: LIVE" },
-  absent:     { bg: "rgba(168,85,247,0.04)", fg: "#a855f7", border: "rgba(168,85,247,0.15)", label: "no Kaltura", textDecoration: "line-through", opacity: 0.55 },
+  absent:     { bg: "rgba(168,85,247,0.04)", fg: "#c4b5fd", border: "rgba(168,85,247,0.15)", label: "no Kaltura", textDecoration: "line-through", opacity: 0.7 },
   unknown:    { bg: "rgba(148,163,184,0.06)",fg: "#94a3b8", border: "rgba(148,163,184,0.2)", label: "Kaltura ?" },
 };
 
@@ -377,13 +377,16 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
 
           return (
             <div key={key}>
-              <div
+              <button
+                type="button"
                 onClick={() => setExpandedSet(prev => {
                   const next = new Set(prev);
                   if (next.has(key)) next.delete(key);
                   else next.add(key);
                   return next;
                 })}
+                aria-expanded={isExpanded}
+                aria-controls={`backfill-month-${key}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "72px 1fr 120px 20px",
@@ -395,6 +398,10 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
                   borderRadius: 6,
                   cursor: "pointer",
                   fontSize: "0.75rem",
+                  width: "100%",
+                  color: "inherit",
+                  font: "inherit",
+                  textAlign: "left",
                 }}
               >
                 <span style={{ fontWeight: 600 }}>{s.label}</span>
@@ -412,11 +419,13 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
                 </span>
 
                 <span style={{ color: "var(--text-muted)", textAlign: "center" }}>{isExpanded ? "▲" : "▼"}</span>
-              </div>
+              </button>
 
               {/* Expanded: vertical date list with links */}
               {isExpanded && (
-                <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} filters={filters} />
+                <div id={`backfill-month-${key}`}>
+                  <DateList slots={s.slots} targetOnly={targetOnly} videos={videos} onNavigateToVideo={onNavigateToVideo} filters={filters} />
+                </div>
               )}
             </div>
           );
@@ -488,6 +497,7 @@ function FilterChip({ id, label, filters, onToggle, bg, fg, border }: {
     <button
       type="button"
       onClick={() => onToggle(id)}
+      aria-pressed={active}
       style={{
         ...LINK_STYLE,
         background: active ? fg : bg,
@@ -496,7 +506,7 @@ function FilterChip({ id, label, filters, onToggle, bg, fg, border }: {
         cursor: "pointer",
         opacity: filters.size > 0 && !active ? 0.55 : 1,
       }}
-      title={active ? `Filter active — click to clear ${label}` : `Filter to ${label} only`}
+      title={active ? `Filter active. Clear ${label}.` : `Filter to ${label} only`}
     >
       {label}
     </button>
@@ -618,7 +628,6 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
         return (
           <div
             key={slot.date}
-            onClick={v ? () => (onNavigateToVideo ?? scrollToVideo)(v.id) : undefined}
             style={{
               display: "grid",
               gridTemplateColumns: "52px 10px 1fr auto auto auto auto auto",
@@ -628,7 +637,6 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
               fontSize: "0.75rem",
               borderRadius: 4,
               background: slot.is_target && !v ? "rgba(128,128,128,0.04)" : "transparent",
-              cursor: v ? "pointer" : "default",
             }}
           >
             {/* Date */}
@@ -652,15 +660,20 @@ function DateList({ slots, targetOnly, videos, onNavigateToVideo, filters }: { s
               const displayTitle = fullVideo ? getDisplayTitle(fullVideo) : v.title;
               const isTransformed = displayTitle !== v.title;
               return (
-                <span
+                <button
+                  type="button"
+                  className="meta-button"
+                  onClick={() => (onNavigateToVideo ?? scrollToVideo)(v.id)}
+                  aria-label={`Open ${displayTitle}, ${v.status}, recorded ${slot.date}`}
                   title={isTransformed ? `Original: ${v.title}` : undefined}
                   style={{
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     color: v.status === "Published" ? "var(--text)" : "var(--text-muted)",
+                    textAlign: "left",
                   }}
                 >
                   {displayTitle}
-                </span>
+                </button>
               );
             })() : (
               <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: "0.7rem" }}>

@@ -165,13 +165,21 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
 
   return (
     <div className="rules-panel">
-      <h2 style={{ cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
+      <h2>
+        <button
+          type="button"
+          className="panel-heading-button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="processing-rules-content"
+        >
         <span>Processing Rules {rules.length > 0 && `(${rules.length})`}</span>
         <span style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id="processing-rules-content">
           <HelpTip>
             Processing rules transform video metadata at publish time — before a video is
             uploaded to YouTube. Each rule matches recordings by title pattern or day of week,
@@ -254,6 +262,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
@@ -332,6 +341,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                         const next = cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p];
                         updateCriteria({ source_platforms: next.length > 0 ? next : undefined });
                       }}
+                      aria-pressed={(editing.criteria.source_platforms ?? []).includes(p)}
                       style={{ minWidth: 72 }}
                     >
                       {p}
@@ -350,6 +360,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
                       key={i}
                       className={`btn btn-sm ${(editing.criteria.days_of_week ?? []).includes(i) ? "btn-primary" : ""}`}
                       onClick={() => toggleDay(i)}
+                      aria-pressed={(editing.criteria.days_of_week ?? []).includes(i)}
                       style={{ minWidth: 36 }}
                     >
                       {label}
@@ -606,7 +617,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

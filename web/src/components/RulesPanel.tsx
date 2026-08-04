@@ -101,10 +101,14 @@ export default function RulesPanel({
 
   return (
     <div className="rules-panel">
-      <h2
-        style={{ cursor: "pointer" }}
-        onClick={() => setExpanded(!expanded)}
-      >
+      <h2>
+        <button
+          type="button"
+          className="panel-heading-button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="ingestion-rules-content"
+        >
         <span>Ingestion Rules {rules.length > 0 && `(${rules.length})`}</span>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {isRunnerRunning && (
@@ -117,10 +121,11 @@ export default function RulesPanel({
           )}
           <span style={{ fontSize: "0.8rem" }}>{expanded ? "\u25B2" : "\u25BC"}</span>
         </span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id="ingestion-rules-content">
           <HelpTip>
             Ingestion rules auto-classify recordings as they arrive. Each rule has criteria
             (title pattern, day of week, duration range, date window) and an action:{" "}
@@ -162,6 +167,7 @@ export default function RulesPanel({
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>
@@ -282,6 +288,7 @@ export default function RulesPanel({
                           : ""
                       }`}
                       onClick={() => toggleDay(i)}
+                      aria-pressed={(editing.criteria.days_of_week ?? []).includes(i)}
                       style={{ minWidth: 36 }}
                     >
                       {label}
@@ -354,7 +361,7 @@ export default function RulesPanel({
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

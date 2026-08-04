@@ -294,14 +294,14 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
             {readyEntries.length} queued
           </span>
           <button className="btn btn-sm" onClick={onMutated} title="Refresh video data">
-            ↻
+            <span aria-hidden="true">↻</span><span className="visually-hidden">Refresh video data</span>
           </button>
           <button
             className={`btn btn-sm ${running ? "btn-primary" : "btn-green"}`}
             onClick={running ? stopOrchestrator : startOrchestrator}
             disabled={profiles.filter(p => p.enabled).length === 0}
           >
-            {running ? "⏹ Stop" : "▶ Start"}
+            {running ? "Stop" : "Start"}
           </button>
         </div>
       </div>
@@ -313,13 +313,13 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
         <strong>Queue</strong> shows videos pending upload with their transformed titles,
         descriptions, tags, and privacy — computed by your Processing Rules. Click{" "}
         <em>Auto-populate</em> to fill the queue from Approved videos, then{" "}
-        <em>▶ Start</em> to begin the timed orchestrator. Coverage and per-video status
+        <em>Start</em> to begin the timed orchestrator. Coverage and per-video status
         live in the <strong>Sync Status</strong> panel above.
       </HelpTip>
 
-      <div className="filter-tabs" style={{ marginBottom: 12 }}>
+      <div className="filter-tabs" style={{ marginBottom: 12 }} role="group" aria-label="Backfill view">
         {(["profiles", "queue"] as const).map(t => (
-          <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)}>
+          <button key={t} className={`filter-tab ${activeTab === t ? "active" : ""}`} onClick={() => setActiveTab(t)} aria-pressed={activeTab === t}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "queue" && readyEntries.length > 0 ? ` (${readyEntries.length})` : ""}
           </button>
@@ -584,9 +584,12 @@ function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQu
               overflow: "hidden",
             }}>
               {/* Header row */}
-              <div
-                style={{ padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 8 }}
+              <button
+                type="button"
+                style={{ padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 8, width: "100%", border: 0, background: "transparent", color: "inherit", font: "inherit", textAlign: "left" }}
                 onClick={() => setExpanded(isExpanded ? null : entry.video_id)}
+                aria-expanded={isExpanded}
+                aria-controls={`queue-entry-${entry.video_id}`}
               >
                 <span style={{ color: statusColor(v?.status), flexShrink: 0, marginTop: 2 }}>●</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -621,11 +624,11 @@ function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQu
                     <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "auto" }}>{isExpanded ? "▲" : "▼"}</span>
                   </div>
                 </div>
-              </div>
+              </button>
 
               {/* Expanded detail panel */}
               {isExpanded && attrs && (
-                <div style={{ padding: "0 12px 12px 32px", borderTop: "1px solid var(--border)" }}>
+                <div id={`queue-entry-${entry.video_id}`} style={{ padding: "0 12px 12px 32px", borderTop: "1px solid var(--border)" }}>
                   {/* Description */}
                   <div style={{ marginTop: 8 }}>
                     <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description</div>

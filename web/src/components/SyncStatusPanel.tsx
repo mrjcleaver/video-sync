@@ -78,7 +78,9 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
       <div className="zoom-import-header">
         <h2>Sync Status</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "0.8rem" }}>
+          <label className="visually-hidden" htmlFor="sync-profile-filter">Filter sync status by profile</label>
           <select
+            id="sync-profile-filter"
             value={profileId}
             onChange={e => setProfileId(e.target.value)}
             style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
@@ -100,12 +102,13 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
         profile if you want to see only target-day coverage.
       </HelpTip>
 
-      <div className="filter-tabs" style={{ marginBottom: 12 }}>
+      <div className="filter-tabs" style={{ marginBottom: 12 }} role="group" aria-label="Sync status view">
         {(["overview", "calendar"] as const).map(t => (
           <button
             key={t}
             className={`filter-tab ${activeTab === t ? "active" : ""}`}
             onClick={() => selectTab(t)}
+            aria-pressed={activeTab === t}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
@@ -8,13 +8,17 @@ interface Props {
 
 export default function HelpTip({ children }: Props) {
   const [open, setOpen] = useState(false);
+  const contentId = useId();
   return (
     <div style={{ marginBottom: open ? 10 : 2 }}>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
           title={open ? "Hide help" : "Show help"}
           aria-label="Help"
+          aria-expanded={open}
+          aria-controls={contentId}
           style={{
             background: open ? "rgba(56,189,248,0.15)" : "none",
             border: "1px solid var(--border)",
@@ -34,6 +38,7 @@ export default function HelpTip({ children }: Props) {
       </div>
       {open && (
         <div
+          id={contentId}
           style={{
             marginTop: 6,
             padding: "10px 14px",

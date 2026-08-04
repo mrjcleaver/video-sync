@@ -73,13 +73,21 @@ export default function PostProcessingRulesPanel() {
 
   return (
     <div className="rules-panel">
-      <h2 style={{ cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
+      <h2>
+        <button
+          type="button"
+          className="panel-heading-button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="post-processing-rules-content"
+        >
         <span>Post-processing Rules {rules.length > 0 && `(${rules.length})`}</span>
         <span style={{ fontSize: "0.8rem" }}>{expanded ? "▲" : "▼"}</span>
+        </button>
       </h2>
 
       {expanded && (
-        <>
+        <div id="post-processing-rules-content">
           <HelpTip>
             Post-processing rules fire non-blocking after a YouTube upload completes (success or
             failure). Each rule sends a <strong>webhook</strong> POST or a <strong>Gmail email</strong>.
@@ -106,6 +114,7 @@ export default function PostProcessingRulesPanel() {
                   type="checkbox"
                   checked={rule.enabled}
                   onChange={() => toggleEnabled(rule.id)}
+                  aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
                   style={{ accentColor: "var(--accent)" }}
                 />
                 <span style={{ fontWeight: 500, fontSize: "0.85rem", flex: 1 }}>{rule.name}</span>
@@ -214,7 +223,7 @@ export default function PostProcessingRulesPanel() {
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
