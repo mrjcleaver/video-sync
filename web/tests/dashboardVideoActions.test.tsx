@@ -232,8 +232,9 @@ describe("Dashboard video action feedback", () => {
       await waitFor(() => {
         expect(screen.queryByRole("heading", { name: "Publishing review" })).toBeNull();
       });
-      const status = screen.getByRole("status");
-      expect(status.textContent).toBe('"Publishing review" was published to ' + platform + " successfully.");
+      const message = '"Publishing review" was published to ' + platform + " successfully.";
+      const status = screen.getByText(message).closest('[role="status"]') as HTMLElement;
+      expect(status).toBeTruthy();
       await waitFor(() => expect(document.activeElement).toBe(status));
     },
   );
