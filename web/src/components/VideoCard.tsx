@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import type { VideoRecordJSON, PlatformLocationJSON, UpstreamLinkJSON } from "../lib/wasm";
 import type { LoomMetadata } from "../app/api/loom/metadata/route";
 import { videoStore, bootStore } from "../lib/store";
@@ -128,6 +128,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [lookupCandidates, setLookupCandidates] = useState<import("../lib/youtubeUploadsCache").MatchCandidate[] | null>(null);
   const [actionNotice, setActionNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [pendingLocationRemoval, setPendingLocationRemoval] = useState<PlatformLocationJSON | null>(null);
+  const cardHeadingRef = useRef<HTMLHeadingElement>(null);
+  const deleteButtonRef = useRef<HTMLButtonElement>(null);
+  const addLocationButtonRef = useRef<HTMLButtonElement>(null);
+  const locationRemovalTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  function focusCardHeading() {
+    window.setTimeout(() => cardHeadingRef.current?.focus(), 0);
+  }
 
   const videoLog = useMemo<LogRecord[]>(() => {
     if (!showLog) return [];
@@ -507,6 +516,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setActionNotice(null);
     setShowPreview(false);
     setUploading(true);
+    focusCardHeading();
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
     const isFirefliesSource = video.download_url.startsWith("fireflies://");
@@ -638,6 +648,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       // A later Check Status will refresh it if YouTube's privacy differs.
       setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
       onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
+      setActionNotice({ tone: "success", text: "Published to YouTube successfully." });
       onMutated();
       void ingestYouTubeRowAfterPublish(result.videoId);
       firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
@@ -647,6 +658,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         r.mark_failed(JSON.stringify({ error_message: msg }))
       );
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+      setActionNotice({ tone: "error", text: `YouTube publishing failed: ${msg}` });
+      focusCardHeading();
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
@@ -741,6 +754,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     setShowPreview(false);
     setUploading(true);
+    setActionNotice(null);
+    focusCardHeading();
 
     // Pick the best source for Kaltura's fetch step — prefer non-YouTube
     // upstreams so we don't trip YouTube's anti-bot every time.
@@ -837,6 +852,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
       }
       onMutated();
+      setActionNotice({ tone: "success", text: "Published to Kaltura successfully." });
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -850,6 +866,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         );
       }
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — Kaltura: ${msg}`, { video_id: video.id });
+      setActionNotice({ tone: "error", text: `Kaltura publishing failed: ${msg}` });
+      focusCardHeading();
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
@@ -1258,14 +1276,22 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   }
 
   function removeLocation(loc: PlatformLocationJSON) {
-    videoStore.mutate(video.id, (r) =>
-      r.remove_location(
-        cmd({ platform: loc.platform,
-          external_id: loc.external_id, })
-      )
-    );
-    onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`, { video_id: video.id });
-    onMutated();
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.remove_location(
+          cmd({ platform: loc.platform,
+            external_id: loc.external_id, })
+        )
+      );
+      onEvent(`LocationRemoved: "${video.title}"${dateTag(video.recorded_at)} — ${loc.platform}/${loc.external_id}`, { video_id: video.id });
+      setActionNotice({ tone: "success", text: `${loc.platform} location ${loc.external_id} removed.` });
+      setPendingLocationRemoval(null);
+      onMutated();
+      window.setTimeout(() => (addLocationButtonRef.current ?? cardHeadingRef.current)?.focus(), 0);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setActionNotice({ tone: "error", text: `Could not remove ${loc.platform} location: ${msg}` });
+    }
   }
 
   function addNote() {
@@ -1430,7 +1456,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     <div className="video-card" id={`video-card-${video.id}`}>
       <div className="video-card-header">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0 }}>{previewTitle ?? video.title}</h3>
+          <h3 ref={cardHeadingRef} tabIndex={-1} style={{ margin: 0 }}>{previewTitle ?? video.title}</h3>
           {previewTitle && (
             <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>
               {video.title}
@@ -1566,7 +1592,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             onClick={() => setShowParticipants(v => !v)}
             title={showParticipants ? "Hide participants" : "Show participants"}
             aria-expanded={showParticipants}
-            aria-controls={`video-participants-${video.id}`}
+            aria-controls={showParticipants ? `video-participants-${video.id}` : undefined}
           >
             {video.participants.length} participant{video.participants.length === 1 ? "" : "s"} {showParticipants ? "▲" : "▼"}
           </button>
@@ -1951,7 +1977,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               )}
               <button
                 className="location-remove"
-                onClick={() => removeLocation(loc)}
+                onClick={(event) => {
+                  locationRemovalTriggerRef.current = event.currentTarget;
+                  setPendingLocationRemoval(loc);
+                }}
+                disabled={!!pendingLocationRemoval}
                 title="Remove location"
                 aria-label={`Remove ${loc.platform} location ${loc.external_id}`}
               >
@@ -1959,13 +1989,33 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               </button>
             </div>
           ))}
+          {pendingLocationRemoval && (
+            <div className="video-delete-confirm" role="alert">
+              <span>
+                Remove {pendingLocationRemoval.platform} location {pendingLocationRemoval.external_id}? This changes the catalog association.
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                autoFocus
+                onClick={() => {
+                  setPendingLocationRemoval(null);
+                  window.setTimeout(() => locationRemovalTriggerRef.current?.focus(), 0);
+                }}
+              >
+                Cancel
+              </button>
+              <button type="button" className="btn btn-sm btn-red" onClick={() => removeLocation(pendingLocationRemoval)}>
+                Confirm removal
+              </button>
+            </div>
+          )}
           {!showLocationForm && (
             <button
+              ref={addLocationButtonRef}
               className="btn btn-sm"
               style={{ marginTop: 6 }}
               onClick={() => setShowLocationForm(true)}
-              aria-expanded={showLocationForm}
-              aria-controls={`location-form-${video.id}`}
             >
               Add location
             </button>
@@ -2050,7 +2100,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           )}
           {!showLinkForm ? (
-            <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(true)} aria-expanded={showLinkForm} aria-controls={`upstream-link-form-${video.id}`}>
+            <button className="btn btn-sm" style={{ fontSize: "0.7rem" }} onClick={() => setShowLinkForm(true)}>
               Link upstream
             </button>
           ) : (
@@ -2469,7 +2519,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         {isPublishing && (
           <>
             {uploading ? (
-              <span className="upload-progress">{uploadPhase}</span>
+              <span className="upload-progress" role="status" aria-live="polite" aria-atomic="true">
+                {uploadPhase || "Publishing…"}
+              </span>
             ) : showPreview && publishAttrs ? (
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                 Preview ready ↓
@@ -2550,7 +2602,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         {confirmingDelete ? (
           <div className="video-delete-confirm" role="alert">
             <span>Delete &quot;{video.title}&quot;? This cannot be undone.</span>
-            <button type="button" className="btn btn-sm" onClick={() => setConfirmingDelete(false)} autoFocus>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                setConfirmingDelete(false);
+                window.setTimeout(() => deleteButtonRef.current?.focus(), 0);
+              }}
+              autoFocus
+            >
               Cancel
             </button>
             <button
@@ -2560,6 +2620,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 videoStore.remove(video.id);
                 onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
                 onMutated();
+                window.setTimeout(() => {
+                  const nextCard = Array.from(document.querySelectorAll<HTMLElement>(".video-card"))
+                    .find((card) => card.id !== `video-card-${video.id}`);
+                  const nextHeading = nextCard?.querySelector<HTMLElement>("h3");
+                  (nextHeading ?? document.getElementById("main-content"))?.focus();
+                }, 0);
               }}
             >
               Delete video
@@ -2567,6 +2633,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           </div>
         ) : (
           <button
+            ref={deleteButtonRef}
             type="button"
             className="btn btn-sm btn-red"
             style={{ marginLeft: "auto" }}
