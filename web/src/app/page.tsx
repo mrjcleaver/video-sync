@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { bootStore, videoStore } from "../lib/store";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { loadExclusions, syncRulesFromServer, syncExclusionsFromServer } from "../lib/rules";
@@ -68,6 +68,8 @@ export default function Dashboard() {
   const [showPaired, setShowPaired] = useState(false);
   const [view, setView] = useState<"videos" | "provenance">("videos");
   const [sortBy, setSortBy] = useState<"recorded" | "updated">("recorded");
+  const [videoActionNotice, setVideoActionNotice] = useState("");
+  const videoActionNoticeRef = useRef<HTMLDivElement>(null);
 
   // ADR-036: derived actor for command authorization. Available for the
   // Dashboard's own bulk operations (e.g. bulkApprove); per-card mutations
@@ -139,6 +141,11 @@ export default function Dashboard() {
   const addEvent = useCallback((ev: string, fields?: { video_id?: string }) => {
     setEvents((prev) => [...prev, ev]);
     clientLog("info", "event", ev, fields);
+  }, []);
+
+  const announcePublishCompletion = useCallback((message: string) => {
+    setVideoActionNotice(message);
+    window.setTimeout(() => videoActionNoticeRef.current?.focus(), 0);
   }, []);
 
   // ADR-041: poll the server's audit buffer and surface entries into the
@@ -362,6 +369,17 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <div
+        ref={videoActionNoticeRef}
+        className={videoActionNotice ? "video-action-notice video-action-notice-success" : undefined}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        tabIndex={-1}
+      >
+        {videoActionNotice}
+      </div>
+
       <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections((v) => !v)} />
 
       <SummaryPromptPanel
@@ -556,6 +574,7 @@ export default function Dashboard() {
                 onMutated={refresh}
                 onEvent={addEvent}
                 onNavigateToVideo={ensureVideoVisible}
+                onPublishCompleted={announcePublishCompletion}
               />
             ))}
           </div>

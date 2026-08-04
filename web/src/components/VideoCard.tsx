@@ -70,9 +70,11 @@ interface Props {
   onEvent: (event: string, fields?: { video_id?: string }) => void;
   /** Switch filter (if needed) and scroll the card into view. Used on publish transitions. */
   onNavigateToVideo?: (id: string, intent?: "publish") => void;
+  /** Keep publish completion feedback available after an Active-filter card unmounts. */
+  onPublishCompleted?: (message: string) => void;
 }
 
-export default function VideoCard({ video, allVideos, broadcastPairs, onMutated, onEvent, onNavigateToVideo }: Props) {
+export default function VideoCard({ video, allVideos, broadcastPairs, onMutated, onEvent, onNavigateToVideo, onPublishCompleted }: Props) {
   // ADR-036: derive actor from IAP JWT via /api/auth/me. Falls back to the
   // synthetic admin during boot or in dev mode (ALLOW_NO_IAP=1) so single-
   // user behaviour is preserved until IAP is configured. Throws on auth
@@ -85,6 +87,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPhase, setUploadPhase] = useState("");
+  const [publishPreparationStatus, setPublishPreparationStatus] = useState("");
   const [publishAttrs, setPublishAttrs] = useState<PublishAttributes | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [locPlatform, setLocPlatform] = useState<string>("Loom");
@@ -133,6 +136,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const addLocationButtonRef = useRef<HTMLButtonElement>(null);
   const locationRemovalTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const preparingPublishRef = useRef(false);
 
   function focusCardHeading() {
     window.setTimeout(() => cardHeadingRef.current?.focus(), 0);
@@ -442,33 +446,40 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   }
 
   async function preparePublish() {
-    const rules = loadProcessingRules();
-    let attrs = applyProcessingRules(rules, video);
+    if (preparingPublishRef.current) return;
+    preparingPublishRef.current = true;
+    setPublishPreparationStatus("Preparing publish preview…");
 
-    // If any rule uses transcript_llm and we have a transcript, fetch summary
-    const needsLlm = rules.some(
-      (r) =>
-        r.enabled &&
-        (r.transforms.title?.mode === "transcript_llm" ||
-          r.transforms.description?.mode === "transcript_llm"),
-    );
-    if (needsLlm && video.transcript_text) {
-      try {
-        setUploadPhase("Summarising transcript…");
-        const summary = await requestLlmSummary(video.transcript_text);
-        // Re-apply with summary injected as description fallback
-        const enriched = { ...video, description: summary.summary };
-        attrs = applyProcessingRules(rules, enriched);
-      } catch (err) {
-        onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
-        // Fall through with non-LLM attrs
-      } finally {
-        setUploadPhase("");
+    try {
+      const rules = loadProcessingRules();
+      let attrs = applyProcessingRules(rules, video);
+
+      // If any rule uses transcript_llm and we have a transcript, fetch summary
+      const needsLlm = rules.some(
+        (r) =>
+          r.enabled &&
+          (r.transforms.title?.mode === "transcript_llm" ||
+            r.transforms.description?.mode === "transcript_llm"),
+      );
+      if (needsLlm && video.transcript_text) {
+        try {
+          setPublishPreparationStatus("Preparing publish preview. Summarising transcript…");
+          const summary = await requestLlmSummary(video.transcript_text);
+          // Re-apply with summary injected as description fallback
+          const enriched = { ...video, description: summary.summary };
+          attrs = applyProcessingRules(rules, enriched);
+        } catch (err) {
+          onEvent(`LlmSummarizeFailed: "${video.title}"${dateTag(video.recorded_at)} — ${String(err)}`, { video_id: video.id });
+          // Fall through with non-LLM attrs
+        }
       }
-    }
 
-    setPublishAttrs(attrs);
-    setShowPreview(true);
+      setPublishAttrs(attrs);
+      setShowPreview(true);
+    } finally {
+      preparingPublishRef.current = false;
+      setPublishPreparationStatus("");
+    }
   }
 
   /**
@@ -649,6 +660,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
       onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
       setActionNotice({ tone: "success", text: "Published to YouTube successfully." });
+      onPublishCompleted?.(`"${video.title}" was published to YouTube successfully.`);
       onMutated();
       void ingestYouTubeRowAfterPublish(result.videoId);
       firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
@@ -851,8 +863,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         );
         onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
       }
-      onMutated();
       setActionNotice({ tone: "success", text: "Published to Kaltura successfully." });
+      onPublishCompleted?.(`"${video.title}" was published to Kaltura successfully.`);
+      onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2527,9 +2540,27 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                 Preview ready ↓
               </span>
             ) : (
-              <button className="btn btn-sm btn-primary" onClick={preparePublish}>
-                Publish…
-              </button>
+              <>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={preparePublish}
+                  disabled={!!publishPreparationStatus}
+                  aria-describedby={publishPreparationStatus ? `publish-preparation-${video.id}` : undefined}
+                >
+                  {publishPreparationStatus ? "Preparing…" : "Publish…"}
+                </button>
+                {publishPreparationStatus && (
+                  <span
+                    id={`publish-preparation-${video.id}`}
+                    className="upload-progress"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  >
+                    {publishPreparationStatus}
+                  </span>
+                )}
+              </>
             )}
             <button className="btn btn-sm btn-red" onClick={markFailed} disabled={uploading}>
               Mark Failed
@@ -2617,14 +2648,21 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               type="button"
               className="btn btn-sm btn-red"
               onClick={() => {
+                const cards = Array.from(document.querySelectorAll<HTMLElement>(".video-card"));
+                const currentIndex = cards.findIndex((card) => card.id === `video-card-${video.id}`);
+                const adjacentCard = currentIndex >= 0
+                  ? cards[currentIndex + 1] ?? cards[currentIndex - 1]
+                  : undefined;
+                const adjacentCardId = adjacentCard?.id;
                 videoStore.remove(video.id);
                 onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
                 onMutated();
                 window.setTimeout(() => {
-                  const nextCard = Array.from(document.querySelectorAll<HTMLElement>(".video-card"))
-                    .find((card) => card.id !== `video-card-${video.id}`);
-                  const nextHeading = nextCard?.querySelector<HTMLElement>("h3");
-                  (nextHeading ?? document.getElementById("main-content"))?.focus();
+                  const adjacentHeading = adjacentCardId
+                    ? document.getElementById(adjacentCardId)?.querySelector<HTMLElement>("h3")
+                    : null;
+                  const fallback = document.querySelector<HTMLElement>(".filter-tab.active");
+                  (adjacentHeading ?? fallback)?.focus();
                 }, 0);
               }}
             >

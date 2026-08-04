@@ -145,6 +145,35 @@ describe("VideoCard accessibility", () => {
     expect(screen.getByLabelText("Trim start (seconds)")).toBeTruthy();
   });
 
+  it("announces transcript preparation and prevents duplicate Publish activation", async () => {
+    localStorage.setItem("video-sync:processing-rules", JSON.stringify([{
+      id: "llm-description",
+      name: "Summarise transcript",
+      enabled: true,
+      priority: 1,
+      criteria: {},
+      transforms: { description: { mode: "transcript_llm" } },
+    }]));
+    const fetchMock = vi.fn(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <VideoCard
+        video={{ ...baseVideo, status: "Publishing", transcript_text: "Transcript content. ".repeat(20) }}
+        onMutated={vi.fn()}
+        onEvent={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish…" }));
+    const preparingButton = await screen.findByRole("button", { name: "Preparing…" });
+    expect((preparingButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toContain("Summarising transcript");
+
+    fireEvent.click(preparingButton);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("announces publishing progress and moves focus to the stable card heading", async () => {
     localStorage.setItem("video-sync:connections", JSON.stringify({
       YouTube: { credentials: { refreshToken: "refresh", clientId: "client", clientSecret: "secret" } },
