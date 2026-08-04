@@ -451,7 +451,7 @@ body {
 .form-field .field-label {
   display: block;
   margin-bottom: 5px;
-  color: #b8b8b8;
+  color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
 }
@@ -744,7 +744,7 @@ body {
 .field-group-label {
   display: block;
   margin-bottom: 4px;
-  color: #a3a3a3;
+  color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
 }
@@ -806,12 +806,12 @@ body {
 
 .form-message-error {
   border-color: color-mix(in srgb, var(--red) 55%, var(--border));
-  color: #ff8a8a;
+  color: var(--red);
 }
 
 .form-message-success {
   border-color: color-mix(in srgb, var(--green) 50%, var(--border));
-  color: #7ee7a4;
+  color: var(--green);
 }
 
 .summary-prompt-save-row {
@@ -879,18 +879,18 @@ body {
 .sync-status-panel .filter-tab.active {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 
 .rules-panel .btn-red,
 .summary-prompt-panel .btn-red {
-  border-color: #b91c1c;
-  background: #b91c1c;
-  color: #fff;
+  border-color: var(--danger-surface, #b91c1c);
+  background: var(--danger-surface, #b91c1c);
+  color: var(--on-red, #fff);
 }
 
 .sync-status-content button[title*="Kaltura"] {
-  color: #c084fc !important;
+  color: var(--purple) !important;
 }
 
 .sync-status-content:focus-visible,
@@ -994,7 +994,7 @@ body {
 
 .compact-form-section legend {
   padding: 0 6px;
-  color: #c7c7c7;
+  color: var(--text-muted);
   font-size: 0.78rem;
   font-weight: 600;
 }
@@ -1012,7 +1012,7 @@ body {
 
 .compact-field > span,
 .compact-field > label {
-  color: #b8b8b8;
+  color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
 }
@@ -1043,7 +1043,7 @@ body {
   align-items: center;
   gap: 7px;
   min-height: 36px;
-  color: #b8b8b8;
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
@@ -1078,7 +1078,7 @@ body {
 }
 
 .confirm-dialog p {
-  color: #b8b8b8;
+  color: var(--text-muted);
   font-size: 0.85rem;
   line-height: 1.55;
 }
@@ -1091,8 +1091,8 @@ body {
 }
 
 .confirm-dialog .btn-red {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: var(--danger-surface, #b91c1c);
+  border-color: var(--danger-surface, #b91c1c);
 }
 
 @media (max-width: 720px) {
