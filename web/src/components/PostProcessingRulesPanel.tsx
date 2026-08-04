@@ -28,6 +28,9 @@ export default function PostProcessingRulesPanel() {
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const webhookUrlInputRef = useRef<HTMLInputElement>(null);
+  const emailToInputRef = useRef<HTMLInputElement>(null);
   const addRuleButtonRef = useRef<HTMLButtonElement>(null);
   const deleteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [focusAfterDelete, setFocusAfterDelete] = useState<{ target: "delete" | "add"; id: string } | null>(null);
@@ -71,14 +74,17 @@ export default function PostProcessingRulesPanel() {
     if (!editing) return;
     if (!editing.name.trim()) {
       setEditError("Enter a rule name.");
+      nameInputRef.current?.focus();
       return;
     }
     if (editing.action.type === "webhook" && !editing.action.url.trim()) {
       setEditError("Enter a webhook URL.");
+      webhookUrlInputRef.current?.focus();
       return;
     }
     if (editing.action.type === "email" && !editing.action.to.trim()) {
       setEditError("Enter an email address.");
+      emailToInputRef.current?.focus();
       return;
     }
     const idx = rules.findIndex((r) => r.id === editing.id);
@@ -201,16 +207,19 @@ export default function PostProcessingRulesPanel() {
               <h3 className="rule-editor-title">
                 {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} post-processing rule
               </h3>
+              <p className="field-help">Required fields are marked with <span aria-hidden="true">*</span>.</p>
 
               <div className="form-field">
-                <label htmlFor={`${panelId}-name`}>Name</label>
+                <label htmlFor={`${panelId}-name`}>Name <span aria-hidden="true">*</span><span className="visually-hidden"> (required)</span></label>
                 <input
+                  ref={nameInputRef}
                   id={`${panelId}-name`}
                   value={editing.name}
                   onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setEditError(null); }}
                   placeholder="e.g. Notify Slack on publish"
                   aria-invalid={editError === "Enter a rule name."}
                   aria-describedby={editError === "Enter a rule name." ? `${panelId}-error` : undefined}
+                  required
                 />
               </div>
 
@@ -245,14 +254,16 @@ export default function PostProcessingRulesPanel() {
 
               {editing.action.type === "webhook" && (
                 <div className="form-field">
-                  <label htmlFor={`${panelId}-webhook-url`}>Webhook URL</label>
+                  <label htmlFor={`${panelId}-webhook-url`}>Webhook URL <span aria-hidden="true">*</span><span className="visually-hidden"> (required)</span></label>
                   <input
+                    ref={webhookUrlInputRef}
                     id={`${panelId}-webhook-url`}
                     value={editing.action.url}
                     onChange={(e) => { patchAction({ url: e.target.value }); setEditError(null); }}
                     placeholder="https://hooks.example.com/..."
                     aria-invalid={editError === "Enter a webhook URL."}
                     aria-describedby={editError === "Enter a webhook URL." ? `${panelId}-error` : undefined}
+                    required
                   />
                 </div>
               )}
@@ -260,14 +271,16 @@ export default function PostProcessingRulesPanel() {
               {editing.action.type === "email" && (
                 <>
                   <div className="form-field">
-                    <label htmlFor={`${panelId}-email-to`}>To address</label>
+                    <label htmlFor={`${panelId}-email-to`}>To address <span aria-hidden="true">*</span><span className="visually-hidden"> (required)</span></label>
                     <input
+                      ref={emailToInputRef}
                       id={`${panelId}-email-to`}
                       value={editing.action.to}
                       onChange={(e) => { patchAction({ to: e.target.value }); setEditError(null); }}
                       placeholder="you@example.com"
                       aria-invalid={editError === "Enter an email address."}
                       aria-describedby={editError === "Enter an email address." ? `${panelId}-error` : undefined}
+                      required
                     />
                   </div>
                   <div className="form-field">

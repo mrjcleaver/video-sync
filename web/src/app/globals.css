@@ -740,6 +740,10 @@ body {
   grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
 }
 
+.ingestion-rule-grid-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .rule-editor .form-field label,
 .field-group-label {
   display: block;
@@ -919,6 +923,7 @@ body {
   .rule-toolbar,
   .rule-editor-grid-name,
   .rule-editor-grid-value,
+  .ingestion-rule-grid-pair,
   .summary-prompt-save-row {
     grid-template-columns: minmax(0, 1fr);
   }

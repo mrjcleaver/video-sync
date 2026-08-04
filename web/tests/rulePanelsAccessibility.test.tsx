@@ -95,7 +95,8 @@ describe("rule editor accessibility", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
 
-    expect(screen.getByLabelText("Name")).toBeTruthy();
+    const name = screen.getByLabelText(/Name/);
+    expect(name.getAttribute("required")).not.toBeNull();
     expect(screen.getByLabelText("Priority")).toBeTruthy();
     expect(screen.getByLabelText("Title pattern (regex)")).toBeTruthy();
     expect(screen.getByLabelText("Privacy status")).toBeTruthy();
@@ -107,6 +108,7 @@ describe("rule editor accessibility", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
     expect(screen.getByRole("alert").textContent).toBe("Enter a rule name.");
+    expect(document.activeElement).toBe(name);
   });
 
   it("requires an inline confirmation before deleting a post-processing rule", () => {
@@ -165,10 +167,10 @@ describe("rule editor accessibility", () => {
     fireEvent.click(screen.getByRole("button", { name: "Post-processing rules" }));
     fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
 
-    expect(screen.getByLabelText("Name")).toBeTruthy();
+    expect(screen.getByLabelText(/Name/).getAttribute("required")).not.toBeNull();
     expect(screen.getByLabelText("Trigger")).toBeTruthy();
     expect(screen.getByLabelText("Type")).toBeTruthy();
-    expect(screen.getByLabelText("Webhook URL")).toBeTruthy();
+    expect(screen.getByLabelText(/Webhook URL/).getAttribute("required")).not.toBeNull();
   });
 
   it("describes only the invalid post-processing field", () => {
@@ -178,12 +180,13 @@ describe("rule editor accessibility", () => {
     fireEvent.click(disclosure);
     fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
 
-    const name = screen.getByLabelText("Name");
-    const webhookUrl = screen.getByLabelText("Webhook URL");
+    const name = screen.getByLabelText(/Name/);
+    const webhookUrl = screen.getByLabelText(/Webhook URL/);
     fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
 
     expect(name.getAttribute("aria-describedby")).toBeTruthy();
     expect(webhookUrl.hasAttribute("aria-describedby")).toBe(false);
+    expect(document.activeElement).toBe(name);
 
     fireEvent.change(name, { target: { value: "Notify producer" } });
     fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
@@ -191,6 +194,7 @@ describe("rule editor accessibility", () => {
     expect(name.hasAttribute("aria-describedby")).toBe(false);
     expect(webhookUrl.getAttribute("aria-describedby")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe("Enter a webhook URL.");
+    expect(document.activeElement).toBe(webhookUrl);
   });
 });
 

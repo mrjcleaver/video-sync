@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   loadRules,
   saveRules,
@@ -46,6 +46,14 @@ export default function RulesPanel({
   const [pendingDelete, setPendingDelete] = useState<IngestionRule | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const addRuleButtonRef = useRef<HTMLButtonElement>(null);
+  const [focusAfterDelete, setFocusAfterDelete] = useState(false);
+
+  useEffect(() => {
+    if (pendingDelete || !focusAfterDelete) return;
+    addRuleButtonRef.current?.focus();
+    setFocusAfterDelete(false);
+  }, [pendingDelete, focusAfterDelete]);
 
   const persist = useCallback(
     (updated: IngestionRule[]) => {
@@ -64,6 +72,7 @@ export default function RulesPanel({
 
   function deleteRule(id: string) {
     persist(rules.filter((r) => r.id !== id));
+    setFocusAfterDelete(true);
   }
 
   function startEdit(rule?: IngestionRule) {
@@ -148,7 +157,7 @@ export default function RulesPanel({
           </HelpTip>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
+            <button ref={addRuleButtonRef} type="button" className="btn btn-sm btn-primary" onClick={() => startEdit()}>
               Add rule
             </button>
             <button type="button" className="btn btn-sm" onClick={dryRun}>
@@ -244,7 +253,7 @@ export default function RulesPanel({
                 )}
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div className="rule-editor-grid ingestion-rule-grid-pair">
                 <div className="form-field">
                   <label htmlFor="ingestion-rule-priority">Priority (lower = first)</label>
                   <input
@@ -327,7 +336,7 @@ export default function RulesPanel({
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div className="rule-editor-grid ingestion-rule-grid-pair">
                 <div className="form-field">
                   <label htmlFor="ingestion-rule-min-duration">Minimum duration (minutes)</label>
                   <input
@@ -360,7 +369,7 @@ export default function RulesPanel({
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div className="rule-editor-grid ingestion-rule-grid-pair">
                 <div className="form-field">
                   <label htmlFor="ingestion-rule-date-from">Date from</label>
                   <input

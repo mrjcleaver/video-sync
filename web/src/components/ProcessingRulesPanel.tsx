@@ -50,6 +50,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const addRuleButtonRef = useRef<HTMLButtonElement>(null);
   const deleteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [focusAfterDelete, setFocusAfterDelete] = useState<{ target: "delete" | "add"; id: string } | null>(null);
@@ -94,6 +95,7 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
     if (!editing) return;
     if (!editing.name.trim()) {
       setEditError("Enter a rule name.");
+      nameInputRef.current?.focus();
       return;
     }
     const idx = rules.findIndex((r) => r.id === editing.id);
@@ -353,18 +355,21 @@ export default function ProcessingRulesPanel({ expanded: initExpanded = false }:
               <h3 className="rule-editor-title">
                 {rules.find((r) => r.id === editing.id) ? "Edit" : "New"} processing rule
               </h3>
+              <p className="field-help">Required fields are marked with <span aria-hidden="true">*</span>.</p>
 
               {/* Name + Priority */}
               <div className="rule-editor-grid rule-editor-grid-name">
                 <div className="form-field">
-                  <label htmlFor={`${panelId}-name`}>Name</label>
+                  <label htmlFor={`${panelId}-name`}>Name <span aria-hidden="true">*</span><span className="visually-hidden"> (required)</span></label>
                   <input
+                    ref={nameInputRef}
                     id={`${panelId}-name`}
                     value={editing.name}
                     onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setEditError(null); }}
                     placeholder="e.g. Live Vibe Coding title"
                     aria-invalid={!!editError}
                     aria-describedby={editError ? `${panelId}-error` : undefined}
+                    required
                   />
                 </div>
                 <div className="form-field">

@@ -42,6 +42,8 @@ describe("configuration form accessibility", () => {
     expect(css).toMatch(/\.rule-form\s*\{[^}]*border:\s*1px solid var\(--control-border, var\(--text-muted\)\)/);
     expect(css).toMatch(/\.rule-item-name\s*\{[^}]*overflow-wrap:\s*anywhere/);
     expect(css).toMatch(/@media \(max-width: 767px\)[\s\S]*\.rule-item-name\s*\{[^}]*flex-basis:/);
+    expect(css).toMatch(/\.ingestion-rule-grid-pair\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(css).toMatch(/@media \(max-width: 767px\)[\s\S]*\.ingestion-rule-grid-pair,[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   });
 
   it("exposes ingestion rule fields and toggle state", () => {
@@ -120,6 +122,24 @@ describe("configuration form accessibility", () => {
 
     expect(container.querySelector(".rule-item-row")).toBeTruthy();
     expect(container.querySelector(".rule-item-name")?.textContent).toContain("very long ingestion");
+  });
+
+  it("moves focus to Add rule after confirming ingestion-rule deletion", () => {
+    localStorage.setItem("video-sync:rules", JSON.stringify([{
+      id: "ingestion-delete",
+      name: "Delete me",
+      enabled: true,
+      priority: 10,
+      criteria: {},
+      action: "mark_in_scope",
+    }]));
+
+    render(<RulesPanel isRunnerRunning={false} lastRun={null} matchCount={0} onRunNow={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Ingestion rules/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete rule" }));
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add rule" }));
   });
 
   it("groups and labels backfill profile settings", () => {
