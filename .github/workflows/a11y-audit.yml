@@ -1,0 +1,75 @@
+name: A11y audit (Lighthouse)
+
+# ADR-069 §Follow-up #6 — Lighthouse accessibility score gate.
+#
+# Runs on demand via workflow_dispatch. Not part of PR CI because:
+#   1. Building the app under CI would require ~6 GiB heap + Rust
+#      toolchain + wasm-pack — resource cost outsized for a lint-style
+#      gate.
+#   2. Deploys are still manual per deploy.yml (blocked on Workload
+#      Identity Federation), so there's no post-merge URL to gate on
+#      automatically. Once WIF lands, wire this into the deploy flow.
+#
+# Manual invocation:
+#   Actions → "A11y audit (Lighthouse)" → Run workflow → optionally
+#   provide a preview URL and threshold. Defaults to the prod URL
+#   (behind IAP → will require an IAP-JWT-enabled runner or a preview
+#   URL from a temporary non-IAP deploy).
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: URL to audit
+        required: false
+        default: https://video-sync.agentics.org/overview
+        type: string
+      threshold:
+        description: Fail if accessibility score < this (0-100)
+        required: false
+        default: '90'
+        type: string
+
+jobs:
+  audit:
+    name: Lighthouse a11y
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lighthouse
+        run: npm install -g lighthouse@12
+
+      - name: Run Lighthouse accessibility audit
+        id: audit
+        run: |
+          set -o pipefail
+          lighthouse "${{ inputs.url }}" \
+            --only-categories=accessibility \
+            --chrome-flags='--headless=new --no-sandbox --disable-gpu' \
+            --output=json \
+            --output=html \
+            --output-path=./lighthouse-report \
+            --quiet
+          score=$(node -e "console.log(Math.round(require('./lighthouse-report.report.json').categories.accessibility.score * 100))")
+          echo "score=$score" >> "$GITHUB_OUTPUT"
+          echo "Accessibility score: $score / 100"
+
+      - name: Enforce threshold
+        run: |
+          threshold=${{ inputs.threshold }}
+          score=${{ steps.audit.outputs.score }}
+          if [ "$score" -lt "$threshold" ]; then
+            echo "::error::a11y score $score < threshold $threshold"
+            exit 1
+          fi
+          echo "::notice::a11y score $score meets threshold $threshold"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: |
+            lighthouse-report.report.html
+            lighthouse-report.report.json
+          retention-days: 30
