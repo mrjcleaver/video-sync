@@ -13,6 +13,7 @@ import { Sidebar } from "./Sidebar";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import BuildBadge from "../../components/BuildBadge";
 import EventLog from "../../components/EventLog";
+import ThemeSelector from "../../components/ThemeSelector";
 import { useState } from "react";
 
 function AppShell({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <BuildBadge />
             <div style={{ flex: 1 }} />
+            <ThemeSelector />
             <button
               className={`btn btn-sm ${showLogs ? "btn-primary" : ""}`}
               onClick={() => setShowLogs(v => !v)}

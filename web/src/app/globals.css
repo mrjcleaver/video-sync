@@ -26,6 +26,34 @@
   --orange: #f97316;
 }
 
+/* ADR-070 — Light theme palette. The runtime (ThemeRuntime.tsx) stamps
+   data-theme="light|dark" on <html> based on the persisted preference
+   (localStorage: video-sync-theme) or the system preference when
+   "system" is selected. All existing rules read from the CSS variables
+   defined above / overridden here, so no rule-level rewrites are
+   required for the theme swap to work at the token level. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-hover: #e8edf2;
+  --bg-card: #ffffff;
+  --border: #a6afb9;
+  --text: #17202a;
+  --text-muted: #52606d;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-text: #1d4ed8;
+  --focus: #1d4ed8;
+  --green: #087a3d;
+  --yellow: #8a4d00;
+  --red: #b91c1c;
+  --red-surface: #b91c1c;
+  --purple: #7e22ce;
+  --purple-surface: #7e22ce;
+  --orange: #c2410c;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; }
@@ -906,4 +934,31 @@ textarea {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+/* ADR-070 — Theme selector widget (dropdown in the (app) header bar).
+   `data-ready="false"` keeps it invisible until ThemeSelector mounts
+   and the persisted preference is read, avoiding a "System" flash
+   before hydration. */
+.theme-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.theme-control[data-ready="false"] { visibility: hidden; }
+.theme-control label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.theme-control select {
+  min-height: 32px;
+  padding: 4px 28px 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
 }
