@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import HelpTip from "./HelpTip";
 import { useCurrentActor } from "../lib/useCurrentActor";
+import ConfirmDialog from "./ConfirmDialog";
 
 const STORAGE_KEY = "video-sync:connections";
 
@@ -163,6 +164,8 @@ export default function ConnectionsPanel({ open }: Props) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [savingShared, setSavingShared] = useState(false);
+  const [deleteSharedPlatform, setDeleteSharedPlatform] = useState<string | null>(null);
+  const [dropOverridePlatform, setDropOverridePlatform] = useState<string | null>(null);
   const actorState = useCurrentActor();
   const isAdmin = actorState.actor?.role === "Admin";
 
@@ -267,26 +270,30 @@ export default function ConnectionsPanel({ open }: Props) {
     closeEditor();
   }
 
-  async function handleDeleteShared(platformName: string) {
+  function handleDeleteShared(platformName: string) {
     if (!isSharedPlatformName(platformName)) return;
     if (!isAdmin) return;
-    if (!confirm(`Remove the shared ${platformName} credential? Operators without their own override will fall back to "unconfigured".`)) return;
+    setDeleteSharedPlatform(platformName);
+  }
+
+  async function confirmDeleteShared() {
+    if (!deleteSharedPlatform) return;
     setSavingShared(true);
     try {
-      const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(platformName)}`, { method: "DELETE" });
+      const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(deleteSharedPlatform)}`, { method: "DELETE" });
       if (!res.ok) {
         alert(`Delete failed (${res.status})`);
         return;
       }
       setRefreshTick(t => t + 1);
+      setDeleteSharedPlatform(null);
     } finally {
       setSavingShared(false);
     }
   }
 
   function handleDropOverride(platformName: string) {
-    if (!confirm(`Drop your local ${platformName} override and use the shared default instead?`)) return;
-    handleDisconnect(platformName);
+    setDropOverridePlatform(platformName);
   }
 
   function handleReauthorize(platformName: string) {
@@ -556,6 +563,26 @@ export default function ConnectionsPanel({ open }: Props) {
           );
         })}
       </div>
+      <ConfirmDialog
+        open={!!deleteSharedPlatform}
+        title="Remove shared credential?"
+        description={`Removing the shared ${deleteSharedPlatform ?? ""} credential means operators without their own override will fall back to "unconfigured". You can re-add it later.`}
+        confirmLabel="Remove"
+        busy={savingShared}
+        onConfirm={confirmDeleteShared}
+        onCancel={() => setDeleteSharedPlatform(null)}
+      />
+      <ConfirmDialog
+        open={!!dropOverridePlatform}
+        title="Drop local override?"
+        description={`Your local ${dropOverridePlatform ?? ""} override will be discarded. You'll fall back to the shared default (if one is configured) or unconfigured otherwise.`}
+        confirmLabel="Drop override"
+        onConfirm={() => {
+          if (dropOverridePlatform) handleDisconnect(dropOverridePlatform);
+          setDropOverridePlatform(null);
+        }}
+        onCancel={() => setDropOverridePlatform(null)}
+      />
     </div>
   );
 }

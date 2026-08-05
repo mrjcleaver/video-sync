@@ -11,6 +11,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { useCurrentActor } from "../lib/useCurrentActor";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface Props {
   videos: VideoRecordJSON[];
@@ -80,6 +81,8 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showBackups, setShowBackups] = useState<string | null>(null);   // record_id whose backups are open
   const [backups, setBackups] = useState<BackupRow[]>([]);
+  const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   const eligible = useMemo(
     () => videos.filter(v => v.source_platform !== "OpusClip" && extractYtId(v) && (v.description ?? "").length > 0),
@@ -224,25 +227,27 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
     }
   }
 
-  async function restore(backup_id: string) {
-    if (!confirm("Restore this backup? Will PUT the prior title + description back to YouTube. The current YouTube state gets captured as a new backup first (so this action is also undoable).")) return;
+  async function confirmRestore() {
+    if (!restoreTarget) return;
+    setRestoring(true);
     try {
       const creds = getYouTubeCreds();
       if (!creds) throw new Error("YouTube credentials missing.");
-      const res = await fetch(`/api/description/backups/${encodeURIComponent(backup_id)}/restore`, {
+      const res = await fetch(`/api/description/backups/${encodeURIComponent(restoreTarget.id)}/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(creds),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
-      onEvent(`YouTubeRestore ok: backup ${backup_id.slice(0, 8)}… restored`);
-      // Refresh backups list.
+      onEvent(`YouTubeRestore ok: backup ${restoreTarget.id.slice(0, 8)}… restored`);
+      setRestoreTarget(null);
       if (showBackups) void openBackupsFor(showBackups);
-      // And re-scan deltas.
       void scan();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestoring(false);
     }
   }
 
@@ -359,7 +364,7 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
                       <button
                         className="btn btn-sm btn-primary"
                         style={{ fontSize: "0.68rem" }}
-                        onClick={() => restore(b.id)}
+                        onClick={() => setRestoreTarget(b)}
                       >
                         ↶ Restore
                       </button>
@@ -371,6 +376,15 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={!!restoreTarget}
+        title="Restore this backup?"
+        description={`This PUTs the prior title + description back to YouTube. The current YouTube state gets captured as a new backup first, so this action is itself undoable. Backup taken ${restoreTarget ? new Date(restoreTarget.taken_at).toLocaleString() : ""} by ${restoreTarget?.taken_by ?? ""}.`}
+        confirmLabel="Restore"
+        busy={restoring}
+        onConfirm={confirmRestore}
+        onCancel={() => setRestoreTarget(null)}
+      />
     </div>
   );
 }

@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useCurrentActor } from "../lib/useCurrentActor";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface TokenSummary {
   id: string;
@@ -34,6 +35,8 @@ export default function McpTokensPanel() {
   const [newName, setNewName] = useState("");
   const [minting, setMinting] = useState(false);
   const [freshPlaintext, setFreshPlaintext] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<TokenSummary | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!isAdmin) return;
@@ -76,18 +79,22 @@ export default function McpTokensPanel() {
     }
   }
 
-  async function revoke(id: string) {
-    if (!confirm("Revoke this token? Any MCP client using it will start returning 401 on the next call.")) return;
+  async function confirmRevoke() {
+    if (!revokeTarget) return;
+    setRevoking(true);
     setError(null);
     try {
-      const res = await fetch(`/api/mcp/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await fetch(`/api/mcp/tokens/${encodeURIComponent(revokeTarget.id)}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
+      setRevokeTarget(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevoking(false);
     }
   }
 
@@ -208,7 +215,7 @@ export default function McpTokensPanel() {
                         <td style={{ padding: "6px 4px", textAlign: "right" }}>
                           <button
                             className="btn btn-sm btn-red"
-                            onClick={() => revoke(t.id)}
+                            onClick={() => setRevokeTarget(t)}
                             style={{ fontSize: "0.72rem" }}
                           >
                             Revoke
@@ -227,6 +234,15 @@ export default function McpTokensPanel() {
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={!!revokeTarget}
+        title="Revoke MCP token?"
+        description={`"${revokeTarget?.name ?? ""}" will stop working immediately. Any MCP client using it will start returning 401 on the next call. This cannot be undone.`}
+        confirmLabel="Revoke"
+        busy={revoking}
+        onConfirm={confirmRevoke}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </div>
   );
 }
