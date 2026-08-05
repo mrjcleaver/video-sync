@@ -8,7 +8,7 @@ name: Build & Deploy to Cloud Run
 # can still be invoked manually from the Actions tab once WIF is wired up.
 on:
   # push:
-  #   branches: [main, claude/video-bridge-adr-ddd-dlFIk]
+  #   branches: [main]
   workflow_dispatch:
 
 env:

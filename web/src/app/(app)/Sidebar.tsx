@@ -103,6 +103,7 @@ export function Sidebar() {
       <div style={{ padding: "4px 10px 12px", fontWeight: 700, fontSize: "1rem" }}>
         Video Sync
       </div>
+      <nav aria-label="Primary" style={{ display: "contents" }}>
       {NAV.filter((item) => (item.roles as readonly string[]).includes(role)).map((item) => {
         const isActive = pathname === item.path || (pathname === "/" && item.path === "/overview");
         const count = badgeFor(item.badge);
@@ -148,6 +149,7 @@ export function Sidebar() {
           </Link>
         );
       })}
+      </nav>
       <div style={{ flex: 1 }} />
 
       {/* ADR-065 — role selector. Admin/Publisher can preview the app as

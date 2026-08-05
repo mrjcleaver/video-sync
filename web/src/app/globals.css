@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0a0a0a;
   --surface: #141414;
   --surface-hover: #1a1a1a;
@@ -9,25 +10,107 @@
      undefined makes those surfaces transparent and bleed through any
      overlay underneath (e.g. the modal backdrop). */
   --bg-card: #141414;
-  --border: #2a2a2a;
-  --text: #e5e5e5;
-  --text-muted: #888;
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
+  --border: #525252;
+  --text: #f5f5f5;
+  --text-muted: #a3a3a3;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-text: #60a5fa;
+  --focus: #93c5fd;
   --green: #22c55e;
   --yellow: #eab308;
-  --red: #ef4444;
-  --purple: #a855f7;
+  --red: #f87171;
+  --red-surface: #b91c1c;
+  --purple: #c4b5fd;
+  --purple-surface: #6b21a8;
   --orange: #f97316;
 }
 
+/* ADR-070 — Light theme palette. The runtime (ThemeRuntime.tsx) stamps
+   data-theme="light|dark" on <html> based on the persisted preference
+   (localStorage: video-sync-theme) or the system preference when
+   "system" is selected. All existing rules read from the CSS variables
+   defined above / overridden here, so no rule-level rewrites are
+   required for the theme swap to work at the token level. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-hover: #e8edf2;
+  --bg-card: #ffffff;
+  --border: #a6afb9;
+  --text: #17202a;
+  --text-muted: #52606d;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-text: #1d4ed8;
+  --focus: #1d4ed8;
+  --green: #087a3d;
+  --yellow: #8a4d00;
+  --red: #b91c1c;
+  --red-surface: #b91c1c;
+  --purple: #7e22ce;
+  --purple-surface: #7e22ce;
+  --orange: #c2410c;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 3px solid var(--focus) !important;
+  outline-offset: 3px;
+}
+
+:where(button, input, select, textarea):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 700;
+  transform: translateY(-160%);
+  transition: transform 0.15s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 .container {
@@ -41,6 +124,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 32px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
@@ -49,13 +134,26 @@ body {
 .header h1 {
   font-size: 1.5rem;
   font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.header > span {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .header .stats {
   display: flex;
-  gap: 16px;
+  gap: 8px;
+  margin-left: auto;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.header .stats > * {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .stat-badge {
@@ -125,19 +223,34 @@ body {
   font-size: 0.85rem;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
+  min-height: 36px;
 }
 
 .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+.btn:active { transform: translateY(1px); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-green { background: var(--green); border-color: var(--green); color: #000; }
 .btn-green:hover { opacity: 0.9; }
-.btn-red { background: var(--red); border-color: var(--red); color: white; }
+.btn-red { background: var(--red-surface); border-color: var(--red-surface); color: white; }
 .btn-red:hover { opacity: 0.9; }
-.btn-sm { padding: 4px 10px; font-size: 0.8rem; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn:disabled:hover { background: var(--surface); border-color: var(--border); }
-.btn-primary:disabled:hover { background: var(--accent); border-color: var(--accent); }
+.btn-sm { padding: 4px 10px; font-size: 0.8rem; min-height: 32px; }
+
+.meta-button {
+  min-height: 24px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.meta-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
 
 /* Status badge */
 .status-badge {
@@ -153,10 +266,10 @@ body {
 .status-Discovered { background: var(--accent); color: white; }
 .status-InScope { background: #2563eb; color: white; }
 .status-Approved { background: var(--green); color: #000; }
-.status-Skipped { background: var(--text-muted); color: white; }
+.status-Skipped { background: #52525b; color: white; }
 .status-Publishing { background: var(--yellow); color: #000; }
-.status-Published { background: var(--purple); color: white; }
-.status-Failed { background: var(--red); color: white; }
+.status-Published { background: var(--purple-surface); color: white; }
+.status-Failed { background: var(--red-surface); color: white; }
 .status-Abandoned { background: #6b7280; color: white; }
 .status-ToRetry { background: #f59e0b; color: #000; }
 
@@ -223,6 +336,7 @@ body {
 
 .video-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
@@ -304,7 +418,7 @@ body {
 
 .location-platform {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   min-width: 70px;
 }
 
@@ -318,7 +432,7 @@ body {
 
 .role-Origin { background: var(--green); color: #000; }
 .role-Intermediate { background: var(--yellow); color: #000; }
-.role-Destination { background: var(--purple); color: white; }
+.role-Destination { background: var(--purple-surface); color: white; }
 
 .location-link {
   color: var(--text-muted);
@@ -326,7 +440,7 @@ body {
   font-size: 0.8rem;
 }
 
-.location-link:hover { color: var(--accent); text-decoration: underline; }
+.location-link:hover { color: var(--accent-text); text-decoration: underline; }
 
 .location-remove {
   background: none;
@@ -339,7 +453,7 @@ body {
   margin-left: auto;
 }
 
-.location-remove:hover { background: var(--red); color: white; }
+.location-remove:hover { background: var(--red-surface); color: white; }
 
 .location-add-form {
   display: flex;
@@ -505,7 +619,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 60vh;
+  min-height: 60dvh;
   font-size: 1.1rem;
   color: var(--text-muted);
 }
@@ -535,6 +649,7 @@ body {
   font-size: 0.8rem;
   cursor: pointer;
   transition: all 0.15s;
+  min-height: 32px;
 }
 
 .filter-tab:hover { border-color: var(--accent); color: var(--text); }
@@ -646,7 +761,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.panel-heading-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  text-align: left;
+  font: inherit;
 }
 
 .rule-item {
@@ -691,4 +819,146 @@ body {
 .bulk-approve-bar {
   margin-bottom: 12px;
   padding: 10px 0;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px 12px 28px;
+  }
+
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .header .stats,
+  .video-card-actions,
+  .form-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid .full-width {
+    grid-column: auto;
+  }
+
+  .video-card,
+  .zoom-import,
+  .connections-panel,
+  .rules-panel {
+    padding: 14px;
+  }
+
+  .video-card-header,
+  .zoom-import-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .video-card-meta {
+    gap: 8px 12px;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .header .stats {
+    width: 100%;
+  }
+
+  .header .stats .btn,
+  .header .stats > a {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .filter-tabs {
+    gap: 6px;
+  }
+
+  .filter-tab {
+    padding-inline: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ADR-069 — accessible confirm dialog (replaces window.confirm calls
+   incrementally; see web/src/components/ConfirmDialog.tsx). Uses the
+   native <dialog> element for focus trap + Escape handling. */
+.confirm-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-width: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #454545;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+}
+.confirm-dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
+.confirm-dialog-content { padding: 22px; }
+.confirm-dialog h2 {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+.confirm-dialog p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* ADR-070 — Theme selector widget (dropdown in the (app) header bar).
+   `data-ready="false"` keeps it invisible until ThemeSelector mounts
+   and the persisted preference is read, avoiding a "System" flash
+   before hydration. */
+.theme-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.theme-control[data-ready="false"] { visibility: hidden; }
+.theme-control label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.theme-control select {
+  min-height: 32px;
+  padding: 4px 28px 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
 }
