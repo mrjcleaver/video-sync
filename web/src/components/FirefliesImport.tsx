@@ -257,7 +257,7 @@ export default function FirefliesImport({ onImported, onEvent, dateFrom: dateFro
         Connections first.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && <div className="zoom-import-error" role="alert">{error}</div>}
 
       {fetched && transcripts.length > 0 && (
         <>

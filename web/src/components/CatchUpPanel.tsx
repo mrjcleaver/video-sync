@@ -862,7 +862,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
         )}
 
         {summary && (
-          <div style={{ marginTop: 12, padding: 10, background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4, fontSize: "0.85rem" }}>
+          <div style={{ marginTop: 12, padding: 10, background: "var(--success-soft)", border: "1px solid var(--success-border)", borderRadius: 4, fontSize: "0.85rem" }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               {runState === "complete" ? "Catch-up complete" : "Catch-up cancelled"}
             </div>
@@ -871,7 +871,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
               {summary.capHit && <> · <strong>stopped at cost cap</strong></>}
             </div>
             {summary.taggedCount > 0 && (
-              <div style={{ marginTop: 6, padding: 8, background: "rgba(168,85,247,0.08)", border: "1px dashed rgba(168,85,247,0.4)", borderRadius: 4 }}>
+              <div style={{ marginTop: 6, padding: 8, background: "var(--purple-soft)", border: "1px dashed rgba(168,85,247,0.4)", borderRadius: 4 }}>
                 <div style={{ marginBottom: 6 }}>
                   Tagged <strong>{summary.taggedCount}</strong> record{summary.taggedCount === 1 ? "" : "s"} with{" "}
                   <code style={{ background: "var(--bg)", padding: "1px 5px", borderRadius: 3, fontSize: "0.8rem" }}>{summary.jobTag}</code>.
@@ -903,7 +903,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             broadcaster-platform pairs. Idempotent; safe to re-run. */}
         <div style={{
           marginTop: 16, padding: 10,
-          background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 4,
+          background: "var(--purple-soft)", border: "1px solid var(--purple-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>🔧 Broadcast-pair migration (ADR-049 slice 5)</div>
@@ -938,7 +938,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             auto-ingested via ADR-049/050 C3. */}
         <div style={{
           marginTop: 12, padding: 10,
-          background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 4,
+          background: "var(--success-soft)", border: "1px solid var(--success-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>📺 YouTube row backfill (ADR-049/050 C1-A)</div>
@@ -1033,7 +1033,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
         {seriesScheduleGaps.records.length > 0 && (
           <div style={{
             marginTop: 12, padding: 10,
-            background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 4,
+            background: "var(--warning-soft)", border: "1px solid var(--warning-border)", borderRadius: 4,
             fontSize: "0.82rem",
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ Series missing schedule fields (ADR-060/064)</div>
@@ -1279,7 +1279,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
             walk-back so an in-flight publish isn't clobbered. */}
         <div style={{
           marginTop: 12, padding: 10,
-          background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.28)", borderRadius: 4,
+          background: "var(--danger-soft)", border: "1px solid var(--danger-border)", borderRadius: 4,
           fontSize: "0.82rem",
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>🗂 Catalog dedupe</div>

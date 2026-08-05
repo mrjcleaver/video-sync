@@ -268,7 +268,7 @@ export function Sidebar() {
           Claude Desktop will discover <code>/.well-known/oauth-authorization-server</code>, walk you through Approve, and store the token itself.
           <div style={{
             marginTop: 6, padding: 6,
-            background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.35)",
+            background: "var(--warning-soft)", border: "1px solid var(--warning-border)",
             borderRadius: 3,
           }}>
             <strong style={{ color: "#f59e0b" }}>⚠ Requires IAP exception</strong>

@@ -40,6 +40,7 @@ import { formatDateHover } from "../lib/dateHover";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
 import { refreshOneShortFromOpus } from "../lib/shortsRefresh";
+import ConfirmDialog from "./ConfirmDialog";
 
 const PLATFORMS = ["Zoom", "Loom", "Fireflies", "YouTube", "Kaltura", "Veedio"] as const;
 const ROLES = ["Origin", "Intermediate", "Destination"] as const;
@@ -92,6 +93,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const cmd = (extra?: Record<string, unknown>) => actorCommand(actorState, extra);
   const [noteText, setNoteText] = useState("");
   const [showNotes, setShowNotes] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPhase, setUploadPhase] = useState("");
@@ -1402,6 +1405,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     }
     setFetchingYtTranscript(true);
     setYtTranscriptError(null);
+    setStatusMessage("Fetching transcript from YouTube…");
     try {
       let connections: Record<string, { credentials?: Record<string, string> }> = {};
       try {
@@ -1438,10 +1442,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       // transcript_text in getAll() so all consumers see it.
       videoStore.setTranscript(video.id, text);
       onEvent(`TranscriptFetchedFromYouTube: "${video.title}"${dateTag(video.recorded_at)} — via ${data.source} (${text.length} chars)`, { video_id: video.id });
+      setStatusMessage(`Transcript fetched (${text.length} characters, source: ${data.source}).`);
       onMutated();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setYtTranscriptError(msg);
+      setStatusMessage(`Transcript fetch failed: ${msg}`);
       // Emit the full reason to the event log so operators can copy-
       // paste the yt-dlp stderr / InnerTube playability status without
       // hovering. The hover text still shows the same message; this
@@ -1458,6 +1464,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   async function generateDescriptionFromTranscript() {
     setGeneratingDescription(true);
     setDescriptionError(null);
+    setStatusMessage("Regenerating description…");
     try {
       const cfg = getDescriptionConfigCached();
       const hasShowNotes = !!video.summary_doc_id;
@@ -1494,6 +1501,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           r.update_metadata(cmd({ edits: { description } })),
         );
         onEvent(`DescriptionCopied: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from Show Notes via ${source}`, { video_id: video.id });
+        setStatusMessage(`Description copied from Show Notes (${description.length} characters).`);
         onMutated();
         return;
       }
@@ -1525,9 +1533,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         r.update_metadata(cmd({ edits: { description } })),
       );
       onEvent(`DescriptionGenerated: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from transcript${cfg.mode === "copy_show_notes" ? " (Show Notes fallback)" : ""}`, { video_id: video.id });
+      setStatusMessage(`Description regenerated (${description.length} characters).`);
       onMutated();
     } catch (err) {
-      setDescriptionError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setDescriptionError(msg);
+      setStatusMessage(`Description regen failed: ${msg}`);
     } finally {
       setGeneratingDescription(false);
     }
@@ -1930,6 +1941,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
    */
   async function pushTitleAndDescriptionToYouTube() {
     setPushingYt(true);
+    setStatusMessage("Pushing title + description to YouTube…");
     try {
       const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
                  ?? (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Origin" && l.external_id);
@@ -1972,15 +1984,20 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             if (d.titleChanged) parts.push(`title→"${video.title}"`);
             if (d.descriptionChanged) parts.push(`desc→${description.length}ch`);
             onEvent(`YouTubePush ok YouTube/${bareId}: ${parts.join(", ")}`, { video_id: video.id });
+            setStatusMessage(`Pushed to YouTube: ${parts.join(", ")}.`);
           } else {
             onEvent(`YouTubePush no-op YouTube/${bareId}: title + description already match`, { video_id: video.id });
+            setStatusMessage("YouTube already matches — no push needed.");
           }
         } else {
           const err = (data as { error?: string }).error ?? `HTTP ${res.status}`;
           onEvent(`YouTubePush failed YouTube/${bareId}: ${err}`, { video_id: video.id });
+          setStatusMessage(`Push to YouTube failed: ${err}`);
         }
       } catch (err) {
-        onEvent(`YouTubePush errored YouTube/${bareId}: ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+        const msg = err instanceof Error ? err.message : String(err);
+        onEvent(`YouTubePush errored YouTube/${bareId}: ${msg}`, { video_id: video.id });
+        setStatusMessage(`Push to YouTube errored: ${msg}`);
       }
     } finally {
       setPushingYt(false);
@@ -2246,7 +2263,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {siblingSuggestion && (
         <div style={{
           marginTop: 6, padding: "6px 10px",
-          background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6,
+          background: "var(--purple-soft)", border: "1px solid var(--purple-border)", borderRadius: 6,
           display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
         }}>
           <span>
@@ -2394,9 +2411,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(248,113,113,0.10)",
+              background: "var(--danger-soft)",
               color: "#fb7185",
-              border: "1px solid rgba(248,113,113,0.35)",
+              border: "1px solid var(--danger-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -2416,9 +2433,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(245,158,11,0.10)",
+              background: "var(--warning-soft)",
               color: "#f59e0b",
-              border: "1px solid rgba(245,158,11,0.35)",
+              border: "1px solid var(--warning-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -3883,18 +3900,34 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           </button>
         )}
         <button
+          type="button"
           className="btn btn-sm btn-red"
           style={{ marginLeft: "auto" }}
-          onClick={() => {
-            if (window.confirm(`Delete "${video.title}"${dateTag(video.recorded_at)}? This cannot be undone.`)) {
-              videoStore.remove(video.id);
-              onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
-              onMutated();
-            }
-          }}
+          onClick={() => setConfirmDelete(true)}
         >
           Delete
         </button>
+      </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete this record?"
+        description={`"${video.title}"${dateTag(video.recorded_at)} will be removed from the catalog. This cannot be undone — the record's history is preserved in the audit log but the card disappears.`}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          videoStore.remove(video.id);
+          onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+          setConfirmDelete(false);
+          onMutated();
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+      {/* ADR-069 follow-up: screen-reader announcements for async operations
+          on this card. Individual mutations (regen, push-to-YouTube, transcript
+          fetch, publish) can setStatusMessage(...) to surface progress /
+          success / error without a visual toast. Cleared by the next mutation
+          or when the card unmounts. */}
+      <div role="status" aria-live="polite" className="visually-hidden">
+        {statusMessage}
       </div>
     </div>
   );

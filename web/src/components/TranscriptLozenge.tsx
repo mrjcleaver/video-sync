@@ -26,9 +26,9 @@ const MISSING_STYLE: React.CSSProperties = {
   border: "1px solid rgba(148,163,184,0.18)",
 };
 const FETCHABLE_STYLE: React.CSSProperties = {
-  background: "rgba(168,85,247,0.10)",
+  background: "var(--purple-soft)",
   color: "#c4b5fd",
-  border: "1px solid rgba(168,85,247,0.35)",
+  border: "1px solid var(--purple-border)",
   cursor: "pointer",
 };
 

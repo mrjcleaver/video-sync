@@ -333,7 +333,7 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
         transcript file available for that recording.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && <div className="zoom-import-error" role="alert">{error}</div>}
 
       {fetched && meetings.length > 0 && (
         <>

@@ -202,10 +202,10 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {!datesAreControlled && (
             <>
-              <input type="date" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)}
+              <input type="date" aria-label="Fetch from" value={dateFrom} onChange={(e) => setLocalDateFrom(e.target.value)}
                 style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
               <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>to</span>
-              <input type="date" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)}
+              <input type="date" aria-label="Fetch to" value={dateTo} onChange={(e) => setLocalDateTo(e.target.value)}
                 style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }} />
             </>
           )}
@@ -224,7 +224,7 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
         the right day in Sync Status.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && <div className="zoom-import-error" role="alert">{error}</div>}
 
       {fetched && broadcasts.length > 0 && (
         <>

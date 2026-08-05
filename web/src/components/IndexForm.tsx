@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, useId, FormEvent } from "react";
 import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import HelpTip from "./HelpTip";
@@ -20,6 +20,8 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
   const [downloadUrl, setDownloadUrl] = useState("");
   const [tags, setTags] = useState("");
   const [expanded, setExpanded] = useState(false);
+
+  const idPrefix = useId();
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -63,7 +65,9 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
       >
         <h2>Index New Video</h2>
         <button
+          type="button"
           className="btn btn-sm"
+          aria-expanded={expanded}
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? "Collapse" : "Manual Entry"}
@@ -80,8 +84,9 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
       {expanded && (
         <form onSubmit={handleSubmit} className="form-grid" style={{ marginTop: 12 }}>
           <div>
-            <label>Title *</label>
+            <label htmlFor={`${idPrefix}-title`}>Title *</label>
             <input
+              id={`${idPrefix}-title`}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Video title"
@@ -89,48 +94,53 @@ export default function IndexForm({ onIndexed, onEvent }: Props) {
             />
           </div>
           <div>
-            <label>Platform</label>
-            <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+            <label htmlFor={`${idPrefix}-platform`}>Platform</label>
+            <select id={`${idPrefix}-platform`} value={platform} onChange={(e) => setPlatform(e.target.value)}>
               <option value="Zoom">Zoom</option>
               <option value="Loom">Loom</option>
               <option value="Fireflies">Fireflies</option>
             </select>
           </div>
           <div>
-            <label>Source ID</label>
+            <label htmlFor={`${idPrefix}-source`}>Source ID</label>
             <input
+              id={`${idPrefix}-source`}
               value={sourceId}
               onChange={(e) => setSourceId(e.target.value)}
               placeholder="zoom-abc-123"
             />
           </div>
           <div>
-            <label>Duration (seconds)</label>
+            <label htmlFor={`${idPrefix}-duration`}>Duration (seconds)</label>
             <input
+              id={`${idPrefix}-duration`}
               type="number"
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
             />
           </div>
           <div className="full-width">
-            <label>Description</label>
+            <label htmlFor={`${idPrefix}-description`}>Description</label>
             <textarea
+              id={`${idPrefix}-description`}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description"
             />
           </div>
           <div>
-            <label>Download URL</label>
+            <label htmlFor={`${idPrefix}-url`}>Download URL</label>
             <input
+              id={`${idPrefix}-url`}
               value={downloadUrl}
               onChange={(e) => setDownloadUrl(e.target.value)}
               placeholder="https://..."
             />
           </div>
           <div>
-            <label>Tags (comma-separated)</label>
+            <label htmlFor={`${idPrefix}-tags`}>Tags (comma-separated)</label>
             <input
+              id={`${idPrefix}-tags`}
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="standup, engineering"
