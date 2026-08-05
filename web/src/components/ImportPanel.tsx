@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import ZoomImport from "./ZoomImport";
 import FirefliesImport from "./FirefliesImport";
 import KalturaImport from "./KalturaImport";
@@ -86,14 +86,31 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* ignore */ }
   }
 
+  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = TABS[nextIndex].id;
+    selectTab(nextTab);
+    document.getElementById(`import-tab-${nextTab}`)?.focus();
+  }
+
   return (
     <div className="zoom-import" style={{ padding: 0 }}>
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-        {TABS.map(({ id, label }) => (
+      <div role="group" aria-label="Import method" style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+        {TABS.map(({ id, label }, index) => (
           <button
             key={id}
+            id={`import-tab-${id}`}
+            type="button"
+            aria-pressed={active === id}
             onClick={() => selectTab(id)}
+            onKeyDown={(event) => onTabKeyDown(event, index)}
             style={{
               padding: "8px 16px",
               fontSize: "0.82rem",

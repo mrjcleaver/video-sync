@@ -287,8 +287,9 @@ export default function URLImport({ onImported, onEvent }: Props) {
     <div className="zoom-import">
       <div className="zoom-import-header">
         <h2>Import from URL</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flex: 1 }}>
           <button
+            type="button"
             className="btn btn-sm btn-primary"
             onClick={fetchAll}
             disabled={loading || !input.trim()}
@@ -305,12 +306,16 @@ export default function URLImport({ onImported, onEvent }: Props) {
         previews, then import selected.
       </HelpTip>
 
+      <label htmlFor="url-import-input" className="visually-hidden">Video URLs to import</label>
       <textarea
+        id="url-import-input"
         value={input}
         onChange={e => { setInput(e.target.value); setItems([]); setGlobalError(null); }}
         onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) fetchAll(); }}
         placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\nhttps://us06web.zoom.us/rec/share/…\n…"}
         rows={3}
+        aria-describedby="url-import-help"
+        aria-invalid={!!globalError}
         style={{
           width: "100%",
           marginTop: 8,
@@ -325,8 +330,11 @@ export default function URLImport({ onImported, onEvent }: Props) {
           boxSizing: "border-box",
         }}
       />
+      <span id="url-import-help" style={{ display: "block", marginTop: 4, fontSize: "0.72rem", color: "var(--text-muted)" }}>
+        One URL per line. Press Ctrl+Enter or ⌘+Enter to fetch.
+      </span>
 
-      {globalError && <div className="zoom-import-error">{globalError}</div>}
+      {globalError && <div className="zoom-import-error" role="alert">{globalError}</div>}
 
       {items.length > 0 && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -345,7 +353,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {item.fetchError ? (
-                    <div style={{ fontSize: "0.8rem", color: "var(--red)" }}>{item.fetchError}</div>
+                    <div style={{ fontSize: "0.8rem", color: "var(--red)" }} role="alert">{item.fetchError}</div>
                   ) : (
                     <>
                       <div style={{ fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.3 }}>{item.title}</div>
