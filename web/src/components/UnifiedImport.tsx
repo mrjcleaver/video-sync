@@ -476,7 +476,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
       {fetchStatus && !loading && (
         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>{fetchStatus}</div>
       )}
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && <div className="zoom-import-error" role="alert">{error}</div>}
 
       {fetched && sessions.length > 0 && (
         <>
@@ -609,7 +609,7 @@ export default function UnifiedImport({ onImported, onEvent }: Props) {
       )}
 
       {fetched && sessions.length === 0 && !loading && (
-        <div className="zoom-import-error">No recordings found for this date range.</div>
+        <div className="zoom-import-error" role="status">No recordings found for this date range.</div>
       )}
     </div>
   );

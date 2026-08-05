@@ -168,7 +168,7 @@ export default function YouTubeImport({ onImported, onEvent }: Props) {
         content before importing.
       </HelpTip>
 
-      {error && <div className="zoom-import-error">{error}</div>}
+      {error && <div className="zoom-import-error" role="alert">{error}</div>}
 
       {preview && (
         <div style={{ marginTop: 12, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
