@@ -282,7 +282,7 @@ export default function SummaryPromptPanel({ open, videos, onEvent, onClose }: P
         </div>
 
         {!isAdmin && (
-          <div style={{ padding: 12, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
+          <div style={{ padding: 12, background: "var(--danger-soft)", border: "1px solid var(--danger-border)", borderRadius: 6, marginBottom: 12, fontSize: "0.85rem" }}>
             Admin role required to edit the prompt or run bulk regeneration. You can still see the current prompt below.
           </div>
         )}

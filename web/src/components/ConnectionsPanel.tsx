@@ -487,8 +487,8 @@ export default function ConnectionsPanel({ open }: Props) {
                 <div className="credential-form" onClick={(e) => e.stopPropagation()}>
                   {editor.mode === "shared" && (
                     <div style={{
-                      background: "rgba(168,85,247,0.08)",
-                      border: "1px solid rgba(168,85,247,0.3)",
+                      background: "var(--purple-soft)",
+                      border: "1px solid var(--purple-border)",
                       borderRadius: 6,
                       padding: "6px 10px",
                       marginBottom: 8,

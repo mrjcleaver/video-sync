@@ -32,10 +32,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
           role="alert"
           style={{
             padding: "10px 14px",
-            background: "rgba(248,113,113,0.1)",
-            border: "1px solid rgba(248,113,113,0.3)",
+            background: "var(--danger-soft)",
+            border: "1px solid var(--danger-border)",
             borderRadius: 6,
-            color: "#f87171",
+            color: "var(--red)",
             fontSize: "0.85rem",
             margin: "12px 12px 0",
           }}

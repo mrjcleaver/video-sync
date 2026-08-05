@@ -2263,7 +2263,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       {siblingSuggestion && (
         <div style={{
           marginTop: 6, padding: "6px 10px",
-          background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6,
+          background: "var(--purple-soft)", border: "1px solid var(--purple-border)", borderRadius: 6,
           display: "flex", alignItems: "center", gap: 8, fontSize: "0.78rem",
         }}>
           <span>
@@ -2411,9 +2411,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(248,113,113,0.10)",
+              background: "var(--danger-soft)",
               color: "#fb7185",
-              border: "1px solid rgba(248,113,113,0.35)",
+              border: "1px solid var(--danger-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -2433,9 +2433,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               fontSize: "0.7rem",
               padding: "1px 6px",
               borderRadius: 10,
-              background: "rgba(245,158,11,0.10)",
+              background: "var(--warning-soft)",
               color: "#f59e0b",
-              border: "1px solid rgba(245,158,11,0.35)",
+              border: "1px solid var(--warning-border)",
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}

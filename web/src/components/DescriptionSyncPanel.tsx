@@ -256,7 +256,7 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
   return (
     <div style={{
       marginTop: 12, padding: 10,
-      background: "rgba(59,130,246,0.05)", border: "1px solid rgba(59,130,246,0.28)", borderRadius: 4,
+      background: "var(--info-soft)", border: "1px solid var(--info-border)", borderRadius: 4,
       fontSize: "0.82rem",
     }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>↗ YouTube description sync</div>

@@ -150,7 +150,7 @@ export default function McpTokensPanel() {
               {freshPlaintext && (
                 <div style={{
                   padding: 12, marginBottom: 12,
-                  background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.4)",
+                  background: "var(--success-soft)", border: "1px solid var(--success-border)",
                   borderRadius: 4, fontSize: "0.85rem",
                 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6, color: "#22c55e" }}>

@@ -24,6 +24,20 @@
   --purple: #c4b5fd;
   --purple-surface: #6b21a8;
   --orange: #f97316;
+  /* ADR-070 follow-up: soft-tinted callout surfaces + matching
+     borders. Used by role="alert" / role="status" banners, panels,
+     and inline notices that shouldn't be as loud as a status-badge.
+     Both themes override in the :root[data-theme="light"] block. */
+  --danger-soft: rgba(248, 113, 113, 0.10);
+  --danger-border: rgba(248, 113, 113, 0.35);
+  --success-soft: rgba(34, 197, 94, 0.08);
+  --success-border: rgba(34, 197, 94, 0.35);
+  --warning-soft: rgba(234, 179, 8, 0.10);
+  --warning-border: rgba(234, 179, 8, 0.38);
+  --info-soft: rgba(59, 130, 246, 0.08);
+  --info-border: rgba(59, 130, 246, 0.35);
+  --purple-soft: rgba(168, 85, 247, 0.10);
+  --purple-border: rgba(168, 85, 247, 0.35);
 }
 
 /* ADR-070 — Light theme palette. The runtime (ThemeRuntime.tsx) stamps
@@ -52,6 +66,16 @@
   --purple: #7e22ce;
   --purple-surface: #7e22ce;
   --orange: #c2410c;
+  --danger-soft: rgba(185, 28, 28, 0.08);
+  --danger-border: rgba(185, 28, 28, 0.42);
+  --success-soft: rgba(8, 122, 61, 0.08);
+  --success-border: rgba(8, 122, 61, 0.42);
+  --warning-soft: rgba(138, 77, 0, 0.08);
+  --warning-border: rgba(138, 77, 0, 0.44);
+  --info-soft: rgba(3, 105, 161, 0.08);
+  --info-border: rgba(3, 105, 161, 0.45);
+  --purple-soft: rgba(126, 34, 206, 0.08);
+  --purple-border: rgba(126, 34, 206, 0.42);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
