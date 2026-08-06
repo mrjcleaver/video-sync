@@ -5,9 +5,10 @@ import { WasmVideoRecord } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import type { YouTubeVideoInfo } from "../app/api/youtube/video-info/route";
 import type { LoomMetadata } from "../app/api/loom/metadata/route";
+import type { DriveVideoMetadata, DriveMetadataRequiresAuth } from "../app/api/drive/metadata/route";
 import HelpTip from "./HelpTip";
 
-type Platform = "youtube" | "loom" | "zoom-share" | "unknown";
+type Platform = "youtube" | "loom" | "zoom-share" | "google-drive" | "unknown";
 
 interface DetectedUrl {
   raw: string;
@@ -32,6 +33,15 @@ interface FetchedItem {
   transcriptText?: string;
   participants?: string[];
   chapters?: Array<{ time: number; title: string }>;
+  /** ADR-071 — Drive files that couldn't resolve publicly. Still
+   *  selectable so the contributor's submission lands in the catalog
+   *  with metadata_extra.drive_pending_curator = "1" for the
+   *  /maintain queue to pick up. */
+  drivePendingCurator?: boolean;
+  /** ADR-071 — Drive files should kick /api/drive/ingest at
+   *  importSelected time; carries the ingest auth mode. Absent for
+   *  pending-curator rows (curator triggers ingest later). */
+  driveIngestAuth?: "public" | "service_account";
 }
 
 function detect(input: string): DetectedUrl {
@@ -50,6 +60,16 @@ function detect(input: string): DetectedUrl {
   // as-is so the source_id round-trips to the exact playable link.
   m = s.match(/zoom\.us\/rec\/share\/([A-Za-z0-9_.\-]+)/i);
   if (m) return { raw: s, platform: "zoom-share", id: m[1] };
+  // ADR-071 — Google Drive file URLs. Three shapes:
+  //   drive.google.com/file/d/<id>/…
+  //   drive.google.com/open?id=<id>
+  //   drive.google.com/uc?id=<id>[&export=…]
+  // Rejects docs.google.com paths — those are Google-native assets
+  // (Docs / Sheets / Slides) not video files.
+  m = s.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]{20,})/i);
+  if (m) return { raw: s, platform: "google-drive", id: m[1] };
+  m = s.match(/drive\.google\.com\/(?:open|uc)\?[^"']*id=([A-Za-z0-9_-]{20,})/i);
+  if (m) return { raw: s, platform: "google-drive", id: m[1] };
   return { raw: s, platform: "unknown", id: null };
 }
 
@@ -143,6 +163,66 @@ async function fetchLoom(id: string, raw: string): Promise<FetchedItem> {
   };
 }
 
+/**
+ * ADR-071 §1 — public Drive share resolution. The server responds
+ * with either DriveVideoMetadata (public / SA succeeded) or
+ * { requires_auth: true } which we surface as a pending-curator row
+ * that still lands in the catalog on import.
+ */
+async function fetchDrive(id: string, raw: string): Promise<FetchedItem> {
+  const res = await fetch("/api/drive/metadata", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: id }),
+  });
+  const data = (await res.json()) as (DriveVideoMetadata & { error?: string }) | DriveMetadataRequiresAuth;
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error ?? `Drive metadata (${res.status})`);
+  }
+  if ("requires_auth" in data && data.requires_auth) {
+    // Contributor-visible pending-curator row. Placeholder metadata;
+    // curator's authenticated pull fills it in later.
+    return {
+      raw, platform: "google-drive", id,
+      title: `Drive video — ${new Date().toISOString().slice(0, 10)}`,
+      description: `Contributor-submitted Drive file. Pending curator pull — this file needs authenticated access.\nOriginal URL: ${raw}`,
+      thumbnailUrl: null,
+      durationSeconds: 0,
+      channelOrAuthor: "",
+      publishedAt: "",
+      needsTos: false,
+      extra: {
+        drive_file_id: id,
+        drive_web_view_link: raw,
+        drive_pending_curator: "1",
+        contributor_submitted: "1",
+      },
+      drivePendingCurator: true,
+    };
+  }
+  const meta = data as DriveVideoMetadata;
+  const extra: Record<string, string> = {
+    drive_file_id: meta.file_id,
+    drive_mime_type: meta.mime_type,
+    drive_web_view_link: meta.web_view_link ?? raw,
+  };
+  if (meta.owner_email) extra.drive_original_owner_email = meta.owner_email;
+  if (meta.owner_name) extra.drive_original_owner_name = meta.owner_name;
+  if (meta.size_bytes != null) extra.drive_size_bytes = String(meta.size_bytes);
+  return {
+    raw, platform: "google-drive", id,
+    title: meta.name.replace(/\.[a-zA-Z0-9]{2,5}$/, ""),
+    description: null,
+    thumbnailUrl: meta.thumbnail_link,
+    durationSeconds: meta.duration_seconds ?? 0,
+    channelOrAuthor: meta.owner_name ?? "",
+    publishedAt: meta.created_time ?? meta.modified_time ?? "",
+    needsTos: false,
+    extra,
+    driveIngestAuth: meta.resolved_via === "public" ? "public" : "service_account",
+  };
+}
+
 interface Props {
   onImported: () => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
@@ -170,7 +250,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
       lines.map(async (line): Promise<FetchedItem & { fetchError?: string }> => {
         const { platform, id, raw } = detect(line);
         if (!id || platform === "unknown") {
-          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL — expected YouTube, Loom, or a public Zoom share (zoom.us/rec/share/…)" };
+          return { raw: line, platform: "unknown", id: line, title: line, description: null, thumbnailUrl: null, durationSeconds: 0, channelOrAuthor: "", publishedAt: "", needsTos: false, extra: {}, fetchError: "Unrecognised URL — expected YouTube, Loom, a public Zoom share (zoom.us/rec/share/…), or a Google Drive file link" };
         }
         const sourceId = `${platform}-${id}`;
         const alreadyIn = videoStore.getAll().some(v => v.source_id === sourceId);
@@ -180,6 +260,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
         try {
           if (platform === "youtube") return await fetchYouTube(id);
           if (platform === "loom") return await fetchLoom(id, raw);
+          if (platform === "google-drive") return await fetchDrive(id, raw);
           // Zoom-share: no unauthenticated metadata API. We accept
           // the URL as-is with a placeholder title. A curator can
           // re-fetch via the authenticated Zoom API later; the raw
@@ -224,22 +305,27 @@ export default function URLImport({ onImported, onEvent }: Props) {
     for (const item of items) {
       if (!selected.has(item.id) || item.fetchError) continue;
       const sourcePlatform =
-        item.platform === "youtube"    ? "YouTube"
-      : item.platform === "loom"        ? "Loom"
-      : item.platform === "zoom-share"  ? "Zoom"
+        item.platform === "youtube"      ? "YouTube"
+      : item.platform === "loom"          ? "Loom"
+      : item.platform === "zoom-share"    ? "Zoom"
+      : item.platform === "google-drive"  ? "GoogleDrive"
       : "Unknown";
       // Namespace Zoom-share source_ids with a `zoom-share-` prefix so
       // they don't collide with OAuth-imported Zoom rows (which use
       // `zoom-<meeting-uuid>`). The share id is base64 with dots which
       // survives Rust's SourcePlatformId round-trip fine.
       const sourceId =
-        item.platform === "youtube"    ? `youtube-${item.id}`
-      : item.platform === "loom"        ? `loom-${item.id}`
-      : item.platform === "zoom-share"  ? `zoom-share-${item.id}`
+        item.platform === "youtube"      ? `youtube-${item.id}`
+      : item.platform === "loom"          ? `loom-${item.id}`
+      : item.platform === "zoom-share"    ? `zoom-share-${item.id}`
+      : item.platform === "google-drive"  ? `drive-${item.id}`
       : `${item.platform}-${item.id}`;
+      // Drive rows point at the FUSE-copied file on completion; while
+      // the ingest is running (or if it's pending curator pull), we
+      // leave the raw share URL so the record has a legible link.
       const downloadUrl =
-        item.platform === "youtube"    ? `youtube://${item.id}`
-      : /* loom / zoom-share */          item.raw;
+        item.platform === "youtube"      ? `youtube://${item.id}`
+      : /* loom / zoom-share / drive */    item.raw;
       const cmd: Record<string, unknown> = {
         source_id: sourceId,
         source_platform: sourcePlatform,
@@ -263,11 +349,27 @@ export default function URLImport({ onImported, onEvent }: Props) {
       if (item.transcriptText) {
         videoStore.setTranscript(record.id(), item.transcriptText);
       }
+      // ADR-071 §3 — kick the Drive ingest for rows that resolved
+      // publicly. Fire-and-forget: the client can poll
+      // /api/drive/status later if it wants a progress bar. Pending-
+      // curator rows are left for /maintain to trigger.
+      if (item.platform === "google-drive" && !item.drivePendingCurator && item.driveIngestAuth) {
+        void fetch("/api/drive/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file_id: item.id,
+            record_id: record.id(),
+            auth: item.driveIngestAuth,
+          }),
+        }).catch(() => { /* swallow; a re-trigger from /maintain is available */ });
+      }
       const transcriptNote = item.transcriptText ? ", transcript included" : "";
       const platformLabel =
-        item.platform === "youtube"    ? "YouTube"
-      : item.platform === "loom"        ? "Loom"
-      : item.platform === "zoom-share"  ? "Zoom share"
+        item.platform === "youtube"      ? "YouTube"
+      : item.platform === "loom"          ? "Loom"
+      : item.platform === "zoom-share"    ? "Zoom share"
+      : item.platform === "google-drive"  ? (item.drivePendingCurator ? "Drive (pending curator)" : "Google Drive")
       : item.platform;
       onEvent(`VideoIndexed: "${item.title}" (${platformLabel} import${transcriptNote})`);
       count++;
@@ -300,9 +402,9 @@ export default function URLImport({ onImported, onEvent }: Props) {
       </div>
 
       <HelpTip>
-        Paste one or more URLs — YouTube, Loom, or a public Zoom share (<code>zoom.us/rec/share/…</code>) — one per line. Supports{" "}
+        Paste one or more URLs — YouTube, Loom, a public Zoom share (<code>zoom.us/rec/share/…</code>), or a Google Drive file (<code>drive.google.com/file/d/…</code>) — one per line. Supports{" "}
         <code>youtube.com/watch</code>, <code>youtube.com/live</code>, <code>youtu.be</code>,
-        and <code>loom.com/share</code>. Metadata is fetched automatically — review the
+        <code>loom.com/share</code>. Drive files must be shared publicly (or with the org runtime service account); private files land in a curator queue. Metadata is fetched automatically — review the
         previews, then import selected.
       </HelpTip>
 
@@ -312,7 +414,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
         value={input}
         onChange={e => { setInput(e.target.value); setItems([]); setGlobalError(null); }}
         onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) fetchAll(); }}
-        placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\nhttps://us06web.zoom.us/rec/share/…\n…"}
+        placeholder={"https://www.youtube.com/live/jcipFgphFfI\nhttps://www.loom.com/share/abc123\nhttps://us06web.zoom.us/rec/share/…\nhttps://drive.google.com/file/d/…"}
         rows={3}
         aria-describedby="url-import-help"
         aria-invalid={!!globalError}
@@ -357,12 +459,24 @@ export default function URLImport({ onImported, onEvent }: Props) {
                   ) : (
                     <>
                       <div style={{ fontWeight: 600, fontSize: "0.85rem", lineHeight: 1.3 }}>{item.title}</div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", gap: 8 }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", gap: 8, alignItems: "center" }}>
                         <span style={{ textTransform: "capitalize", color: item.platform === "youtube" ? "#ff4444" : "#6366f1" }}>
-                          {item.platform}
+                          {item.platform === "google-drive" ? "Google Drive" : item.platform}
                         </span>
                         {item.channelOrAuthor && <span>{item.channelOrAuthor}</span>}
                         {item.durationSeconds > 0 && <span>{fmt(item.durationSeconds)}</span>}
+                        {item.drivePendingCurator && (
+                          <span
+                            style={{
+                              padding: "1px 6px", borderRadius: 4, fontSize: "0.65rem",
+                              background: "var(--warning-soft, rgba(234,179,8,0.16))", color: "var(--yellow)",
+                              border: "1px solid var(--warning-border, rgba(234,179,8,0.3))",
+                            }}
+                            title="This Drive file is not publicly readable. A curator with org Drive access will pull it from /maintain."
+                          >
+                            pending curator pull
+                          </span>
+                        )}
                       </div>
                     </>
                   )}

@@ -16,6 +16,7 @@
  */
 
 import CatchUpPanel from "../../../components/CatchUpPanel";
+import DrivePendingPullPanel from "../../../components/DrivePendingPullPanel";
 import { useApp } from "../AppContext";
 
 export default function MaintainPage() {
@@ -25,6 +26,9 @@ export default function MaintainPage() {
       <div className="header">
         <h1>Maintain</h1>
       </div>
+      {/* ADR-071 §2 — pending curator Drive pulls. Renders nothing when
+          the queue is empty, so it doesn't pollute the layout. */}
+      <DrivePendingPullPanel videos={videos} onEvent={addEvent} />
       <CatchUpPanel
         open
         videos={videos}
