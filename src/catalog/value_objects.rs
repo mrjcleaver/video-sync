@@ -20,6 +20,12 @@ pub enum SourcePlatform {
     /// clip is a first-class catalog row with a ClipOf upstream_link
     /// back to the parent (ADR-055).
     OpusClip,
+    /// Video files ingested from Google Drive — either a public share
+    /// pasted by a contributor OR an authenticated pull triggered by a
+    /// Publisher via ADR-042's OAuth vault. Bytes are streamed to the
+    /// FUSE bucket at import time (ADR-071 §3) so the record is
+    /// durable against the Drive share being revoked.
+    GoogleDrive,
 }
 
 /// Any platform a video can exist on (source or destination).
@@ -33,6 +39,7 @@ pub enum Platform {
     Kaltura,
     Veedio,
     OpusClip,
+    GoogleDrive,
 }
 
 impl From<SourcePlatform> for Platform {
@@ -44,6 +51,7 @@ impl From<SourcePlatform> for Platform {
             SourcePlatform::YouTube => Platform::YouTube,
             SourcePlatform::Kaltura => Platform::Kaltura,
             SourcePlatform::OpusClip => Platform::OpusClip,
+            SourcePlatform::GoogleDrive => Platform::GoogleDrive,
         }
     }
 }
@@ -64,6 +72,7 @@ impl Platform {
             Platform::Kaltura => "kaltura-",
             Platform::Veedio => "veedio-",
             Platform::OpusClip => "opusclip-",
+            Platform::GoogleDrive => "drive-",
         }
     }
 

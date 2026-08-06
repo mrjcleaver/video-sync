@@ -25,6 +25,7 @@ export default function ContributePage() {
   const actorState = useCurrentActor();
   const router = useRouter();
   const [chapter, setChapter] = useState("");
+  const [pastedTranscript, setPastedTranscript] = useState("");
 
   const email = actorState.actor?.email ?? "";
   const role = actorState.actor?.role ?? "Viewer";
@@ -44,6 +45,21 @@ export default function ContributePage() {
     // contributor_email/chapter fields will populate on next server
     // hydrate once the WASM update_metadata command accepts them.)
     if (ids.length === 0) return;
+    // ADR-071 §4 — if the contributor pasted a transcript, apply it
+    // to any newly-created records that don't already have one
+    // (Loom's auto-transcript is preserved). Cleared after the
+    // batch so subsequent imports don't inherit stale text.
+    if (pastedTranscript.trim()) {
+      import("../../../lib/store").then(({ videoStore }) => {
+        for (const id of ids) {
+          const existing = videoStore.getAll().find(v => v.id === id);
+          if (existing && !existing.transcript_text) {
+            videoStore.setTranscript(id, pastedTranscript.trim());
+          }
+        }
+      });
+      setPastedTranscript("");
+    }
     void refreshVideos?.();
     addEvent(`Contributed: ${ids.length} record${ids.length === 1 ? "" : "s"} by ${email}${chapter ? ` (${chapter})` : ""}`);
   }
@@ -56,7 +72,7 @@ export default function ContributePage() {
 
       <div className="panel" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ fontSize: "0.88rem", color: "var(--text-muted)", marginBottom: 8 }}>
-          Paste a YouTube, Loom, or public Zoom-share URL to submit a recording.
+          Paste a YouTube, Loom, public Zoom-share, or Google Drive URL to submit a recording.
           A curator reviews and (if approved) publishes it to the org&apos;s channels.
           You&apos;ll see it appear in <strong>Your contributions</strong> below.
         </div>
@@ -84,6 +100,34 @@ export default function ContributePage() {
         <URLImport onImported={onImported} onEvent={addEvent} />
 
         <details style={{ marginTop: 12, fontSize: "0.82rem" }}>
+          <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>
+            Transcript (paste, optional)
+          </summary>
+          <div style={{ padding: "8px 4px" }}>
+            <label htmlFor="contribute-transcript" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+              If you already have a transcript for these recordings (VTT, plain text, or copied from
+              Zoom / Otter / Fathom), paste it here. It attaches to any newly-created records that
+              don&apos;t already carry an auto-transcript. Useful for Drive files, which arrive
+              without one.
+            </label>
+            <textarea
+              id="contribute-transcript"
+              value={pastedTranscript}
+              onChange={(e) => setPastedTranscript(e.target.value)}
+              placeholder="Paste transcript text here…"
+              rows={5}
+              style={{
+                width: "100%", marginTop: 6, padding: "6px 8px",
+                background: "var(--bg)", color: "var(--text)",
+                border: "1px solid var(--border)", borderRadius: 6,
+                fontSize: "0.8rem", fontFamily: "monospace",
+                resize: "vertical", boxSizing: "border-box",
+              }}
+            />
+          </div>
+        </details>
+
+        <details style={{ marginTop: 12, fontSize: "0.82rem" }}>
           <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Other sources</summary>
           <div style={{ padding: "8px 4px", color: "var(--text-muted)", fontSize: "0.78rem" }}>
             <p>
@@ -92,9 +136,10 @@ export default function ContributePage() {
               will re-fetch full metadata later.
             </p>
             <p>
-              <strong>Google Drive files</strong> aren&apos;t yet wired for direct contributor upload —
-              drop the shared link into #agentics-contributions on Discord and a curator will ingest
-              it on your behalf.
+              <strong>Google Drive files</strong> (<code>drive.google.com/file/d/…</code>): paste directly
+              into the URL box above. Publicly-shared files ingest automatically; private files land in a
+              curator queue and get pulled on approval — you&apos;ll see the status transition in
+              <strong> Your contributions</strong>.
             </p>
           </div>
         </details>

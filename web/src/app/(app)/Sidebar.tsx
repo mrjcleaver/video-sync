@@ -26,6 +26,7 @@ import { findRecordsNeedingSummaryBadge } from "../../lib/summaryBadgeBackfill";
 import { findRecordsNeedingTitleAlignment } from "../../lib/youtubeTitleAlignBackfill";
 import { findOrphanClips } from "../../lib/orphanClipsRepair";
 import { findDuplicateClusters } from "../../lib/catalogDedupe";
+import { findDrivePendingPulls } from "../../lib/drivePendingPull";
 import { useCurrentActor } from "../../lib/useCurrentActor";
 
 const NAV = [
@@ -73,7 +74,9 @@ export function Sidebar() {
     const orphanShorts = findOrphanClips(videos).length;
     // ADR-062 follow-up — dupe clusters count as maintenance work.
     const dupeExtras = findDuplicateClusters(videos).reduce((n, c) => n + c.losers.length, 0);
-    return missingYT + summariesNeeded + titlesNeeded + orphanShorts + dupeExtras;
+    // ADR-071 §2 — Drive files awaiting authenticated curator pull.
+    const drivePending = findDrivePendingPulls(videos).length;
+    return missingYT + summariesNeeded + titlesNeeded + orphanShorts + dupeExtras + drivePending;
   }, [videos, currentPromptVersion, seriesRegistry]);
 
   function badgeFor(kind: "catalog" | "import" | "maintain" | null): number | null {

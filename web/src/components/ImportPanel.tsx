@@ -7,12 +7,14 @@ import KalturaImport from "./KalturaImport";
 import YouTubeLiveImport from "./YouTubeLiveImport";
 import URLImport from "./URLImport";
 import IndexForm from "./IndexForm";
+import DriveImport from "./DriveImport";
 
-type Tab = "meetings" | "url" | "manual";
+type Tab = "meetings" | "url" | "drive" | "manual";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "meetings", label: "Meetings" },
   { id: "url",      label: "URL" },
+  { id: "drive",    label: "Drive" },
   { id: "manual",   label: "Manual" },
 ];
 
@@ -28,7 +30,7 @@ function loadInitialTab(): Tab {
     const raw = localStorage.getItem(TAB_KEY);
     // Migrate the old per-source tabs to the merged Meetings tab.
     if (raw === "fireflies" || raw === "zoom") return "meetings";
-    if (raw === "meetings" || raw === "url" || raw === "manual") return raw;
+    if (raw === "meetings" || raw === "url" || raw === "drive" || raw === "manual") return raw;
   } catch { /* ignore */ }
   return "meetings";
 }
@@ -193,6 +195,7 @@ export default function ImportPanel({ onImported, onEvent }: Props) {
           </>
         )}
         {active === "url"    && <URLImport onImported={onImported} onEvent={onEvent} />}
+        {active === "drive"  && <DriveImport onImported={onImported} onEvent={onEvent} />}
         {active === "manual" && <IndexForm onIndexed={onImported}  onEvent={onEvent} />}
       </div>
     </div>
