@@ -50,20 +50,33 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-042](ADR-042-server-side-credentials-with-operator-override.md) | Server-Side Credentials With Operator Override | Accepted (Phases 1+2 implemented 2026-05-01; Phase 3 cache-flush + Phase 4 migration helpers deferred) |
 | [ADR-043](ADR-043-share-backfill-state-and-exclusions.md) | Share Backfill Profiles, Queue, and Exclusions Across Operators | Accepted (implemented 2026-05-02) |
 | [ADR-044](ADR-044-always-show-kaltura-presence.md) | Always Show Kaltura Presence Alongside YouTube | Accepted (implemented 2026-05-22 — referenceId + provenance-footer match; fuzzy match deferred) |
-| [ADR-045](ADR-045-redirect-unauthorized-to-wiki.md) | Wider IAP Gate + App-Level Redirect for Unauthorized Users | Accepted (implemented 2026-05-22; IAP binding applied 2026-05-27 — fully live) |
+| [ADR-045](ADR-045-redirect-unauthorized-to-wiki.md) | Wider IAP Gate + App-Level Redirect for Unauthorized Users | Accepted (implemented 2026-05-22; IAP binding applied 2026-05-27 — now fully live) |
 | [ADR-046](ADR-046-prompt-driven-summaries.md) | Prompt-Driven Video Summaries on Drive | Proposed |
 | [ADR-047](ADR-047-automated-catch-up.md) | Automated Catch-Up Action | Proposed |
 | [ADR-048](ADR-048-date-distance-gates-in-matchers.md) | Date-Distance Gates in Cross-Source Matchers | Accepted (implemented 2026-06-03) |
 | [ADR-049](ADR-049-livestream-provenance-zoom-to-youtube.md) | Live-stream Provenance — Zoom-to-YouTube Broadcasts | Proposed |
 | [ADR-050](ADR-050-fireflies-transcribed-from-zoom.md) | Fireflies as Downstream of the Meeting Source | Accepted (implemented 2026-06-07) |
-| [ADR-051](ADR-051-youtube-ingest-auto-published.md) | YouTube Source Rows From Publish-Trail Ingest Land at Published | Accepted (implemented 2026-06-07) |
-| [ADR-052](ADR-052-catchup-summary-badge-backfill.md) | Catch-Up Summary Badge Backfill (Transcript-Having Records) | Proposed |
+| [ADR-051](ADR-051-youtube-ingest-auto-published.md) | YouTube source rows from publish-trail ingest land at Published | Accepted (implemented 2026-06-07) |
+| [ADR-052](ADR-052-catchup-summary-badge-backfill.md) | Catch-Up Summary Badge Backfill | Proposed |
 | [ADR-053](ADR-053-transcript-provenance-lookup.md) | Transcript Provenance Lookup — Borrow Transcripts From Related Records | Proposed |
-| [ADR-054](ADR-054-youtube-google-api-key-shareable.md) | YouTube Google API Key is Org-Wide Shareable; OAuth Stays Per-Operator | Accepted (implemented 2026-06-18) |
-| [ADR-055](ADR-055-youtube-title-alignment.md) | Align YouTube-Live Broadcast Titles with Dated Series Names Used Elsewhere | Proposed |
-| [ADR-056](ADR-056-widen-title-alignment-scope.md) | Widen Catalog Title Alignment Beyond YouTube | Accepted (implemented 2026-07-25) |
-| [ADR-057](ADR-057-ux-hierarchy-and-activity-split.md) | UX Hierarchy and Activity-Based Navigation Split | Proposed (exploration) |
-| [ADR-058](ADR-058-source-discovery-and-pre-import-awareness.md) | Source Discovery and Pre-Import Awareness on Overview | Proposed (exploration) |
+| [ADR-054](ADR-054-youtube-google-api-key-shareable.md) | YouTube Google API Key is org-wide shareable; OAuth stays per-operator | Accepted (implemented 2026-06-18) |
+| [ADR-055](ADR-055-youtube-title-alignment.md) | Align YouTube-Live broadcast titles with dated series names used elsewhere | Proposed |
+| [ADR-056](ADR-056-widen-title-alignment-scope.md) | Widen catalog title alignment beyond YouTube | Accepted (implemented 2026-07-25) |
+| [ADR-057](ADR-057-ux-hierarchy-and-activity-split.md) | UX hierarchy and activity-based navigation split | Proposed (exploration) |
+| [ADR-058](ADR-058-source-discovery-and-pre-import-awareness.md) | Source discovery and pre-import awareness on Overview | Proposed (exploration) |
+| [ADR-059](ADR-059-summary-pre-show-trim.md) | Pre-Show Trim for Summary Generation | Accepted |
+| [ADR-060](ADR-060-scheduled-show-segments.md) | Scheduled Show Windows and Pre/Main/Post-Show Segmentation | Accepted (data model + trim); Proposed (YouTube edit-to-preserve-views workflow) |
+| [ADR-061](ADR-061-shorts-review-virality-display.md) | Shorts Review Queue — Sort by Virality and Show the Breakdown | Accepted |
+| [ADR-062](ADR-062-summary-guided-clip-source.md) | Summary-Guided Clip Source Construction | Proposed |
+| [ADR-063](ADR-063-youtube-transcript-progressive-reach.md) | Progressive-Reach YouTube Transcript Fetch | Accepted |
+| [ADR-064](ADR-064-description-strategy-and-show-notes-copy.md) | Description Strategy — Copy from Show Notes by Default | Accepted |
+| [ADR-065](ADR-065-community-contributor-role.md) | Community-Contributor Role | Proposed |
+| [ADR-066](ADR-066-mcp-show-notes-server.md) | MCP Server Exposing Show Notes | Accepted (initial slice implemented; see §Out of Scope for deferred items) |
+| [ADR-067](ADR-067-show-notes-to-description-llm-prompt.md) | LLM-Rewrite Show Notes → YouTube Description | Accepted |
+| [ADR-068](ADR-068-youtube-description-sync-with-backups.md) | Bulk YouTube Description Sync + Backups | Accepted |
+| [ADR-069](ADR-069-accessibility-baseline.md) | Accessibility Baseline | Accepted |
+| [ADR-070](ADR-070-theme-selector.md) | Light / Dark / System Theme Selector | Accepted |
+| [ADR-073](ADR-073-zoom-share-to-youtube-pipeline.md) | Zoom-Share → YouTube Publication Pipeline | Proposed |
 
 ## ADR Format
 
