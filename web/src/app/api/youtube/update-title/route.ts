@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { captureBackup } from "../../../../lib/descriptionBackups";
 import { getActor } from "../../../../lib/auth";
+import { setArtifact } from "../../../../lib/driveArtifactStore";
+import { readCatalog } from "../../catalog/route";
 
 /**
  * ADR-055 follow-up — push a locally-aligned title back to the
@@ -149,6 +151,23 @@ async function handler(req: NextRequest) {
     descriptionChanged: wantDescriptionUpdate,
     descriptionLength: wantDescriptionUpdate ? (description as string).length : undefined,
   });
+
+  // ADR-074 §1 — capture the exact snippet we just pushed as
+  // `youtube-snippet.json` in the record's Drive folder. Best-effort;
+  // failure never affects the client-visible update result.
+  if (record_id) {
+    void captureYoutubeSnippetArtifact(record_id, videoId, {
+      title,
+      description: wantDescriptionUpdate ? (description as string) : currentSnippet.description ?? "",
+      categoryId: currentSnippet.categoryId ?? "22",
+      tags: currentSnippet.tags ?? [],
+    }).catch((err) => {
+      serverLog("warn", "yt:update-title", "snippet-artifact-failed", {
+        videoId, record_id, error: String(err),
+      });
+    });
+  }
+
   return NextResponse.json({
     updated: true,
     oldTitle: currentSnippet.title,
@@ -156,6 +175,41 @@ async function handler(req: NextRequest) {
     titleChanged,
     descriptionChanged: wantDescriptionUpdate,
   });
+}
+
+/**
+ * ADR-074 §1 — persist the exact snippet body we PUT to YouTube as
+ * `youtube-snippet.json` on the record's Drive folder. Looks up the
+ * record's title / source metadata from the server-side catalog
+ * (readCatalog) so callers don't need to send RecordContext inline.
+ */
+async function captureYoutubeSnippetArtifact(
+  recordId: string,
+  ytVideoId: string,
+  snippet: { title: string; description: string; categoryId: string; tags: string[] },
+): Promise<void> {
+  const store = await readCatalog();
+  const raw = store.records[recordId];
+  if (!raw) return;   // record no longer in catalog — nothing to attach to
+  const rec = JSON.parse(raw) as { id: string; title: string; source_platform: string; source_id: string; recorded_at: string | null; indexed_at: string | null };
+  await setArtifact(
+    {
+      record_id: rec.id,
+      title: rec.title,
+      source_platform: rec.source_platform,
+      source_id: rec.source_id,
+      recorded_at: rec.recorded_at ?? rec.indexed_at ?? new Date().toISOString(),
+    },
+    "youtube-snippet",
+    JSON.stringify(
+      {
+        yt_video_id: ytVideoId,
+        pushed_at: new Date().toISOString(),
+        snippet,
+      },
+      null, 2,
+    ),
+  );
 }
 
 export const PUT = withRequestLogging("api:youtube/update-title", handler);

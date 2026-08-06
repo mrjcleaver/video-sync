@@ -25,7 +25,19 @@ import {
 } from "./drive";
 import { serverLog } from "./serverLogger";
 
-export const ARTIFACT_KINDS = ["transcript", "description", "summary", "chat"] as const;
+export const ARTIFACT_KINDS = [
+  "transcript",
+  "description",
+  "summary",
+  "chat",
+  // ADR-074 §1 — captured on every successful videos.update / .insert,
+  // stored as JSON of the snippet body we PUT. Distinct from
+  // `description` (local, editable) — this is the last-published copy.
+  "youtube-snippet",
+  // ADR-074 §3 — aggregated single-file view. Derived, regenerated on
+  // material changes; not directly authored.
+  "reference",
+] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 const KIND_FILENAMES: Record<ArtifactKind, string> = {
@@ -33,6 +45,8 @@ const KIND_FILENAMES: Record<ArtifactKind, string> = {
   description: "description.md",
   summary: "summary.md",
   chat: "chat.md",
+  "youtube-snippet": "youtube-snippet.json",
+  reference: "reference.md",
 };
 
 const META_FILENAME = ".meta.json";
@@ -187,7 +201,9 @@ export async function getArtifact(
 
 export async function setArtifact(ctx: RecordContext, kind: ArtifactKind, content: string): Promise<ArtifactEntry> {
   const folderId = await getOrCreateMeetingFolder(ctx);
-  const file = await writeFile(KIND_FILENAMES[kind], folderId, content, "text/markdown");
+  // ADR-074 — youtube-snippet is JSON; every other kind is markdown.
+  const mimeType = kind === "youtube-snippet" ? "application/json" : "text/markdown";
+  const file = await writeFile(KIND_FILENAMES[kind], folderId, content, mimeType);
 
   let meta = await readMeta(folderId);
   if (!meta) {

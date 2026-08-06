@@ -101,12 +101,20 @@ async function readShowNotesMarkdown(docId: string): Promise<string | null> {
 
 // ── Resource URI helpers ────────────────────────────────────────
 
+type VsyncKind = "show-notes" | "description" | "transcript" | "chat" | "youtube-snippet" | "reference" | "artifacts";
+
 function showNotesUri(id: string) { return `vsync://records/${id}/show-notes`; }
 function descriptionUri(id: string) { return `vsync://records/${id}/description`; }
-function parseVsyncUri(uri: string): { record_id: string; kind: "show-notes" | "description" } | null {
-  const m = uri.match(/^vsync:\/\/records\/([0-9a-f-]+)\/(show-notes|description)$/i);
+function transcriptUri(id: string) { return `vsync://records/${id}/transcript`; }
+function chatUri(id: string) { return `vsync://records/${id}/chat`; }
+function youtubeSnippetUri(id: string) { return `vsync://records/${id}/youtube-snippet`; }
+function referenceUri(id: string) { return `vsync://records/${id}/reference`; }
+function artifactsIndexUri(id: string) { return `vsync://records/${id}/artifacts`; }
+
+function parseVsyncUri(uri: string): { record_id: string; kind: VsyncKind } | null {
+  const m = uri.match(/^vsync:\/\/records\/([0-9a-f-]+)\/(show-notes|description|transcript|chat|youtube-snippet|reference|artifacts)$/i);
   if (!m) return null;
-  return { record_id: m[1], kind: m[2] as "show-notes" | "description" };
+  return { record_id: m[1], kind: m[2] as VsyncKind };
 }
 
 // ── Method: initialize ──────────────────────────────────────────
@@ -124,11 +132,11 @@ function methodInitialize() {
       version: SERVER_VERSION,
     },
     instructions:
-      "video-sync exposes curated Show Notes (chapter-oriented markdown breakdowns of recorded sessions), " +
-      "plain-text descriptions, transcripts, and provenance. Use `search_records` to find records by title / " +
-      "date / series; `search_chapter_moments` to search chapter-level bullets across every Show Notes doc " +
-      "with time-linked deep-links; `get_show_notes` / `get_transcript` to pull specific content. Every record " +
-      "resource follows the URI shape `vsync://records/<id>/{show-notes,description}`.",
+      "video-sync exposes a canonical per-record artifact bag (ADR-074): Show Notes, transcript, chat, description, " +
+      "last-pushed YouTube snippet, and an aggregated `reference` doc. Use `search_records` for discovery; " +
+      "`search_chapter_moments` for cited moments; `get_show_notes` / `get_transcript` / `get_chat` / `get_description` " +
+      "/ `get_youtube_snippet` / `get_reference` to pull specific artifacts. `list_artifacts` returns the .meta index. " +
+      "Every resource URI: `vsync://records/<id>/{show-notes,description,transcript,chat,youtube-snippet,reference,artifacts}`.",
   };
 }
 
@@ -137,6 +145,12 @@ function methodInitialize() {
 async function methodResourcesList(actor: Actor) {
   const records = await loadVisibleRecords(actor);
   const resources: Array<{ uri: string; name: string; description?: string; mimeType: string }> = [];
+  // Batch-fetch artifact indices in parallel — one Drive round-trip per
+  // record; cached per meta_ttl_ms so subsequent list calls are fast.
+  const { getMeta } = await import("./driveArtifactStore");
+  const metaByRecord = new Map<string, Awaited<ReturnType<typeof getMeta>>>();
+  await Promise.all(records.map(async r => { metaByRecord.set(r.id, await getMeta(r.id).catch(() => null)); }));
+
   for (const r of records) {
     if (r.source_platform === "OpusClip") continue;   // clips excluded — not a session
     const dateStr = r.recorded_at
@@ -144,6 +158,7 @@ async function methodResourcesList(actor: Actor) {
       : "unknown-date";
     const durationMin = Math.round((r.duration_seconds ?? 0) / 60);
     const meta = `${dateStr} · ${durationMin}min · ${r.source_platform}`;
+    const bag = metaByRecord.get(r.id);
     if (r.summary_doc_id) {
       resources.push({
         uri: showNotesUri(r.id),
@@ -152,13 +167,29 @@ async function methodResourcesList(actor: Actor) {
         mimeType: "text/markdown",
       });
     }
-    if (r.description) {
+    if (r.description || bag?.artifacts.description) {
       resources.push({
         uri: descriptionUri(r.id),
         name: `${r.title} — Description`,
         description: meta,
         mimeType: "text/plain",
       });
+    }
+    // ADR-074 §4 — advertise every stored artifact kind that exists.
+    if (bag?.artifacts.transcript) {
+      resources.push({ uri: transcriptUri(r.id), name: `${r.title} — Transcript`, description: meta, mimeType: "text/markdown" });
+    }
+    if (bag?.artifacts.chat) {
+      resources.push({ uri: chatUri(r.id), name: `${r.title} — Chat`, description: meta, mimeType: "text/markdown" });
+    }
+    if (bag?.artifacts["youtube-snippet"]) {
+      resources.push({ uri: youtubeSnippetUri(r.id), name: `${r.title} — YouTube snippet (last pushed)`, description: meta, mimeType: "application/json" });
+    }
+    if (bag?.artifacts.reference) {
+      resources.push({ uri: referenceUri(r.id), name: `${r.title} — Reference (aggregated)`, description: meta, mimeType: "text/markdown" });
+    }
+    if (bag) {
+      resources.push({ uri: artifactsIndexUri(r.id), name: `${r.title} — Artifacts index`, description: meta, mimeType: "application/json" });
     }
   }
   return { resources };
@@ -174,17 +205,52 @@ async function methodResourcesRead(actor: Actor, params: unknown) {
   const records = await loadVisibleRecords(actor);
   const rec = records.find(r => r.id === parsed.record_id);
   if (!rec) throw new McpError(ERR_INVALID_PARAMS, "record not found (or not visible to your role)");
+
+  const { getArtifact, getMeta } = await import("./driveArtifactStore");
+
   if (parsed.kind === "show-notes") {
     if (!rec.summary_doc_id) throw new McpError(ERR_INVALID_PARAMS, "record has no Show Notes yet");
     const md = await readShowNotesMarkdown(rec.summary_doc_id);
     if (!md) throw new McpError(ERR_INTERNAL, "Drive export failed for Show Notes doc");
-    return {
-      contents: [{ uri, mimeType: "text/markdown", text: md }],
-    };
+    return { contents: [{ uri, mimeType: "text/markdown", text: md }] };
   }
-  // description
+
+  if (parsed.kind === "description") {
+    // Prefer the pushed snippet (last-published) if available, else
+    // the description artifact, else the WASM inline field.
+    const snip = await getArtifact(rec.id, "youtube-snippet").catch(() => null);
+    if (snip) {
+      try {
+        const parsedSnip = JSON.parse(snip.content) as { snippet?: { description?: string } };
+        if (parsedSnip.snippet?.description) {
+          return { contents: [{ uri, mimeType: "text/plain", text: parsedSnip.snippet.description }] };
+        }
+      } catch { /* fall through */ }
+    }
+    const desc = await getArtifact(rec.id, "description").catch(() => null);
+    return { contents: [{ uri, mimeType: "text/plain", text: desc?.content ?? rec.description ?? "" }] };
+  }
+
+  if (parsed.kind === "transcript" || parsed.kind === "chat" || parsed.kind === "reference") {
+    const a = await getArtifact(rec.id, parsed.kind).catch(() => null);
+    if (!a) throw new McpError(ERR_INVALID_PARAMS, `no ${parsed.kind} artifact yet for this record`);
+    return { contents: [{ uri, mimeType: "text/markdown", text: a.content }] };
+  }
+
+  if (parsed.kind === "youtube-snippet") {
+    const a = await getArtifact(rec.id, "youtube-snippet").catch(() => null);
+    if (!a) throw new McpError(ERR_INVALID_PARAMS, "no youtube-snippet artifact — this record has not been pushed to YouTube yet");
+    return { contents: [{ uri, mimeType: "application/json", text: a.content }] };
+  }
+
+  // artifacts index
+  const meta = await getMeta(rec.id);
   return {
-    contents: [{ uri, mimeType: "text/plain", text: rec.description ?? "" }],
+    contents: [{
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(meta ?? { record_id: rec.id, artifacts: {} }, null, 2),
+    }],
   };
 }
 
@@ -261,6 +327,32 @@ const TOOLS = [
       required: ["query"],
     },
   },
+  // ADR-074 §4 — new tools mirroring the extended artifact bag.
+  {
+    name: "get_chat",
+    description: "Return the meeting-chat / comment-thread markdown for a record. Empty for sources without chat (Zoom-share, YouTube, Kaltura today).",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
+  {
+    name: "get_description",
+    description: "Return the record's description. Prefers the last-pushed YouTube snippet if available, then description.md, then the WASM inline field.",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
+  {
+    name: "get_youtube_snippet",
+    description: "Return the exact snippet body of the last successful videos.update for this record — title, description, categoryId, tags, pushed_at.",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
+  {
+    name: "get_reference",
+    description: "Return the aggregated single-file reference.md for a record. Generates it lazily on first request if not yet present.",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
+  {
+    name: "list_artifacts",
+    description: "Return the .meta.json index for a record — filenames, sizes, timestamps, Drive URLs for every artifact.",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
 ] as const;
 
 function methodToolsList() {
@@ -280,9 +372,77 @@ async function methodToolsCall(actor: Actor, params: unknown) {
     case "get_transcript":    return toolGetTranscript(actor, a);
     case "get_provenance":    return toolGetProvenance(actor, a);
     case "search_chapter_moments": return toolSearchChapterMoments(actor, a);
+    case "get_chat":              return toolGetChat(actor, a);
+    case "get_description":       return toolGetDescription(actor, a);
+    case "get_youtube_snippet":   return toolGetYoutubeSnippet(actor, a);
+    case "get_reference":         return toolGetReference(actor, a);
+    case "list_artifacts":        return toolListArtifacts(actor, a);
     default:
       throw new McpError(ERR_METHOD_NOT_FOUND, `unknown tool: ${name}`);
   }
+}
+
+// ── ADR-074 tools ──────────────────────────────────────────────
+
+async function resolveRecord(actor: Actor, args: Record<string, unknown>): Promise<VideoRecordJSON> {
+  const record_id = String(args.record_id ?? "").trim();
+  if (!record_id) throw new McpError(ERR_INVALID_PARAMS, "record_id required");
+  const records = await loadVisibleRecords(actor);
+  const rec = records.find(r => r.id === record_id);
+  if (!rec) throw new McpError(ERR_INVALID_PARAMS, "record not found (or not visible to your role)");
+  return rec;
+}
+
+async function toolGetChat(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getArtifact } = await import("./driveArtifactStore");
+  const a = await getArtifact(rec.id, "chat").catch(() => null);
+  return textResult(a?.content ?? "_No chat artifact for this record. Zoom-authed imports write chat.md at ingest time; other sources (Zoom-share, Loom, Discord) are deferred per ADR-074 §Deferred._");
+}
+
+async function toolGetDescription(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getArtifact } = await import("./driveArtifactStore");
+  const snip = await getArtifact(rec.id, "youtube-snippet").catch(() => null);
+  if (snip) {
+    try {
+      const parsed = JSON.parse(snip.content) as { snippet?: { description?: string } };
+      if (parsed.snippet?.description) return textResult(parsed.snippet.description);
+    } catch { /* fall through */ }
+  }
+  const desc = await getArtifact(rec.id, "description").catch(() => null);
+  return textResult(desc?.content ?? rec.description ?? "");
+}
+
+async function toolGetYoutubeSnippet(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getArtifact } = await import("./driveArtifactStore");
+  const a = await getArtifact(rec.id, "youtube-snippet").catch(() => null);
+  if (!a) return textResult(JSON.stringify({ not_yet_pushed: true, record_id: rec.id }, null, 2));
+  return textResult(a.content);
+}
+
+async function toolGetReference(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getArtifact } = await import("./driveArtifactStore");
+  const existing = await getArtifact(rec.id, "reference").catch(() => null);
+  if (existing) return textResult(existing.content);
+  // Lazy generation per ADR-074 §6 — try to build one now.
+  const { generateAndStoreReference } = await import("./referenceRenderer");
+  const gen = await generateAndStoreReference(rec).catch((err: unknown) => ({ ok: false, reason: err instanceof Error ? err.message : String(err) } as const));
+  if ("ok" in gen && gen.ok) {
+    const now = await getArtifact(rec.id, "reference").catch(() => null);
+    if (now) return textResult(now.content);
+  }
+  const reason = "ok" in gen && !gen.ok ? gen.reason : "generator returned no output";
+  return textResult(JSON.stringify({ not_yet_generated: true, record_id: rec.id, reason }, null, 2), true);
+}
+
+async function toolListArtifacts(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getMeta } = await import("./driveArtifactStore");
+  const meta = await getMeta(rec.id);
+  return textResult(JSON.stringify(meta ?? { record_id: rec.id, artifacts: {} }, null, 2));
 }
 
 function textResult(text: string, isError = false) {
