@@ -134,6 +134,13 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
+  // ADR-072-follow-up — inline edit of recorded_at. Kaltura (and
+  // occasionally Zoom-share) imports land with a defaulted-to-now
+  // date when the source didn't expose a real timestamp; operators
+  // need to correct it without re-importing.
+  const [editingRecordedAt, setEditingRecordedAt] = useState(false);
+  const [recordedAtDraft, setRecordedAtDraft] = useState("");
+  const [savingRecordedAt, setSavingRecordedAt] = useState(false);
   // Per-series Discord webhook — resolved once against the record's
   // current title. Null when the record's series has no webhook set
   // (or the record doesn't match any registered series).
@@ -2030,6 +2037,39 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     onEvent(`TitleEdited: "${oldTitle}"${dateTag(video.recorded_at)} → "${draft}"`, { video_id: video.id });
     onMutated();
     setEditingTitle(false);
+  }
+
+  /**
+   * Manual recorded_at override. Accepts either an ISO datetime or a
+   * bare `YYYY-MM-DD` from the date input; normalises to noon UTC on
+   * the given day when only a date was picked (an operator picking a
+   * date rarely means midnight in some timezone — noon UTC is the
+   * safest default that renders the same day in every viewer TZ).
+   * Clearing the field sets recorded_at back to null.
+   */
+  async function saveRecordedAtEdit() {
+    const draft = recordedAtDraft.trim();
+    setSavingRecordedAt(true);
+    let normalised: string | null = null;
+    if (draft) {
+      // <input type="datetime-local"> gives "YYYY-MM-DDTHH:MM"; type="date" gives "YYYY-MM-DD"
+      const bareDate = /^\d{4}-\d{2}-\d{2}$/.test(draft);
+      normalised = bareDate ? `${draft}T12:00:00Z` : new Date(draft).toISOString();
+    }
+    const previous = video.recorded_at ?? "unset";
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.update_metadata(actorCommand(actorState, { edits: { recorded_at: normalised } })),
+      );
+    } catch (err) {
+      onEvent(`RecordedAtEditFailed: "${video.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+      setSavingRecordedAt(false);
+      return;
+    }
+    onEvent(`RecordedAtEdited: "${video.title}" ${previous} → ${normalised ?? "unset"}`, { video_id: video.id });
+    onMutated();
+    setEditingRecordedAt(false);
+    setSavingRecordedAt(false);
 
     if (pushToYouTube) {
       const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
@@ -2330,9 +2370,69 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           );
         })()}
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
-        <span title={formatDateHover(video.recorded_at || video.indexed_at)} style={{ cursor: "help" }}>
-          {formatDate(video.recorded_at || video.indexed_at)}
-        </span>
+        {editingRecordedAt ? (
+          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+            <label htmlFor={`recorded-at-${video.id}`} className="visually-hidden">Recorded date</label>
+            <input
+              id={`recorded-at-${video.id}`}
+              type="date"
+              value={recordedAtDraft}
+              onChange={(e) => setRecordedAtDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); void saveRecordedAtEdit(); }
+                else if (e.key === "Escape") { e.preventDefault(); setEditingRecordedAt(false); }
+              }}
+              disabled={savingRecordedAt}
+              autoFocus
+              style={{
+                fontSize: "0.75rem", padding: "1px 4px",
+                background: "var(--bg)", color: "var(--text)",
+                border: "1px solid var(--border)", borderRadius: 4,
+              }}
+            />
+            <button
+              type="button" className="btn btn-sm" onClick={() => void saveRecordedAtEdit()}
+              disabled={savingRecordedAt}
+              title="Save"
+              style={{ fontSize: "0.7rem", padding: "1px 6px" }}
+            >
+              {savingRecordedAt ? "…" : "✓"}
+            </button>
+            <button
+              type="button" className="btn btn-sm" onClick={() => setEditingRecordedAt(false)}
+              disabled={savingRecordedAt}
+              title="Cancel"
+              style={{ fontSize: "0.7rem", padding: "1px 6px" }}
+            >
+              ✕
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="meta-button"
+            onClick={() => {
+              setRecordedAtDraft(
+                video.recorded_at
+                  ? new Date(video.recorded_at).toISOString().slice(0, 10)
+                  : "",
+              );
+              setEditingRecordedAt(true);
+            }}
+            title={`${formatDateHover(video.recorded_at || video.indexed_at)} · Click to edit recorded date`}
+            style={{ fontSize: "inherit", color: "inherit" }}
+          >
+            {formatDate(video.recorded_at || video.indexed_at)}
+            {!video.recorded_at && (
+              <span
+                style={{ marginLeft: 4, fontSize: "0.65rem", color: "var(--yellow)" }}
+                title="No recorded_at set — showing indexed_at as a fallback"
+              >
+                ⚠
+              </span>
+            )}
+          </button>
+        )}
         {video.participants.length > 0 && (
           <span
             onClick={() => setShowParticipants(v => !v)}
