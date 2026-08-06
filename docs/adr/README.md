@@ -76,6 +76,9 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-068](ADR-068-youtube-description-sync-with-backups.md) | Bulk YouTube Description Sync + Backups | Accepted |
 | [ADR-069](ADR-069-accessibility-baseline.md) | Accessibility Baseline | Accepted |
 | [ADR-070](ADR-070-theme-selector.md) | Light / Dark / System Theme Selector | Accepted |
+| [ADR-071](ADR-071-google-drive-video-ingest.md) | Google Drive Video Ingest — Contributor Public Link + Publisher Authenticated Pull | Proposed |
+| [ADR-072](ADR-072-zoom-share-transcript-extraction.md) | Zoom Share Transcript Extraction — Fallback Ladder | Proposed |
+| [ADR-073](ADR-073-zoom-share-to-youtube-pipeline.md) | Zoom-Share → YouTube Publication Pipeline | Proposed |
 | [ADR-074](ADR-074-canonical-artifact-bag-and-mcp-exposure.md) | Canonical Artifact Bag per Record, Fully MCP-Exposed | Proposed |
 
 ## ADR Format
