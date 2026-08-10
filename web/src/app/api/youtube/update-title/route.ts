@@ -4,6 +4,8 @@ import { captureBackup } from "../../../../lib/descriptionBackups";
 import { getActor } from "../../../../lib/auth";
 import { setArtifact } from "../../../../lib/driveArtifactStore";
 import { readCatalog } from "../../catalog/route";
+import { generateAndStoreReference } from "../../../../lib/referenceRenderer";
+import type { VideoRecordJSON } from "../../../../lib/wasm";
 
 /**
  * ADR-055 follow-up — push a locally-aligned title back to the
@@ -191,7 +193,7 @@ async function captureYoutubeSnippetArtifact(
   const store = await readCatalog();
   const raw = store.records[recordId];
   if (!raw) return;   // record no longer in catalog — nothing to attach to
-  const rec = JSON.parse(raw) as { id: string; title: string; source_platform: string; source_id: string; recorded_at: string | null; indexed_at: string | null };
+  const rec = JSON.parse(raw) as VideoRecordJSON;
   await setArtifact(
     {
       record_id: rec.id,
@@ -210,6 +212,14 @@ async function captureYoutubeSnippetArtifact(
       null, 2,
     ),
   );
+  // ADR-074 §3 — the pushed snippet is a reference-material input.
+  // Regenerate reference.md now (no debouncing needed server-side —
+  // the YouTube push itself is already the debounced culmination).
+  await generateAndStoreReference(rec).catch((err: unknown) => {
+    serverLog("warn", "yt:update-title", "reference-regen-failed", {
+      record_id: rec.id, error: err instanceof Error ? err.message : String(err),
+    });
+  });
 }
 
 export const PUT = withRequestLogging("api:youtube/update-title", handler);

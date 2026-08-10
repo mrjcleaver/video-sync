@@ -107,10 +107,24 @@ export default function DescriptionSyncPanel({ videos, onEvent }: Props) {
       // Batch fetch — server accepts up to 50 per call.
       for (let i = 0; i < ids.length; i += 50) {
         const chunk = ids.slice(i, i + 50);
+        // ADR-074 §Follow-ups — the scan is the natural moment to
+        // refresh youtube-snippet.json. Send the yt_id → record_id
+        // map so the server writes the artifact against the right
+        // record without re-scanning the catalog.
+        const recordIdByYtId: Record<string, string> = {};
+        for (const yt of chunk) {
+          const rec = byYtId.get(yt);
+          if (rec) recordIdByYtId[yt] = rec.id;
+        }
         const res = await fetch("/api/youtube/snippets", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ videoIds: chunk, ...creds }),
+          body: JSON.stringify({
+            videoIds: chunk,
+            ...creds,
+            capture_as_artifact: true,
+            record_id_by_yt_id: recordIdByYtId,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);

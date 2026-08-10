@@ -287,6 +287,65 @@ class VideoStore {
     }, PUSH_DEBOUNCE_MS));
   }
 
+  // ADR-074 §Follow-ups — reference.md auto-regenerate. Debounced
+  // longer than the record push (which itself is debounced) so a
+  // burst of title→description→summary edits collapses to one
+  // reference regen server-side. 3s per the ADR §3 trigger design.
+  private pendingReferenceRegen = new Map<string, ReturnType<typeof setTimeout>>();
+  private static REF_REGEN_DEBOUNCE_MS = 3000;
+  private scheduleReferenceRegen(id: string) {
+    const existing = this.pendingReferenceRegen.get(id);
+    if (existing) clearTimeout(existing);
+    this.pendingReferenceRegen.set(id, setTimeout(() => {
+      this.pendingReferenceRegen.delete(id);
+      // Fire-and-forget — server regenerates against its own catalog
+      // snapshot, so we don't need to send anything but the record id.
+      fetch(`/api/artifacts/${encodeURIComponent(id)}/regenerate-reference`, { method: "POST" })
+        .catch((err) => clientLog("warn", "store", "reference regen kickoff failed", { video_id: id, error: String(err) }));
+    }, VideoStore.REF_REGEN_DEBOUNCE_MS));
+  }
+
+  // ADR-074 §Follow-ups — description.md is populated by mirroring
+  // the WASM record's description field onto Drive after any mutation
+  // that touched it. Debounced same as records to collapse the
+  // typical "generate then edit then push" burst into one Drive write.
+  private pendingDescriptionPush = new Map<string, ReturnType<typeof setTimeout>>();
+  private scheduleDescriptionPush(id: string) {
+    const existing = this.pendingDescriptionPush.get(id);
+    if (existing) clearTimeout(existing);
+    this.pendingDescriptionPush.set(id, setTimeout(() => {
+      this.pendingDescriptionPush.delete(id);
+      this.pushDescription(id);
+    }, PUSH_DEBOUNCE_MS));
+  }
+  private async pushDescription(id: string) {
+    const record = this.records.get(id);
+    if (!record) return;
+    let desc = "";
+    try {
+      const j = JSON.parse(record.to_json()) as { description?: string | null };
+      desc = j.description ?? "";
+    } catch { return; }
+    const ctx = this.extractRecordContext(id);
+    if (!ctx) return;
+    try {
+      const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/description`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: desc,
+          title: ctx.title,
+          source_platform: ctx.source_platform,
+          source_id: ctx.source_id,
+          recorded_at: ctx.recorded_at,
+        }),
+      });
+      if (!res.ok) throw new Error(`PUT /api/artifacts/${id}/description ${res.status}`);
+    } catch (err) {
+      clientLog("warn", "store", "description push failed", { video_id: id, error: String(err) });
+    }
+  }
+
   private async pushRecordsBatch(ids: string[]) {
     if (ids.length === 0) return;
     const records: Array<{ id: string; json: string; lastModified: string }> = [];
@@ -449,22 +508,62 @@ class VideoStore {
       }
       throw new Error(`Record ${id} not found`);
     }
-    const statusBefore = (() => { try { return (JSON.parse(record.to_json()) as { status?: string }).status; } catch { return "unknown"; } })();
+    // Capture the reference-material fields before + after so we can:
+    //   1. mirror description to Drive when it changes (ADR-074)
+    //   2. debounce-regenerate reference.md when any of these change
+    // Read them in one to_json call to keep cost flat.
+    interface RefFields {
+      status: string;
+      description: string;
+      title: string;
+      summary_doc_id: string;
+      recorded_at: string;
+    }
+    const readFields = (): RefFields => {
+      try {
+        const j = JSON.parse(record.to_json()) as { status?: string; description?: string | null; title?: string; summary_doc_id?: string | null; recorded_at?: string | null };
+        return {
+          status: j.status ?? "unknown",
+          description: j.description ?? "",
+          title: j.title ?? "",
+          summary_doc_id: j.summary_doc_id ?? "",
+          recorded_at: j.recorded_at ?? "",
+        };
+      } catch {
+        return { status: "unknown", description: "", title: "", summary_doc_id: "", recorded_at: "" };
+      }
+    };
+    const stateBefore = readFields();
     let events: string;
     try {
       events = fn(record);
     } catch (err) {
-      clientLog("error", "wasm", "transition failed", { video_id: id, status_before: statusBefore, error: String(err) });
+      clientLog("error", "wasm", "transition failed", { video_id: id, status_before: stateBefore.status, error: String(err) });
       // Defer notify to ensure WASM RefCell borrow is fully released
       // before any subsequent to_json() calls in persist()
       queueMicrotask(() => this.notify());
       throw err;
     }
-    const statusAfter = (() => { try { return (JSON.parse(record.to_json()) as { status?: string }).status; } catch { return "unknown"; } })();
-    clientLog("debug", "wasm", "transition", { video_id: id, status_before: statusBefore, status_after: statusAfter });
+    const stateAfter = readFields();
+    clientLog("debug", "wasm", "transition", { video_id: id, status_before: stateBefore.status, status_after: stateAfter.status });
     this.touch(id);
     this.notify();
     this.scheduleRecordPush(id);
+    if (stateAfter.description !== stateBefore.description) {
+      this.scheduleDescriptionPush(id);
+    }
+    // ADR-074 §3 — reference.md aggregates title / description /
+    // summary / recorded_at / status. Trigger a regenerate when any
+    // of them changes.
+    if (
+      stateAfter.title !== stateBefore.title ||
+      stateAfter.description !== stateBefore.description ||
+      stateAfter.summary_doc_id !== stateBefore.summary_doc_id ||
+      stateAfter.recorded_at !== stateBefore.recorded_at ||
+      stateAfter.status !== stateBefore.status
+    ) {
+      this.scheduleReferenceRegen(id);
+    }
     return events;
   }
 }
