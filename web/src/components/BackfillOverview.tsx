@@ -170,7 +170,7 @@ export default function BackfillOverview({ videos, profile, onNavigateToVideo }:
     } catch { /* ignore */ }
 
     if (!ytCreds.refreshToken || !ytCreds.clientId || !ytCreds.clientSecret) {
-      setFillStatus("YouTube not authorised. Configure in Connections.");
+      setFillStatus("YouTube not authorised. Open /config#connections to configure.");
       setTimeout(() => setFillStatus(""), 4000);
       return;
     }

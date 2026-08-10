@@ -88,7 +88,7 @@ export default function YouTubeLiveImport({ onImported, onEvent, dateFrom: dateF
   async function fetchBroadcasts() {
     const creds = getYouTubeCredentials();
     if (!creds) {
-      setError("YouTube not authorised. Configure refresh token, client ID, and secret in Connections.");
+      setError("YouTube not authorised. Open /config#connections to configure the refresh token, client ID, and secret.");
       return;
     }
     setLoading(true);

@@ -70,7 +70,20 @@ function CallbackHandler() {
         };
         yt.connected = true;
         connections["YouTube"] = yt;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
+        // If the records blob has claimed most of the origin's quota
+        // (previously reported as "localStorage exceeded"), setItem
+        // silently throws QuotaExceededError. Catch it explicitly so
+        // the user sees WHY authorization "didn't stick" — otherwise
+        // they'd return to the app, click Publish again, and see
+        // the same "YouTube not authorised" message.
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
+        } catch (storeErr) {
+          throw new Error(
+            `Authorization succeeded, but writing the refresh token to localStorage failed: ${String(storeErr)}. ` +
+            `The connections blob may have been evicted by the records cache. Try reloading the page — the store now trims the records cache to fit — and reauthorize.`,
+          );
+        }
 
         // Fetch the authorized channel info so user knows which channel uploads target
         setStatus("Verifying channel...");
@@ -85,7 +98,9 @@ function CallbackHandler() {
             if (channel) {
               yt.credentials.authorizedChannelId = channel.id;
               yt.credentials.authorizedChannelTitle = channel.snippet?.title || channel.id;
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
+              } catch { /* first write already succeeded — channel-title annotation is nice-to-have */ }
             }
           }
         } catch { /* non-fatal — channel info is nice-to-have */ }
@@ -94,16 +109,22 @@ function CallbackHandler() {
         setStatus(chName
           ? `Authorized for channel "${chName}"! Redirecting...`
           : "YouTube authorized successfully! Redirecting...");
-        setTimeout(() => router.push("/"), 2000);
+        setTimeout(() => router.push("/config#connections"), 2000);
       })
       .catch((err) => {
         const msg = String(err);
         if (msg.includes("invalid_client")) {
           setStatus("Authorization failed: Client ID or Client Secret is incorrect. Update your YouTube credentials in Connections and try again.");
+          setTimeout(() => router.push("/config#connections"), 8000);
+        } else if (msg.includes("QuotaExceeded") || msg.includes("quota") || msg.includes("localStorage failed")) {
+          // Storage-related failures: keep the message on screen and
+          // give the user a manual "Back to Connections" affordance —
+          // auto-redirect could re-trigger the same error path.
+          setStatus(`${msg}\n\nWhen you close this tab you can retry from /config#connections.`);
         } else {
           setStatus(`Authorization failed: ${msg}`);
+          setTimeout(() => router.push("/config#connections"), 8000);
         }
-        setTimeout(() => router.push("/"), 6000);
       });
   }, [searchParams, router]);
 

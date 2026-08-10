@@ -21,18 +21,33 @@ import SummaryPromptPanel from "../../../components/SummaryPromptPanel";
 import McpTokensPanel from "../../../components/McpTokensPanel";
 import AccessLogPanel from "../../../components/AccessLogPanel";
 import { useApp } from "../AppContext";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function ConfigPage() {
   const [showConnections, setShowConnections] = useState(true);
   const [showPrompt, setShowPrompt] = useState(false);
   const { ruleRunner, videos, addEvent } = useApp();
+  const connectionsRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the Connections panel into view when linked to with
+  // #connections (e.g. from "YouTube not authorised — configure" hints
+  // across the app). Also make sure the panel is expanded.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#connections") {
+      setShowConnections(true);
+      connectionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
   return (
     <>
       <div className="header">
         <h1>Config</h1>
       </div>
-      <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections(v => !v)} />
+      <div id="connections" ref={connectionsRef}>
+        <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections(v => !v)} />
+      </div>
       <RulesPanel
         isRunnerRunning={ruleRunner.isRunning}
         lastRun={ruleRunner.lastRun}

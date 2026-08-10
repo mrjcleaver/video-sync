@@ -98,29 +98,41 @@ class VideoStore {
   }
 
   private persist() {
+    // Build a compact snapshot: strip large server-authoritative
+    // fields (description, transcript_text, notes body, metadata_extra)
+    // so 700+ records fit in the ~5MB origin cap. In-memory copy is
+    // unchanged; boot-time hydration merges with the server (ADR-035
+    // Level 2) which restores stripped fields.
     const snapshots: string[] = [];
     for (const [id, record] of this.records.entries()) {
       try {
-        // Strip ephemeral metadata_extra keys before persisting. These
-        // fields are (a) large (signed URLs are ~500 bytes), (b) time-
-        // bound and refetched on next play anyway, and (c) collectively
-        // push the records blob past the 5MB localStorage quota when
-        // multiplied across hundreds of OpusClip rows. In-memory copy
-        // keeps them; only the persisted snapshot loses them.
-        const json = record.to_json();
-        try {
-          const parsed = JSON.parse(json) as { metadata_extra?: Record<string, unknown> };
-          const me = parsed.metadata_extra;
-          if (me && typeof me === "object") {
-            delete me.opus_fresh_download_url;
-            delete me.opus_fresh_download_expires;
-            snapshots.push(JSON.stringify(parsed));
-          } else {
-            snapshots.push(json);
-          }
-        } catch {
-          snapshots.push(json);
+        const parsed = JSON.parse(record.to_json()) as Record<string, unknown>;
+        // Description is server-authoritative and re-fetched on sync.
+        // Truncate rather than drop so cards can still render a
+        // preview between page load and first sync.
+        if (typeof parsed.description === "string" && parsed.description.length > 300) {
+          parsed.description = parsed.description.slice(0, 300);
         }
+        // Transcripts live in a dedicated cache; never in the record
+        // blob (belt-and-braces — some old records may still carry
+        // an inline copy).
+        parsed.transcript_text = null;
+        // metadata_extra: strip everything. Rebuilt server-side on
+        // next sync. Includes the opus_fresh_* URLs we used to hand-
+        // strip, plus Loom Apollo chapters_json, Zoom / Drive raw
+        // URLs, etc.
+        parsed.metadata_extra = undefined;
+        // Notes: keep the structure (VideoCard renders count + last
+        // author) but truncate long note bodies. Notes over 500 chars
+        // usually indicate someone pasted a transcript excerpt.
+        if (Array.isArray(parsed.notes)) {
+          parsed.notes = (parsed.notes as Array<{ text?: string }>).map(n =>
+            typeof n?.text === "string" && n.text.length > 500
+              ? { ...n, text: n.text.slice(0, 500) }
+              : n,
+          );
+        }
+        snapshots.push(JSON.stringify(parsed));
       } catch {
         clientLog("warn", "store", "Dropping record — serialization failed", { video_id: id });
         this.records.delete(id);
@@ -130,12 +142,23 @@ class VideoStore {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
     } catch (err) {
-      // Quota exceeded on the records blob — the browser's 5MB
-      // origin cap has been hit. Don't crash the mutation: the
-      // in-memory copy stays consistent, next load re-hydrates from
-      // the server (ADR-035 Level 2). Surface the incident to the
-      // client log so operators know the reload dependency exists.
-      clientLog("warn", "store", "Records blob exceeded localStorage quota — session-only until reload from server", { error: String(err) });
+      // Quota still exceeded after stripping — the origin cap is
+      // ~5MB and ~700 minimal records × 3-4KB overhead can still
+      // approach it. Rather than lose everything, keep the newest
+      // half (by lastModified) and retry. Older records will re-
+      // hydrate from server on next boot.
+      const err0 = err instanceof Error ? err.message : String(err);
+      try {
+        const sortedIds = Array.from(this.records.keys())
+          .sort((a, b) => (this.lastModified.get(b) ?? "").localeCompare(this.lastModified.get(a) ?? ""));
+        const halfCount = Math.max(50, Math.floor(sortedIds.length / 2));
+        const keptIds = new Set(sortedIds.slice(0, halfCount));
+        const kept = snapshots.filter((_, i) => keptIds.has(Array.from(this.records.keys())[i]));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+        clientLog("warn", "store", `Records blob exceeded localStorage quota — persisted newest ${kept.length}/${snapshots.length}. Older rows will re-hydrate from server on reload.`);
+      } catch (err2) {
+        clientLog("warn", "store", "Records blob still exceeds quota after halving — session-only until reload from server", { error: err0, retryError: String(err2) });
+      }
     }
 
     // Persist transcript cache separately (never inside WASM JSON)

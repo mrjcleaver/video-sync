@@ -68,6 +68,18 @@ function dateTag(recorded_at: string | null): string {
   return ` (${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })})`;
 }
 
+/**
+ * Emit a "YouTube not authorised" prompt that offers to jump straight
+ * to the Connections panel in Config. Replaces bare alert()s which
+ * gave no navigation path and were reported as confusing.
+ */
+function promptYoutubeAuth(context: string) {
+  const yes = typeof window !== "undefined" && window.confirm(
+    `${context}\n\nOpen Connections to authorise YouTube now?`,
+  );
+  if (yes) window.location.href = "/config#connections";
+}
+
 interface Props {
   video: VideoRecordJSON;
   /** Full catalog — used for cross-source sibling suggestions (ADR-033). */
@@ -781,7 +793,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     const ytCreds = connections["YouTube"]?.credentials;
     if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      alert("YouTube not authorized. Configure and authorize YouTube in Connections first.");
+      promptYoutubeAuth("YouTube not authorised. Configure Client ID, Client Secret, and complete the Authorise step in Connections first.");
       return;
     }
 
@@ -1264,7 +1276,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     } catch { /* ignore */ }
     const ytCreds = connections["YouTube"]?.credentials;
     if (!ytCreds?.refreshToken || !ytCreds.clientId || !ytCreds.clientSecret) {
-      setRecoverError("YouTube not authorised. Configure in Connections first.");
+      setRecoverError("YouTube not authorised. Open /config#connections to configure.");
       return;
     }
 
@@ -1560,7 +1572,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     const ytCreds = connections["YouTube"]?.credentials;
     if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      alert("YouTube not authorized. Configure YouTube in Connections first.");
+      promptYoutubeAuth("YouTube not authorised. Configure Client ID, Client Secret, and complete the Authorise step in Connections first.");
       return;
     }
 
