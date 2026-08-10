@@ -14,10 +14,11 @@ interface Props {
 }
 
 const TAB_KEY = "video-sync:sync-status-tab";
-const DEST_KEY = "video-sync:sync-status-dest";
+const YT_KEY = "video-sync:sync-status-youtube";
+const KAL_KEY = "video-sync:sync-status-kaltura";
 const PRIV_KEY = "video-sync:sync-status-privacy";
 
-type DestFilter = "any" | "youtube" | "kaltura" | "both" | "neither";
+type PresenceFilter = "any" | "yes" | "no";
 type PrivacyFilter = "any" | "public" | "not_public";
 
 function extractYtId(v: VideoRecordJSON): string | null {
@@ -52,8 +53,12 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
   });
   const [profiles] = useState<BackfillProfile[]>(() => loadProfiles());
   const [profileId, setProfileId] = useState<string>(() => profiles[0]?.id ?? "__all__");
-  const [destFilter, setDestFilter] = useState<DestFilter>(() => {
-    try { const v = localStorage.getItem(DEST_KEY); return (v === "youtube" || v === "kaltura" || v === "both" || v === "neither") ? v : "any"; }
+  const [ytFilter, setYtFilter] = useState<PresenceFilter>(() => {
+    try { const v = localStorage.getItem(YT_KEY); return (v === "yes" || v === "no") ? v : "any"; }
+    catch { return "any"; }
+  });
+  const [kalFilter, setKalFilter] = useState<PresenceFilter>(() => {
+    try { const v = localStorage.getItem(KAL_KEY); return (v === "yes" || v === "no") ? v : "any"; }
     catch { return "any"; }
   });
   const [privacyFilter, setPrivacyFilter] = useState<PrivacyFilter>(() => {
@@ -61,26 +66,37 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
     catch { return "any"; }
   });
 
-  function selectDest(v: DestFilter) {
-    setDestFilter(v);
-    try { localStorage.setItem(DEST_KEY, v); } catch { /* ignore */ }
+  function selectYt(v: PresenceFilter) {
+    setYtFilter(v);
+    try { localStorage.setItem(YT_KEY, v); } catch { /* ignore */ }
+  }
+  function selectKal(v: PresenceFilter) {
+    setKalFilter(v);
+    try { localStorage.setItem(KAL_KEY, v); } catch { /* ignore */ }
   }
   function selectPrivacy(v: PrivacyFilter) {
     setPrivacyFilter(v);
     try { localStorage.setItem(PRIV_KEY, v); } catch { /* ignore */ }
   }
 
-  // Apply destination + privacy filters BEFORE handing to the child
-  // panels so per-day / per-month rollups only count what matched.
+  // Apply YouTube / Kaltura / privacy filters BEFORE handing to the
+  // child panels so per-day / per-month rollups only count what
+  // matched. Each source filter is independent — YouTube=yes,
+  // Kaltura=no matches records on YouTube but not on Kaltura, which
+  // the previous single-dropdown shape couldn't express.
   const filteredVideos = useMemo(() => {
-    if (destFilter === "any" && privacyFilter === "any") return videos;
+    if (ytFilter === "any" && kalFilter === "any" && privacyFilter === "any") return videos;
     return videos.filter(v => {
-      const hasYt = hasLocation(v, "YouTube");
-      const hasKal = hasLocation(v, "Kaltura");
-      if (destFilter === "youtube" && !hasYt) return false;
-      if (destFilter === "kaltura" && !hasKal) return false;
-      if (destFilter === "both" && !(hasYt && hasKal)) return false;
-      if (destFilter === "neither" && (hasYt || hasKal)) return false;
+      if (ytFilter !== "any") {
+        const hasYt = hasLocation(v, "YouTube");
+        if (ytFilter === "yes" && !hasYt) return false;
+        if (ytFilter === "no" && hasYt) return false;
+      }
+      if (kalFilter !== "any") {
+        const hasKal = hasLocation(v, "Kaltura");
+        if (kalFilter === "yes" && !hasKal) return false;
+        if (kalFilter === "no" && hasKal) return false;
+      }
       if (privacyFilter !== "any") {
         // Privacy is a YouTube-only concept in this codebase (Kaltura
         // doesn't expose a public/private toggle we track). Records
@@ -94,7 +110,7 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
       }
       return true;
     });
-  }, [videos, destFilter, privacyFilter]);
+  }, [videos, ytFilter, kalFilter, privacyFilter]);
 
   function selectTab(tab: "overview" | "calendar") {
     setActiveTab(tab);
@@ -151,18 +167,29 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
             ))}
           </select>
           <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "var(--text-muted)" }}>
-            <span style={{ fontSize: "0.72rem" }}>Where:</span>
+            <span style={{ fontSize: "0.72rem" }}>YouTube:</span>
             <select
-              value={destFilter}
-              onChange={e => selectDest(e.target.value as DestFilter)}
+              value={ytFilter}
+              onChange={e => selectYt(e.target.value as PresenceFilter)}
               style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
-              title="Filter to records that have (or don't have) a YouTube / Kaltura location"
+              title="Filter to records that do or don't have a YouTube location (source or destination)."
             >
               <option value="any">Any</option>
-              <option value="youtube">On YouTube</option>
-              <option value="kaltura">On Kaltura</option>
-              <option value="both">On both</option>
-              <option value="neither">On neither</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "var(--text-muted)" }}>
+            <span style={{ fontSize: "0.72rem" }}>Kaltura:</span>
+            <select
+              value={kalFilter}
+              onChange={e => selectKal(e.target.value as PresenceFilter)}
+              style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: "0.8rem" }}
+              title="Filter to records that do or don't have a Kaltura location (source or destination)."
+            >
+              <option value="any">Any</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
             </select>
           </label>
           <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "var(--text-muted)" }}>
@@ -178,7 +205,7 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
               <option value="not_public">Not public</option>
             </select>
           </label>
-          {(destFilter !== "any" || privacyFilter !== "any") && (
+          {(ytFilter !== "any" || kalFilter !== "any" || privacyFilter !== "any") && (
             <span
               style={{
                 fontSize: "0.72rem", color: "var(--text-muted)",
@@ -199,11 +226,11 @@ export default function SyncStatusPanel({ videos, onNavigateToVideo }: Props) {
         Each row shows where the video has been published: <strong>YouTube</strong> badge
         (privacy-aware), <strong>Kaltura</strong> badge, and a <strong>Drive</strong> link
         to the artifacts folder (transcript, summary, chat, …). Filter to a backfill
-        profile if you want to see only target-day coverage. The <strong>Where</strong> and{" "}
-        <strong>Privacy</strong> dropdowns narrow to records that (do or don&apos;t) exist on
-        YouTube / Kaltura and, for YouTube, by cached privacy status. Privacy comes from the
-        client-side cache written by Check Status / bulk backfill — records without a cached
-        privacy default to &quot;not public&quot;.
+        profile if you want to see only target-day coverage. The <strong>YouTube</strong>,{" "}
+        <strong>Kaltura</strong>, and <strong>Privacy</strong> dropdowns narrow independently
+        — e.g. YouTube=Yes + Kaltura=No shows records that made it to YouTube but not Kaltura.
+        Privacy comes from the client-side cache written by Check Status / bulk backfill —
+        records without a cached privacy default to &quot;not public&quot;.
       </HelpTip>
 
       <div className="filter-tabs" style={{ marginBottom: 12 }}>
