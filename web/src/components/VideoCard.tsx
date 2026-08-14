@@ -72,6 +72,44 @@ function dateTag(recorded_at: string | null): string {
 }
 
 /**
+ * Turn a publish error into a friendly {message, hint, hintHref}
+ * triple. Detects the common recurring failure modes so operators get
+ * an actionable next step instead of a wall of yt-dlp stderr.
+ */
+function classifyPublishError(raw: string): { message: string; hint?: string; hintHref?: string } {
+  const m = raw.toLowerCase();
+  if (m.includes("sign in to confirm you") || m.includes("cookies-from-browser") || m.includes("--cookies")) {
+    return {
+      message: "YouTube is blocking the download with an anti-bot check.",
+      hint: "Paste browser cookies into the YouTube Cookies field in Connections (export via a 'Get cookies.txt LOCALLY' extension while signed in to youtube.com).",
+      hintHref: "/config#connections",
+    };
+  }
+  if (m.includes("scope") && m.includes("youtube")) {
+    return {
+      message: "YouTube OAuth token is missing a required scope.",
+      hint: "Re-authorise YouTube in Connections to grant youtube.force-ssl.",
+      hintHref: "/config#connections",
+    };
+  }
+  if (m.includes("not authori") || m.includes("refreshtoken")) {
+    return {
+      message: "YouTube is not fully authorised.",
+      hint: "Configure Client ID, Client Secret, and click Authorise in Connections.",
+      hintHref: "/config#connections",
+    };
+  }
+  if (m.includes("kaltura session") || m.includes("kaltura auth")) {
+    return {
+      message: "Kaltura authentication failed.",
+      hint: "Check Kaltura partner ID and admin secret in Connections.",
+      hintHref: "/config#connections",
+    };
+  }
+  return { message: raw };
+}
+
+/**
  * Emit a "YouTube not authorised" prompt that offers to jump straight
  * to the Connections panel in Config. Replaces bare alert()s which
  * gave no navigation path and were reported as confusing.
@@ -113,6 +151,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPhase, setUploadPhase] = useState("");
+  // ADR-075 Phase 2 follow-up — inline publish error surface. Prior
+  // behaviour dumped the failure only into the event log; operators
+  // reported clicking Publish and seeing "nothing" until they went
+  // hunting. This banner lives right under the publish buttons.
+  const [publishError, setPublishError] = useState<{ message: string; hint?: string; hintHref?: string } | null>(null);
   const [publishAttrs, setPublishAttrs] = useState<PublishAttributes | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [locPlatform, setLocPlatform] = useState<string>("Loom");
@@ -803,6 +846,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     setShowPreview(false);
     setUploading(true);
+    setPublishError(null);
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
     const isFirefliesSource = video.download_url.startsWith("fireflies://");
@@ -943,6 +987,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         r.mark_failed(JSON.stringify({ error_message: msg }))
       );
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+      setPublishError(classifyPublishError(msg));
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
@@ -1037,6 +1082,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
     setShowPreview(false);
     setUploading(true);
+    setPublishError(null);
 
     // Pick the best source for Kaltura's fetch step — prefer non-YouTube
     // upstreams so we don't trip YouTube's anti-bot every time.
@@ -1092,7 +1138,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
       if (picked.url.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(picked.url)) {
         const yt = connections["YouTube"]?.credentials ?? {};
-        if (yt.cookies) body.ytCookies = yt.cookies;
+        // ConnectionsPanel stores this at credentials.ytCookies (the
+        // key registered on line 85 there). A prior read of yt.cookies
+        // silently dropped the cookies for every operator who'd
+        // pasted them, so yt-dlp then failed on YouTube's bot check.
+        if (yt.ytCookies) body.ytCookies = yt.ytCookies;
       }
 
       const res = await fetch("/api/kaltura/upload", {
@@ -1146,6 +1196,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         );
       }
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — Kaltura: ${msg}`, { video_id: video.id });
+      setPublishError(classifyPublishError(msg));
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, msg);
     } finally {
@@ -4089,6 +4140,43 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           Delete
         </button>
       </div>
+      {publishError && (
+        <div
+          role="alert"
+          style={{
+            marginTop: 8,
+            padding: "8px 10px",
+            fontSize: "0.78rem",
+            background: "var(--danger-soft, rgba(248,113,113,0.08))",
+            border: "1px solid var(--danger-border, rgba(248,113,113,0.3))",
+            color: "var(--red)",
+            borderRadius: 6,
+            display: "flex", flexDirection: "column", gap: 4,
+          }}
+        >
+          <div><strong>Publish failed.</strong> {publishError.message}</div>
+          {publishError.hint && (
+            <div style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>
+              {publishError.hint}
+              {publishError.hintHref && (
+                <>
+                  {" "}
+                  <a href={publishError.hintHref} style={{ color: "var(--accent-text, var(--accent))" }}>
+                    Open Connections →
+                  </a>
+                </>
+              )}
+            </div>
+          )}
+          <button
+            className="btn btn-sm"
+            style={{ alignSelf: "flex-end", padding: "1px 8px", fontSize: "0.7rem" }}
+            onClick={() => setPublishError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <ConfirmDialog
         open={confirmDelete}
         title="Delete this record?"
