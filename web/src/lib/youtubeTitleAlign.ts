@@ -61,7 +61,49 @@ export interface SeriesRegistryEntry {
    *  summary highlights. Default true. Set false for a "just the
    *  highlights" build. */
   clip_include_main_show?: boolean;
+  /** ADR-075 Phase 2 — destinations this series publishes to.
+   *  Each entry names a platform + platform-specific visibility
+   *  and config. When present, replaces the profile default_privacy
+   *  for records matching this series. When absent, falls back to
+   *  the profile / rule / preview override chain. */
+  destinations?: DestinationSpec[];
 }
+
+/**
+ * ADR-075 Phase 2 — series-driven destination spec. Discriminated
+ * union by platform; each variant carries its own visibility model
+ * and platform-specific config keys.
+ */
+export type DestinationSpec =
+  | { platform: "YouTube";
+      visibility: "public" | "unlisted" | "private";
+      /** Optional playlist to add the video to on publish. */
+      playlist_id?: string;
+      /** Optional YouTube category id override. Default is category
+       *  "22" (People & Blogs) matching the existing upload path. */
+      category_id?: string;
+    }
+  | { platform: "Kaltura";
+      /** Kaltura's own visibility model — public means listed in
+       *  the org's KMC catalog; members means requires KMS login;
+       *  unlisted is an entry created with no category membership. */
+      visibility: "public" | "members" | "unlisted";
+      category_ids?: string[];
+    }
+  | { platform: "GoogleDrive";
+      /** Target folder id on the org's Shared Drive. */
+      folder_id: string;
+      /** File-level share scope applied after upload. "inherit"
+       *  means "use whatever the folder has". */
+      share_scope: "inherit" | "org_restricted" | "anyone_with_link";
+    }
+  | { platform: "Other";
+      /** Escape hatch for a platform we haven't formalised. Surfaces
+       *  as a "manual step" checklist item in Publish preview; batch
+       *  publish skips it. */
+      label: string;
+      config?: Record<string, string>;
+    };
 
 export interface AlignedTitle {
   new_title: string;

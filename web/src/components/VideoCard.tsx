@@ -38,6 +38,8 @@ import { getDescriptionConfigCached } from "../lib/descriptionConfig";
 import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
 import { resolveContributingAccount } from "../lib/contributingAccount";
+import { resolveDestinations, destinationLabel, isAutomatedDestination } from "../lib/destinationResolver";
+import type { ResolvedDestinations } from "../lib/destinationResolver";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
 import { refreshOneShortFromOpus } from "../lib/shortsRefresh";
@@ -128,6 +130,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const [ytTranscriptError, setYtTranscriptError] = useState<string | null>(null);
   const [showAttrsPreview, setShowAttrsPreview] = useState(false);
   const [attrsPreview, setAttrsPreview] = useState<PublishAttributes | null>(null);
+  const [destinationsPreview, setDestinationsPreview] = useState<ResolvedDestinations | null>(null);
   const [showProvenance, setShowProvenance] = useState(false);
   const [showTranscriptPreview, setShowTranscriptPreview] = useState(false);
   const [loomInfo, setLoomInfo] = useState<LoomMetadata | null>(null);
@@ -1736,7 +1739,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       setShowAttrsPreview(false);
       return;
     }
-    const attrs = applyProcessingRules(loadProcessingRules(), video, getSeriesRegistryCached());
+    const registry = getSeriesRegistryCached();
+    const rules = loadProcessingRules();
+    const attrs = applyProcessingRules(rules, video, registry);
     // Same operator-intent rule as preparePublish: a curated
     // description on the record beats a rule-driven transform in
     // the small Preview panel too.
@@ -1744,6 +1749,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       attrs.description = video.description ?? "";
     }
     setAttrsPreview(attrs);
+    // ADR-075 Phase 2 — resolve destinations against the series
+    // registry. Profile arg is null here: this preview is per-record
+    // interactive, not driven by a specific batch profile. The
+    // resolver's global default fires when no series matches.
+    setDestinationsPreview(resolveDestinations(video, registry, rules, null));
     setShowAttrsPreview(true);
   }
 
@@ -2962,9 +2972,38 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           )}
           <div>
-            <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Privacy: </span>
+            <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Privacy (legacy field): </span>
             <span>{attrsPreview.privacy_status}</span>
           </div>
+          {destinationsPreview && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--border)" }}>
+              <div style={{ color: "var(--text-muted)", fontSize: "0.7rem", marginBottom: 4 }}>
+                Destinations (ADR-075 Phase 2) — resolved via{" "}
+                {destinationsPreview.provenance.source === "series"
+                  ? <>series <strong>{destinationsPreview.provenance.series_name}</strong></>
+                  : destinationsPreview.provenance.source === "profile"
+                    ? <>profile <strong>{destinationsPreview.provenance.profile_id}</strong></>
+                    : <>global default</>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {destinationsPreview.destinations.map((d, i) => {
+                  const automated = isAutomatedDestination(d);
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}>
+                      <span style={{ minWidth: 90, color: automated ? "var(--text)" : "var(--text-muted)" }}>
+                        {automated ? "✓" : "⚠"} {destinationLabel(d)}
+                      </span>
+                      {!automated && (
+                        <span title="This destination is not wired to an automated push. Publish shows a checklist marker; the operator must action it by hand." style={{ fontSize: "0.68rem", color: "var(--yellow)" }}>
+                          manual
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

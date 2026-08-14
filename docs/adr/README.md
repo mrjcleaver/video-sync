@@ -80,6 +80,7 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-072](ADR-072-zoom-share-transcript-extraction.md) | Zoom Share Transcript Extraction — Fallback Ladder | Proposed |
 | [ADR-073](ADR-073-zoom-share-to-youtube-pipeline.md) | Zoom-Share → YouTube Publication Pipeline | Proposed |
 | [ADR-074](ADR-074-canonical-artifact-bag-and-mcp-exposure.md) | Canonical Artifact Bag per Record, Fully MCP-Exposed | Proposed |
+| [ADR-075](ADR-075-series-driven-destinations.md) | Series-Driven Destinations + Per-Platform Visibility | Accepted — Phase 2 MVP shipped 2026-08-11; Phase 1 (interim default flip) rejected in favour of Phase 2 |
 
 ## ADR Format
 

@@ -11,9 +11,11 @@
  * SSHing into a JSON file on the FUSE bucket.
  */
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { getSeriesRegistry, refreshSeriesRegistry, saveSeriesRegistry } from "../lib/seriesRegistryClient";
-import type { SeriesRegistryEntry } from "../lib/youtubeTitleAlign";
+import type { SeriesRegistryEntry, DestinationSpec } from "../lib/youtubeTitleAlign";
+import SeriesDestinationsEditor from "./SeriesDestinationsEditor";
+import { destinationLabel } from "../lib/destinationResolver";
 
 interface RowState extends SeriesRegistryEntry {
   /** Local-only key so React can reorder rows when the operator
@@ -32,6 +34,15 @@ export default function SeriesRegistryPanel() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  function toggleExpanded(uid: number) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +110,7 @@ export default function SeriesRegistryPanel() {
           scheduled_start_local?: string;
           scheduled_end_local?: string;
           scheduled_timezone?: string;
+          destinations?: DestinationSpec[];
         } = {
           series_name: r.series_name.trim(),
           pattern: r.pattern.trim(),
@@ -112,6 +124,9 @@ export default function SeriesRegistryPanel() {
           out.scheduled_start_local = s;
           out.scheduled_end_local = e;
           out.scheduled_timezone = tz;
+        }
+        if (r.destinations && r.destinations.length > 0) {
+          out.destinations = r.destinations;
         }
         return out;
       })
@@ -181,12 +196,14 @@ export default function SeriesRegistryPanel() {
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pattern</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="Optional Discord webhook URL. When set, VideoCard shows Push-to-Discord affordances for clips + summaries in this series.">Discord channel</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="ADR-060: scheduled show window. Used to derive pre/post-show trim automatically. Leave blank if the show doesn't run to a fixed schedule.">Show window (start · end · TZ)</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }} title="ADR-075 Phase 2 — publication targets. Click Edit to open the per-destination editor. Empty = profile default_privacy applies.">Destinations</th>
                   <th style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r._uid}>
+                  <Fragment key={r._uid}>
+                  <tr>
                     <td style={{ padding: "4px 8px", verticalAlign: "top" }}>
                       <input
                         value={r.series_name}
@@ -238,6 +255,25 @@ export default function SeriesRegistryPanel() {
                         />
                       </div>
                     </td>
+                    <td style={{ padding: "4px 8px", verticalAlign: "top", fontSize: "0.72rem" }}>
+                      {(r.destinations && r.destinations.length > 0) ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          {r.destinations.map((d, i) => (
+                            <span key={i} style={{ color: "var(--text-muted)" }}>· {destinationLabel(d)}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>—</span>
+                      )}
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => toggleExpanded(r._uid)}
+                        style={{ padding: "2px 6px", fontSize: "0.7rem", marginTop: 4 }}
+                        title="Open the destinations editor for this series"
+                      >
+                        {expanded.has(r._uid) ? "▾ Close" : "▸ Edit"}
+                      </button>
+                    </td>
                     <td style={{ padding: "4px 8px", verticalAlign: "top", textAlign: "right" }}>
                       <button
                         className="btn btn-sm"
@@ -249,6 +285,17 @@ export default function SeriesRegistryPanel() {
                       </button>
                     </td>
                   </tr>
+                  {expanded.has(r._uid) && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <SeriesDestinationsEditor
+                          value={r.destinations}
+                          onChange={(next) => updateRow(r._uid, { destinations: next })}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
