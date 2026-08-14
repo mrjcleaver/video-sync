@@ -119,6 +119,10 @@ function normalise(t: FirefliesTranscript) {
   }
   if (t.summary?.action_items) metadataExtra.action_items = t.summary.action_items;
   if (t.summary?.outline) metadataExtra.outline = t.summary.outline;
+  // ADR-075/§Follow-up — capture the Fireflies account that recorded
+  // this transcript so the operator view can render
+  // "from: agent@agentics.org" per record.
+  if (t.organizer_email) metadataExtra.organizer_email = t.organizer_email;
 
   return {
     source_id: `fireflies-${t.id}`,

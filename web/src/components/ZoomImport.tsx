@@ -34,6 +34,12 @@ interface ZoomMeeting {
   share_url?: string;
   description?: string;
   recording_files?: ZoomRecordingFile[];
+  // Zoom's /v2/users/me/recordings response always carries the host
+  // that owned the Zoom account the recording landed in. Kept so the
+  // operator view can show "from: <host_email>" per record without
+  // opening the record in Zoom.
+  host_email?: string;
+  host_id?: string;
 }
 
 interface Props {
@@ -246,6 +252,10 @@ export default function ZoomImport({ onImported, onEvent, dateFrom: dateFromProp
       const meta: Record<string, unknown> = {};
       if (meeting.share_url) meta.share_url = meeting.share_url;
       if (meeting.id) meta.zoom_meeting_id = String(meeting.id);
+      // ADR-075/§Follow-up — capture the owning Zoom account so the
+      // operator view can render "from: agent@agentics.org" per record.
+      if (meeting.host_email) meta.host_email = meeting.host_email;
+      if (meeting.host_id) meta.host_id = meeting.host_id;
       if (align) {
         meta.zoom_original_title = meeting.topic;
         meta.title_aligned_source = align.source;

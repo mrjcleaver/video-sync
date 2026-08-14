@@ -37,6 +37,7 @@ import { sliceTranscriptFromSeconds, sliceTranscriptToSeconds } from "../lib/tra
 import { getDescriptionConfigCached } from "../lib/descriptionConfig";
 import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
+import { resolveContributingAccount } from "../lib/contributingAccount";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
 import { refreshOneShortFromOpus } from "../lib/shortsRefresh";
@@ -2381,6 +2382,35 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             <span title={tooltip}>{video.source_platform}</span>
           );
         })()}
+        {/* ADR-075/§Follow-up — contributing-account chip. Shows which
+            platform account owns the source (YouTube channel, Zoom host
+            email, Fireflies organizer, Loom owner, Drive file owner,
+            /contribute contributor). Nothing rendered when the account
+            can't be resolved from metadata_extra. */}
+        {(() => {
+          const acct = resolveContributingAccount(video);
+          if (!acct) return null;
+          return (
+            <span
+              title={acct.tooltip}
+              style={{
+                fontSize: "0.7rem",
+                color: "var(--text-muted)",
+                padding: "1px 8px",
+                borderRadius: 10,
+                background: "var(--bg-card, rgba(99,102,241,0.05))",
+                border: "1px solid var(--border)",
+                cursor: "help",
+                maxWidth: "24ch",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              from {acct.label}
+            </span>
+          );
+        })()}
         <span title={`${Math.floor(video.duration_seconds / 60)} min`}>{formatDuration(video.duration_seconds)}</span>
         {editingRecordedAt ? (
           <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
@@ -2665,10 +2695,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               if (!copyMode && !canGenerate) return null;
               if (editingDescription) return null;
               const label = generatingDescription
-                ? (copyMode ? "📋 Copying…" : "✨ Regenerating…")
-                : (copyMode ? "📋 Copy from Show Notes" : "✨ Regenerate from transcript");
+                ? (copyMode ? "🪄 Rewriting…" : "✨ Regenerating…")
+                : (copyMode ? "🪄 Rewrite from Show Notes" : "✨ Regenerate from transcript");
               const title = copyMode
-                ? "Rewrite the description from the current Show Notes doc — deterministic markdown → YouTube-plain-text conversion, emits chapter cues where possible. No LLM call."
+                ? "LLM-rewrites the Show Notes markdown into a YouTube-facing description using the configured Show Notes prompt (marketing hook + chapter cues, ≤4800 chars). Falls back to a deterministic markdown-strip converter only if the LLM call fails."
                 : "Regenerate the paragraph description from the current transcript. Uses ADR-060 scheduled-window trim (drops pre/post-show).";
               return (
                 <button
@@ -2747,10 +2777,10 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         const canGenerate = (video.transcript_text?.length ?? 0) >= 200;
         if (!copyMode && !canGenerate) return null;
         const label = generatingDescription
-          ? (copyMode ? "📋 Copying…" : "Generating…")
-          : (copyMode ? "📋 Copy from Show Notes" : "✨ Generate from transcript");
+          ? (copyMode ? "🪄 Rewriting…" : "Generating…")
+          : (copyMode ? "🪄 Rewrite from Show Notes" : "✨ Generate from transcript");
         const title = copyMode
-          ? "Copy the description from the current Show Notes doc — deterministic markdown → YouTube-plain-text with chapter cues. No LLM call."
+          ? "LLM-rewrites the Show Notes markdown into a YouTube-facing description via the configured Show Notes prompt (marketing hook + chapter cues). Falls back to a deterministic markdown-strip converter only if the LLM call fails."
           : "Generate a short paragraph description from the transcript via OpenRouter. Distinct from the chapter-oriented Show Notes.";
         return (
           <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8, fontStyle: "italic", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
