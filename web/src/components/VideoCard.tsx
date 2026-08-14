@@ -1842,12 +1842,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const siblingSuggestion = useMemo<SiblingCandidate | null>(() => {
     if (!allVideos || allVideos.length < 2) return null;
     if (video.status === "Abandoned") return null;
+    // Outbound: this record's own upstream_links point at videos it
+    // has already been linked TO.
     const existingLinks = new Set((video.upstream_links ?? []).map(l => `${l.platform}:${l.external_id}`));
+    // Inbound: another record's upstream_links point AT this record.
+    // link_upstream is one-directional (stored only on the caller),
+    // so without this second sweep the "other" card would keep
+    // suggesting a partner that's already been linked from THIS card
+    // — the exact asymmetry operators reported.
+    for (const other of allVideos) {
+      if (other.id === video.id) continue;
+      for (const l of other.upstream_links ?? []) {
+        if (l.platform === video.source_platform && l.external_id === video.source_id) {
+          existingLinks.add(`${other.source_platform}:${other.source_id}`);
+          break;
+        }
+      }
+    }
     const candidates = rankSiblingCandidates(video, allVideos, 5);
     const best = candidates.find(c => {
       if (c.score < 0.55) return false;
       if (isSiblingMatchRejected(video.id, c.video.id)) return false;
-      // Already linked as upstream? skip
+      // Already linked as upstream (outbound OR inbound)? skip.
       if (existingLinks.has(`${c.video.source_platform}:${c.video.source_id}`)) return false;
       return true;
     });
