@@ -20,11 +20,35 @@
 
 import type { VideoRecordJSON } from "./wasm";
 import type { DestinationSpec, SeriesRegistryEntry } from "./youtubeTitleAlign";
-import { resolveTitleFromRegistry } from "./youtubeTitleAlign";
 import { getSeriesRegistryConfigCached } from "./seriesRegistryClient";
 import type { ProcessingRule } from "./processingRules";
 import { matchesCriteria } from "./rules";
 import type { BackfillProfile } from "./backfill";
+
+/**
+ * Independent series-matcher for the resolver. Deliberately does NOT
+ * defer to resolveTitleFromRegistry — that function's job is title
+ * alignment (rewriting an ingest title into "<series> - D MMM YYYY"),
+ * and it short-circuits when the title is already dated so downstream
+ * ingest doesn't churn the record's title. That short-circuit was
+ * accidentally hiding destination lookups: a record like "Volunteer
+ * Training - 14 Aug 2026" is already dated, so title-alignment
+ * bails, and the destinations from the matching series never fire.
+ *
+ * Longest-name-wins ordering matches resolveTitleFromRegistry so a
+ * series with a longer, more-specific name still beats a shorter
+ * alias in the same tie-break sense.
+ */
+function findMatchingSeries(title: string, registry: SeriesRegistryEntry[]): SeriesRegistryEntry | null {
+  if (!title) return null;
+  const sorted = [...registry].sort((a, b) => b.series_name.length - a.series_name.length);
+  for (const entry of sorted) {
+    try {
+      if (new RegExp(entry.pattern, "i").test(title)) return entry;
+    } catch { /* malformed pattern — skip */ }
+  }
+  return null;
+}
 
 export interface ResolvedDestinations {
   destinations: DestinationSpec[];
@@ -57,15 +81,13 @@ export function resolveDestinations(
   rules: ProcessingRule[],
   profile: BackfillProfile | null,
 ): ResolvedDestinations {
-  const aligned = resolveTitleFromRegistry(record.title, record.recorded_at ?? record.indexed_at, registry);
-
   let destinations: DestinationSpec[];
   let provenance: ResolvedDestinations["provenance"];
 
-  // Layer 1 + 2 — series match beats global default.
-  const matchedSeries = aligned?.matched_series
-    ? registry.find(r => r.series_name === aligned.matched_series)
-    : null;
+  // Layer 1 + 2 — series match beats global default. Uses the
+  // resolver-local matcher (see findMatchingSeries) so already-dated
+  // titles still resolve to their series's destinations.
+  const matchedSeries = findMatchingSeries(record.title, registry);
   if (matchedSeries?.destinations && matchedSeries.destinations.length > 0) {
     destinations = matchedSeries.destinations.map(d => ({ ...d }));
     provenance = { source: "series", series_name: matchedSeries.series_name };
