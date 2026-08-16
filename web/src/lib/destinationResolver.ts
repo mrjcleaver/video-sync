@@ -21,6 +21,7 @@
 import type { VideoRecordJSON } from "./wasm";
 import type { DestinationSpec, SeriesRegistryEntry } from "./youtubeTitleAlign";
 import { resolveTitleFromRegistry } from "./youtubeTitleAlign";
+import { getSeriesRegistryConfigCached } from "./seriesRegistryClient";
 import type { ProcessingRule } from "./processingRules";
 import { matchesCriteria } from "./rules";
 import type { BackfillProfile } from "./backfill";
@@ -28,11 +29,13 @@ import type { BackfillProfile } from "./backfill";
 export interface ResolvedDestinations {
   destinations: DestinationSpec[];
   /** Which layer produced this set — useful for the Publish preview
-   *  to show "from series X" / "profile default" / "operator added". */
+   *  to show "from series X" / "profile default" / "operator added" /
+   *  "no series matches (fallback disabled)". */
   provenance:
     | { source: "series"; series_name: string }
     | { source: "profile"; profile_id: string }
-    | { source: "global_default" };
+    | { source: "global_default" }
+    | { source: "no_match_no_fallback" };
 }
 
 const GLOBAL_DEFAULT: DestinationSpec[] = [
@@ -66,14 +69,25 @@ export function resolveDestinations(
   if (matchedSeries?.destinations && matchedSeries.destinations.length > 0) {
     destinations = matchedSeries.destinations.map(d => ({ ...d }));
     provenance = { source: "series", series_name: matchedSeries.series_name };
-  } else if (profile) {
-    // No series destinations — use the profile's default_privacy on
-    // the sole YouTube destination. Matches pre-Phase-2 behaviour.
-    destinations = [{ platform: "YouTube", visibility: profile.default_privacy }];
-    provenance = { source: "profile", profile_id: profile.id };
   } else {
-    destinations = GLOBAL_DEFAULT.map(d => ({ ...d }));
-    provenance = { source: "global_default" };
+    // No series destinations — fallback path controlled by the
+    // registry-level youtube_fallback_when_no_series_match config
+    // (ADR-075 Phase 2 §Follow-up). When OFF, records not covered by
+    // a series-with-destinations produce an empty destination set
+    // and the publish UI hides.
+    const cfg = getSeriesRegistryConfigCached();
+    if (!cfg.youtube_fallback_when_no_series_match) {
+      destinations = [];
+      provenance = { source: "no_match_no_fallback" };
+    } else if (profile) {
+      // Use the profile's default_privacy on the sole YouTube
+      // destination. Matches pre-Phase-2 behaviour.
+      destinations = [{ platform: "YouTube", visibility: profile.default_privacy }];
+      provenance = { source: "profile", profile_id: profile.id };
+    } else {
+      destinations = GLOBAL_DEFAULT.map(d => ({ ...d }));
+      provenance = { source: "global_default" };
+    }
   }
 
   // Layer 3 — legacy privacy_status rule transform still applies,

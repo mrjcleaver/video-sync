@@ -2300,6 +2300,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     return resolveDestinations(video, registry, rules, null);
   }, [video]);
   const seriesDriven = resolvedDests.provenance.source === "series";
+  const noMatchNoFallback = resolvedDests.provenance.source === "no_match_no_fallback";
   const wantsYouTube = resolvedDests.destinations.some(d => d.platform === "YouTube");
   const wantsKaltura = resolvedDests.destinations.some(d => d.platform === "Kaltura");
   const driveDests   = resolvedDests.destinations.filter((d): d is Extract<import("../lib/youtubeTitleAlign").DestinationSpec, { platform: "GoogleDrive" }> => d.platform === "GoogleDrive");
@@ -2307,10 +2308,12 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // A destination is "in-scope for the card's action row" when the
   // series specifies it OR when we've fallen through to the global
   // default. This keeps existing behaviour for records not covered
-  // by a series with destinations.
-  const showYouTubeBtn = !seriesDriven || wantsYouTube;
-  const showKalturaBtn = !seriesDriven || wantsKaltura;
-  const showDriveBtn   = driveDests.length > 0;
+  // by a series with destinations. When the registry-level fallback
+  // toggle is OFF (noMatchNoFallback), NO publish button shows —
+  // the advisory replaces the action row.
+  const showYouTubeBtn = !noMatchNoFallback && (!seriesDriven || wantsYouTube);
+  const showKalturaBtn = !noMatchNoFallback && (!seriesDriven || wantsKaltura);
+  const showDriveBtn   = !noMatchNoFallback && driveDests.length > 0;
   const alreadyOnDrive = (video.locations ?? []).some(l => l.role === "Destination" && l.platform === "GoogleDrive");
 
   return (
@@ -4024,6 +4027,33 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           <button className="btn btn-sm btn-red" onClick={exclude}>
             Exclude
           </button>
+        )}
+        {/* ADR-075 Phase 2 §Follow-up — advisory when the registry-level
+             fallback is OFF and this record doesn't match any series.
+             Replaces the publish action row. */}
+        {canPublish && noMatchNoFallback && (
+          <span
+            role="status"
+            title="Series Registry has 'Publish to YouTube by default when no series matches' turned OFF, and this record's title doesn't match any series. Add a matching series (with destinations) to /config → Series Registry, or turn the fallback back on."
+            style={{
+              fontSize: "0.75rem",
+              padding: "3px 10px",
+              borderRadius: 10,
+              color: "var(--yellow)",
+              border: "1px solid var(--warning-border, rgba(234,179,8,0.3))",
+              background: "var(--warning-soft, rgba(234,179,8,0.08))",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}
+          >
+            ⚠ no series matches
+            <a
+              href="/config#connections"
+              onClick={(e) => { e.preventDefault(); if (typeof window !== "undefined") window.location.href = "/config"; }}
+              style={{ color: "var(--accent-text, var(--accent))", fontSize: "0.7rem" }}
+            >
+              open Series Registry →
+            </a>
+          </span>
         )}
         {canPublish && !alreadyPublished && showYouTubeBtn && (
           <button

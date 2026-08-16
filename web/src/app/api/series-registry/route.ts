@@ -29,17 +29,41 @@ interface RegistryEntry {
   scheduled_timezone?: string;
 }
 
+interface RegistryConfig {
+  /** ADR-075 Phase 2 §Follow-up — when true (legacy default), a
+   *  record whose title matches no series still gets a YouTube
+   *  destination (via profile default_privacy / global default).
+   *  When false, no fallback: the record shows an advisory and
+   *  no publish action until it's covered by a series with
+   *  explicit destinations. */
+  youtube_fallback_when_no_series_match: boolean;
+}
+
 interface RegistryStore {
   entries: RegistryEntry[];
+  config?: RegistryConfig;
 }
+
+const DEFAULT_CONFIG: RegistryConfig = {
+  youtube_fallback_when_no_series_match: true,
+};
 
 async function readRegistry(): Promise<RegistryStore> {
   try {
     const raw = await fs.readFile(REGISTRY_FILE, "utf-8");
     const parsed = JSON.parse(raw) as Partial<RegistryStore>;
-    return { entries: Array.isArray(parsed.entries) ? parsed.entries : [] };
+    const config: RegistryConfig = {
+      youtube_fallback_when_no_series_match:
+        typeof parsed.config?.youtube_fallback_when_no_series_match === "boolean"
+          ? parsed.config.youtube_fallback_when_no_series_match
+          : DEFAULT_CONFIG.youtube_fallback_when_no_series_match,
+    };
+    return {
+      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+      config,
+    };
   } catch {
-    return { entries: [] };
+    return { entries: [], config: { ...DEFAULT_CONFIG } };
   }
 }
 
@@ -108,7 +132,18 @@ async function postHandler(req: NextRequest) {
       }
     }
   }
-  const store: RegistryStore = { entries: body.entries };
+  // ADR-075 Phase 2 follow-up — carry the youtube_fallback toggle
+  // through if the client sent one; otherwise preserve the stored
+  // value so a fields-only save doesn't clobber the config.
+  let config: RegistryConfig;
+  const inbound = (body as Partial<RegistryStore>).config;
+  if (inbound && typeof inbound.youtube_fallback_when_no_series_match === "boolean") {
+    config = { youtube_fallback_when_no_series_match: inbound.youtube_fallback_when_no_series_match };
+  } else {
+    const prior = await readRegistry();
+    config = prior.config ?? { ...DEFAULT_CONFIG };
+  }
+  const store: RegistryStore = { entries: body.entries, config };
   await writeRegistry(store);
   return NextResponse.json(store);
 }

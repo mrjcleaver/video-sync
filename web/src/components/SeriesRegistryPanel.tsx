@@ -12,7 +12,7 @@
  */
 
 import { Fragment, useEffect, useState } from "react";
-import { getSeriesRegistry, refreshSeriesRegistry, saveSeriesRegistry } from "../lib/seriesRegistryClient";
+import { getSeriesRegistry, getSeriesRegistryConfigCached, refreshSeriesRegistry, saveSeriesRegistry, type SeriesRegistryConfig } from "../lib/seriesRegistryClient";
 import type { SeriesRegistryEntry, DestinationSpec } from "../lib/youtubeTitleAlign";
 import SeriesDestinationsEditor from "./SeriesDestinationsEditor";
 import { destinationLabel } from "../lib/destinationResolver";
@@ -35,6 +35,7 @@ export default function SeriesRegistryPanel() {
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [config, setConfig] = useState<SeriesRegistryConfig>(() => getSeriesRegistryConfigCached());
 
   function toggleExpanded(uid: number) {
     setExpanded(prev => {
@@ -52,6 +53,7 @@ export default function SeriesRegistryPanel() {
     getSeriesRegistry().then((entries) => {
       if (cancelled) return;
       setRows(entries.map((e) => ({ ...e, _uid: uidCounter++ })));
+      setConfig(getSeriesRegistryConfigCached());
       setLoading(false);
       // Force a background refetch so the editor eventually shows
       // any out-of-band writes; but only if there's more than a
@@ -64,6 +66,7 @@ export default function SeriesRegistryPanel() {
           if (JSON.stringify(fresh) !== JSON.stringify(entries)) {
             setRows(fresh.map((e) => ({ ...e, _uid: uidCounter++ })));
           }
+          setConfig(getSeriesRegistryConfigCached());
         });
       }, 400);
     });
@@ -161,7 +164,7 @@ export default function SeriesRegistryPanel() {
     }
     setSaving(true);
     setStatus(null);
-    const result = await saveSeriesRegistry(cleaned);
+    const result = await saveSeriesRegistry(cleaned, config);
     setSaving(false);
     if (!result.ok) {
       setStatus(`Save failed: ${result.error}`);
@@ -183,6 +186,41 @@ export default function SeriesRegistryPanel() {
         <br />
         Patterns are JavaScript regex, matched case-insensitively. Longest matching series wins on ties.
       </p>
+
+      {/* ADR-075 Phase 2 §Follow-up — registry-level fallback toggle.
+          When OFF, records that don't match any series here get no
+          publish action; the card shows an advisory instead. */}
+      <label
+        style={{
+          display: "flex", alignItems: "flex-start", gap: 8,
+          padding: "8px 10px", marginBottom: 12,
+          background: "var(--bg-card, rgba(99,102,241,0.05))",
+          border: "1px solid var(--border)", borderRadius: 6,
+          fontSize: "0.82rem", cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={config.youtube_fallback_when_no_series_match}
+          onChange={(e) => {
+            setConfig({ ...config, youtube_fallback_when_no_series_match: e.target.checked });
+            setDirty(true);
+            setStatus(null);
+          }}
+          style={{ marginTop: 3 }}
+        />
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            Publish to YouTube by default when no series matches
+          </div>
+          <div style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
+            When <strong>ON</strong> (default), records with a title that doesn&apos;t match any series above still get a
+            YouTube destination via profile <code>default_privacy</code>. When <strong>OFF</strong>, records with no series
+            match show an advisory (<em>&quot;no series matches&quot;</em>) and no publish button — force operators to add a series
+            with explicit destinations before anything can be published.
+          </div>
+        </div>
+      </label>
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Loading…</div>
