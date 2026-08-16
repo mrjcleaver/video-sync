@@ -1206,32 +1206,82 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   }
 
   /**
-   * ADR-075 Phase 2 — manual "publish to Drive folder" affordance.
-   * The Drive publish endpoint is deferred per the ADR §Follow-ups;
-   * for now this button opens the target folder in a new tab, records
-   * the Drive destination on the record, and posts an event so the
-   * operator's action is auditable. The actual file-copy step is
-   * still manual until the endpoint ships.
+   * ADR-075 Phase 2 §Follow-up #4 — real Drive publish. Streams the
+   * record's source video to the target Drive folder via
+   * /api/drive/publish (uses the runtime service account per ADR-042),
+   * then records the resulting Drive file id as a Destination
+   * location on the record.
+   *
+   * folderIdOrUrl accepts either the bare Drive folder id or a full
+   * https://drive.google.com/…/folders/<id>[?…] URL — the server
+   * side normalises both. Historical series entries that pasted the
+   * full URL keep working without a migration.
    */
-  function publishToDriveFolder(folderId: string, shareScope: string) {
-    const folderUrl = `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`;
+  function extractDriveFolderId(input: string): string {
+    const s = (input ?? "").trim();
+    const m1 = s.match(/\/folders\/([A-Za-z0-9_-]{20,})/);
+    if (m1) return m1[1];
+    const m2 = s.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
+    if (m2) return m2[1];
+    if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
+    return s;
+  }
+
+  async function publishToDriveFolder(folderIdOrUrl: string, shareScope: string) {
+    const folderId = extractDriveFolderId(folderIdOrUrl);
+    const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+    setPublishError(null);
+    setUploading(true);
+    setUploadPhase(`Uploading to Drive folder…`);
     try {
+      let connections: Record<string, { credentials?: Record<string, string> }> = {};
+      try { const raw = localStorage.getItem("video-sync:connections"); if (raw) connections = JSON.parse(raw); }
+      catch { /* ignore */ }
+      const body: Record<string, string> = { record_id: video.id, folder_id: folderId };
+      const yt = connections["YouTube"]?.credentials ?? {};
+      if (yt.ytCookies) body.ytCookies = yt.ytCookies;
+      const z = connections["Zoom"]?.credentials ?? {};
+      if (z.accountId) body.zoomAccountId = z.accountId;
+      if (z.clientId) body.zoomClientId = z.clientId;
+      if (z.clientSecret) body.zoomClientSecret = z.clientSecret;
+      const ff = connections["Fireflies"]?.credentials ?? {};
+      if (ff.apiKey) body.firefliesApiKey = ff.apiKey;
+
+      const res = await fetch("/api/drive/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+      }
+      const { drive_file_id: fileId, web_view_link: link, bytes } = data as { drive_file_id: string; web_view_link: string; bytes?: number };
+
       videoStore.mutate(video.id, (r) =>
         r.add_location(cmd({
           platform: "GoogleDrive",
-          external_id: folderId,
-          external_url: folderUrl,
+          external_id: fileId,
+          external_url: link,
           role: "Destination",
         })),
       );
-      onEvent(`DriveDestinationRecorded: "${video.title}"${dateTag(video.recorded_at)} → ${folderUrl} (share: ${shareScope}) — manual copy pending`, { video_id: video.id });
+      const mb = bytes ? ` (${(bytes / (1024 * 1024)).toFixed(1)} MB)` : "";
+      onEvent(`VideoPublishedToDrive: "${video.title}"${dateTag(video.recorded_at)} → ${link}${mb} (share: ${shareScope})`, { video_id: video.id });
       onMutated();
-      if (typeof window !== "undefined") window.open(folderUrl, "_blank", "noopener,noreferrer");
+      setUploadPhase("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      onEvent(`DriveDestinationFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
-      setPublishError({ message: `Drive destination could not be recorded: ${msg}` });
+      onEvent(`DrivePublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+      setPublishError(classifyPublishError(msg));
+      setUploadPhase("");
+    } finally {
+      setUploading(false);
     }
+    // Also open the folder in a new tab so operators can eyeball
+    // the newly-uploaded file. Runs regardless of success/failure
+    // so a failed upload still lets them poke at the folder.
+    if (typeof window !== "undefined") window.open(folderUrl, "_blank", "noopener,noreferrer");
   }
 
   /**

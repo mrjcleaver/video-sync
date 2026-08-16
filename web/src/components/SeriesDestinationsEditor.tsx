@@ -112,8 +112,17 @@ export default function SeriesDestinationsEditor({ value, onChange }: Props) {
                 <>
                   <input
                     value={d.folder_id}
-                    onChange={e => replaceAt(i, { ...d, folder_id: e.target.value })}
-                    placeholder="Drive folder id"
+                    onChange={e => {
+                      // Accept either a bare folder id or a pasted Drive URL;
+                      // normalise to just the id so downstream consumers
+                      // don't have to strip it again.
+                      const raw = e.target.value;
+                      const m1 = raw.match(/\/folders\/([A-Za-z0-9_-]{20,})/);
+                      const m2 = raw.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
+                      const normalised = m1?.[1] ?? m2?.[1] ?? raw;
+                      replaceAt(i, { ...d, folder_id: normalised });
+                    }}
+                    placeholder="Drive folder id (or paste the folder URL)"
                     style={{ ...cellInput, flex: "1 1 200px", minWidth: 160 }}
                   />
                   <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>share:</label>
