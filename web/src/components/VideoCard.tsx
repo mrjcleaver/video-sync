@@ -1206,6 +1206,35 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   }
 
   /**
+   * ADR-075 Phase 2 — manual "publish to Drive folder" affordance.
+   * The Drive publish endpoint is deferred per the ADR §Follow-ups;
+   * for now this button opens the target folder in a new tab, records
+   * the Drive destination on the record, and posts an event so the
+   * operator's action is auditable. The actual file-copy step is
+   * still manual until the endpoint ships.
+   */
+  function publishToDriveFolder(folderId: string, shareScope: string) {
+    const folderUrl = `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`;
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.add_location(cmd({
+          platform: "GoogleDrive",
+          external_id: folderId,
+          external_url: folderUrl,
+          role: "Destination",
+        })),
+      );
+      onEvent(`DriveDestinationRecorded: "${video.title}"${dateTag(video.recorded_at)} → ${folderUrl} (share: ${shareScope}) — manual copy pending`, { video_id: video.id });
+      onMutated();
+      if (typeof window !== "undefined") window.open(folderUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onEvent(`DriveDestinationFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
+      setPublishError({ message: `Drive destination could not be recorded: ${msg}` });
+    }
+  }
+
+  /**
    * Approved + already has a YouTube destination location (e.g. attached
    * via the auto-association banner or the Recover flow without the
    * status chain finishing) → transition through Publishing → Published
@@ -2258,6 +2287,31 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   // missing. Kaltura must be configured in Connections.
   const canSidePublishKaltura = !alreadyOnKaltura
     && (status === "Published" || (status === "Approved" && alreadyPublished));
+
+  // ADR-075 Phase 2 follow-up — resolve destinations for THIS record
+  // so the publish buttons reflect the series configuration. When the
+  // record resolves via a series that declared destinations, we ONLY
+  // show buttons for the platforms that series wants. Records that
+  // fall through to the global default keep the legacy YouTube +
+  // Kaltura-side-publish behaviour, so old catalogues are unchanged.
+  const resolvedDests = useMemo(() => {
+    const registry = getSeriesRegistryCached();
+    const rules = loadProcessingRules();
+    return resolveDestinations(video, registry, rules, null);
+  }, [video]);
+  const seriesDriven = resolvedDests.provenance.source === "series";
+  const wantsYouTube = resolvedDests.destinations.some(d => d.platform === "YouTube");
+  const wantsKaltura = resolvedDests.destinations.some(d => d.platform === "Kaltura");
+  const driveDests   = resolvedDests.destinations.filter((d): d is Extract<import("../lib/youtubeTitleAlign").DestinationSpec, { platform: "GoogleDrive" }> => d.platform === "GoogleDrive");
+  const otherDests   = resolvedDests.destinations.filter((d): d is Extract<import("../lib/youtubeTitleAlign").DestinationSpec, { platform: "Other" }> => d.platform === "Other");
+  // A destination is "in-scope for the card's action row" when the
+  // series specifies it OR when we've fallen through to the global
+  // default. This keeps existing behaviour for records not covered
+  // by a series with destinations.
+  const showYouTubeBtn = !seriesDriven || wantsYouTube;
+  const showKalturaBtn = !seriesDriven || wantsKaltura;
+  const showDriveBtn   = driveDests.length > 0;
+  const alreadyOnDrive = (video.locations ?? []).some(l => l.role === "Destination" && l.platform === "GoogleDrive");
 
   return (
     <div className="video-card" id={`video-card-${video.id}`}>
@@ -3971,12 +4025,18 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             Exclude
           </button>
         )}
-        {canPublish && !alreadyPublished && (
-          <button className="btn btn-sm btn-primary" onClick={requestPublish}>
-            Publish
+        {canPublish && !alreadyPublished && showYouTubeBtn && (
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={requestPublish}
+            title={seriesDriven
+              ? `Publish to YouTube — resolved from series ${resolvedDests.provenance.source === "series" ? resolvedDests.provenance.series_name : ""}`
+              : "Publish to YouTube (default destination)"}
+          >
+            Publish to YouTube
           </button>
         )}
-        {canPublish && alreadyPublished && (
+        {canPublish && alreadyPublished && showYouTubeBtn && (
           <button
             className="btn btn-sm btn-green"
             onClick={markAsAlreadyPublished}
@@ -3985,7 +4045,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             Already on YouTube — mark Published
           </button>
         )}
-        {canSidePublishKaltura && (
+        {canSidePublishKaltura && showKalturaBtn && (
           <button
             className="btn btn-sm btn-green"
             onClick={publishToKaltura}
@@ -3995,6 +4055,37 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             {uploading ? "Uploading…" : "Publish to Kaltura"}
           </button>
         )}
+        {/* ADR-075 Phase 2 — Drive folder destination(s) from the series.
+             Manual for now (per §Follow-ups): opens the target folder in a
+             new tab, adds the location, records an audit event. The actual
+             file-copy step is operator-driven until the endpoint ships. */}
+        {(canPublish || status === "Published") && showDriveBtn && !alreadyOnDrive && driveDests.map((d, i) => (
+          <button
+            key={`drive-${i}`}
+            className="btn btn-sm btn-green"
+            onClick={() => publishToDriveFolder(d.folder_id, d.share_scope)}
+            title={`Open the target Drive folder + record the destination. Manual file copy required (share: ${d.share_scope}).`}
+          >
+            📁 Publish to Drive
+          </button>
+        ))}
+        {/* Manual/Other destinations from the series appear as ⚠ chips */}
+        {seriesDriven && otherDests.length > 0 && otherDests.map((d, i) => (
+          <span
+            key={`other-${i}`}
+            style={{
+              fontSize: "0.7rem",
+              padding: "1px 8px",
+              borderRadius: 10,
+              color: "var(--yellow)",
+              border: "1px solid var(--warning-border, rgba(234,179,8,0.3))",
+              background: "var(--warning-soft, rgba(234,179,8,0.08))",
+            }}
+            title={`Manual destination — the tool does not push here. Operator action required.${d.config ? "\n" + JSON.stringify(d.config, null, 2) : ""}`}
+          >
+            ⚠ {d.label} (manual)
+          </span>
+        ))}
         {canRetry && (
           <button className="btn btn-sm btn-yellow" onClick={markToRetry}>
             Retry
