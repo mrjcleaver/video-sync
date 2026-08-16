@@ -20,6 +20,7 @@ import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { readCatalog } from "../../catalog/route";
 import { downloadFromSource, type SourceCreds } from "../../../../lib/sourceDownload";
 import { getDrive } from "../../../../lib/drive";
+import { getSharedCredential } from "../../../../lib/sharedCredentials";
 import { promises as fs, createReadStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -87,6 +88,34 @@ async function handler(req: NextRequest) {
     zoomClientSecret: body.zoomClientSecret,
     firefliesApiKey: body.firefliesApiKey,
   };
+  // ADR-042 — fill missing creds from the shared vault, mirroring the
+  // pattern used by /api/kaltura/upload. Client-side ConnectionsPanel
+  // stores platforms in SHARED_PLATFORM_NAMES server-side only, so the
+  // client's fetch body will typically NOT carry firefliesApiKey /
+  // zoom* — the fallback below is the actual source of these values.
+  const scheme = rec.download_url.startsWith("zoom://") ? "zoom"
+    : rec.download_url.startsWith("fireflies://") ? "fireflies"
+    : rec.download_url.startsWith("youtube://") ? "youtube"
+    : "other";
+  if (scheme === "zoom" && (!creds.zoomAccountId || !creds.zoomClientId || !creds.zoomClientSecret)) {
+    const sharedZ = (await getSharedCredential("zoom")) as { accountId?: string; clientId?: string; clientSecret?: string } | null;
+    if (sharedZ) {
+      creds.zoomAccountId    = creds.zoomAccountId    ?? sharedZ.accountId;
+      creds.zoomClientId     = creds.zoomClientId     ?? sharedZ.clientId;
+      creds.zoomClientSecret = creds.zoomClientSecret ?? sharedZ.clientSecret;
+    }
+  }
+  if (scheme === "fireflies" && !creds.firefliesApiKey) {
+    const sharedFf = (await getSharedCredential("fireflies")) as { apiKey?: string } | null;
+    if (sharedFf?.apiKey) creds.firefliesApiKey = sharedFf.apiKey;
+  }
+  // yt-dlp cookies live in the youtube shared cred as `ytCookies`
+  // (matching the ConnectionsPanel field key). Fetched only when the
+  // source is YouTube — most Drive publishes won't hit this.
+  if (scheme === "youtube" && !creds.ytCookies) {
+    const sharedYt = (await getSharedCredential("youtube")) as { ytCookies?: string } | null;
+    if (sharedYt?.ytCookies) creds.ytCookies = sharedYt.ytCookies;
+  }
 
   const tmpPath = join(tmpdir(), `drive-publish-${recordId}-${Date.now()}.mp4`);
   try {
