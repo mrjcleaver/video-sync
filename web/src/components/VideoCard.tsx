@@ -1653,6 +1653,28 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         videoStore.mutate(video.id, (r) =>
           r.update_metadata(cmd({ edits: { description } })),
         );
+        // ADR-074 follow-up — also write the un-capped variant so
+        // consumers that don't have to squeeze into YouTube's 5000
+        // chars (chapter site, Discord digest, MCP clients) get the
+        // long form. Fire-and-forget; the LLM-driven `description` is
+        // the shipped user-visible surface.
+        void (async () => {
+          try {
+            const fullText = showNotesToDescription(md, { noCap: true });
+            if (fullText.length < 20) return;
+            await fetch(`/api/artifacts/${encodeURIComponent(video.id)}/description-full`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                content: fullText,
+                title: video.title,
+                source_platform: video.source_platform,
+                source_id: video.source_id,
+                recorded_at: video.recorded_at ?? video.indexed_at ?? new Date().toISOString(),
+              }),
+            });
+          } catch { /* non-fatal — the shipped description is unaffected */ }
+        })();
         onEvent(`DescriptionCopied: "${video.title}"${dateTag(video.recorded_at)} (${description.length} chars) — from Show Notes via ${source}`, { video_id: video.id });
         setStatusMessage(`Description copied from Show Notes (${description.length} characters).`);
         onMutated();

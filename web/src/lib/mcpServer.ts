@@ -101,10 +101,11 @@ async function readShowNotesMarkdown(docId: string): Promise<string | null> {
 
 // ── Resource URI helpers ────────────────────────────────────────
 
-type VsyncKind = "show-notes" | "description" | "transcript" | "chat" | "youtube-snippet" | "reference" | "artifacts";
+type VsyncKind = "show-notes" | "description" | "description-full" | "transcript" | "chat" | "youtube-snippet" | "reference" | "artifacts";
 
 function showNotesUri(id: string) { return `vsync://records/${id}/show-notes`; }
 function descriptionUri(id: string) { return `vsync://records/${id}/description`; }
+function descriptionFullUri(id: string) { return `vsync://records/${id}/description-full`; }
 function transcriptUri(id: string) { return `vsync://records/${id}/transcript`; }
 function chatUri(id: string) { return `vsync://records/${id}/chat`; }
 function youtubeSnippetUri(id: string) { return `vsync://records/${id}/youtube-snippet`; }
@@ -112,7 +113,7 @@ function referenceUri(id: string) { return `vsync://records/${id}/reference`; }
 function artifactsIndexUri(id: string) { return `vsync://records/${id}/artifacts`; }
 
 function parseVsyncUri(uri: string): { record_id: string; kind: VsyncKind } | null {
-  const m = uri.match(/^vsync:\/\/records\/([0-9a-f-]+)\/(show-notes|description|transcript|chat|youtube-snippet|reference|artifacts)$/i);
+  const m = uri.match(/^vsync:\/\/records\/([0-9a-f-]+)\/(show-notes|description-full|description|transcript|chat|youtube-snippet|reference|artifacts)$/i);
   if (!m) return null;
   return { record_id: m[1], kind: m[2] as VsyncKind };
 }
@@ -133,10 +134,11 @@ function methodInitialize() {
     },
     instructions:
       "video-sync exposes a canonical per-record artifact bag (ADR-074): Show Notes, transcript, chat, description, " +
-      "last-pushed YouTube snippet, and an aggregated `reference` doc. Use `search_records` for discovery; " +
-      "`search_chapter_moments` for cited moments; `get_show_notes` / `get_transcript` / `get_chat` / `get_description` " +
-      "/ `get_youtube_snippet` / `get_reference` to pull specific artifacts. `list_artifacts` returns the .meta index. " +
-      "Every resource URI: `vsync://records/<id>/{show-notes,description,transcript,chat,youtube-snippet,reference,artifacts}`.",
+      "un-capped description, last-pushed YouTube snippet, and an aggregated `reference` doc. Use `search_records` " +
+      "for discovery; `search_chapter_moments` for cited moments; `get_show_notes` / `get_transcript` / `get_chat` / " +
+      "`get_description` / `get_description_full` / `get_youtube_snippet` / `get_reference` to pull specific artifacts. " +
+      "`list_artifacts` returns the .meta index. Every resource URI: `vsync://records/<id>/{show-notes,description," +
+      "description-full,transcript,chat,youtube-snippet,reference,artifacts}`.",
   };
 }
 
@@ -188,6 +190,11 @@ async function methodResourcesList(actor: Actor) {
     if (bag?.artifacts.reference) {
       resources.push({ uri: referenceUri(r.id), name: `${r.title} — Reference (aggregated)`, description: meta, mimeType: "text/markdown" });
     }
+    if (bag?.artifacts["description-full"] || r.summary_doc_id) {
+      // Even without a precomputed description-full.md, we can lazily
+      // generate it from the Show Notes doc (see toolGetDescriptionFull).
+      resources.push({ uri: descriptionFullUri(r.id), name: `${r.title} — Description (full-length)`, description: meta, mimeType: "text/markdown" });
+    }
     if (bag) {
       resources.push({ uri: artifactsIndexUri(r.id), name: `${r.title} — Artifacts index`, description: meta, mimeType: "application/json" });
     }
@@ -235,6 +242,21 @@ async function methodResourcesRead(actor: Actor, params: unknown) {
     const a = await getArtifact(rec.id, parsed.kind).catch(() => null);
     if (!a) throw new McpError(ERR_INVALID_PARAMS, `no ${parsed.kind} artifact yet for this record`);
     return { contents: [{ uri, mimeType: "text/markdown", text: a.content }] };
+  }
+
+  if (parsed.kind === "description-full") {
+    // Prefer the precomputed artifact; fall back to a lazy generation
+    // from the Show Notes doc so consumers never see a 404 when the
+    // record has Show Notes.
+    const precomputed = await getArtifact(rec.id, "description-full").catch(() => null);
+    if (precomputed) {
+      return { contents: [{ uri, mimeType: "text/markdown", text: precomputed.content }] };
+    }
+    if (!rec.summary_doc_id) throw new McpError(ERR_INVALID_PARAMS, "no description-full artifact and no Show Notes to derive from");
+    const md = await readShowNotesMarkdown(rec.summary_doc_id);
+    if (!md) throw new McpError(ERR_INTERNAL, "Drive export failed for Show Notes doc");
+    const { showNotesToDescription } = await import("./showNotesToDescription");
+    return { contents: [{ uri, mimeType: "text/markdown", text: showNotesToDescription(md, { noCap: true }) }] };
   }
 
   if (parsed.kind === "youtube-snippet") {
@@ -353,6 +375,11 @@ const TOOLS = [
     description: "Return the .meta.json index for a record — filenames, sizes, timestamps, Drive URLs for every artifact.",
     inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
   },
+  {
+    name: "get_description_full",
+    description: "Return the un-capped (>5000 char) deterministic-strip of the Show Notes as description-shaped markdown. Prefers the precomputed description-full.md artifact; if absent, lazily generates from the Show Notes doc.",
+    inputSchema: { type: "object", properties: { record_id: { type: "string" } }, required: ["record_id"] },
+  },
 ] as const;
 
 function methodToolsList() {
@@ -377,6 +404,7 @@ async function methodToolsCall(actor: Actor, params: unknown) {
     case "get_youtube_snippet":   return toolGetYoutubeSnippet(actor, a);
     case "get_reference":         return toolGetReference(actor, a);
     case "list_artifacts":        return toolListArtifacts(actor, a);
+    case "get_description_full":  return toolGetDescriptionFull(actor, a);
     default:
       throw new McpError(ERR_METHOD_NOT_FOUND, `unknown tool: ${name}`);
   }
@@ -443,6 +471,22 @@ async function toolListArtifacts(actor: Actor, args: Record<string, unknown>) {
   const { getMeta } = await import("./driveArtifactStore");
   const meta = await getMeta(rec.id);
   return textResult(JSON.stringify(meta ?? { record_id: rec.id, artifacts: {} }, null, 2));
+}
+
+async function toolGetDescriptionFull(actor: Actor, args: Record<string, unknown>) {
+  const rec = await resolveRecord(actor, args);
+  const { getArtifact } = await import("./driveArtifactStore");
+  const precomputed = await getArtifact(rec.id, "description-full").catch(() => null);
+  if (precomputed) return textResult(precomputed.content);
+  // Lazy generation from Show Notes — same shape as the client-side
+  // deterministic path with the 5000-char cap disabled.
+  if (!rec.summary_doc_id) {
+    return textResult("_No description-full artifact and no Show Notes to derive from._", true);
+  }
+  const md = await readShowNotesMarkdown(rec.summary_doc_id);
+  if (!md) return textResult("_Drive export failed for Show Notes doc._", true);
+  const { showNotesToDescription } = await import("./showNotesToDescription");
+  return textResult(showNotesToDescription(md, { noCap: true }));
 }
 
 function textResult(text: string, isError = false) {

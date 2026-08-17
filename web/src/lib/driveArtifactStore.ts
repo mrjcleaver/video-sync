@@ -37,6 +37,11 @@ export const ARTIFACT_KINDS = [
   // ADR-074 §3 — aggregated single-file view. Derived, regenerated on
   // material changes; not directly authored.
   "reference",
+  // ADR-074 follow-up — deterministic-strip of Show Notes with the
+  // YouTube 5000-char cap dropped. The "long-form description" for
+  // consumers that don't have to shove things through YouTube (chapter
+  // websites, Discord digests, MCP clients).
+  "description-full",
 ] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
@@ -47,6 +52,7 @@ const KIND_FILENAMES: Record<ArtifactKind, string> = {
   chat: "chat.md",
   "youtube-snippet": "youtube-snippet.json",
   reference: "reference.md",
+  "description-full": "description-full.md",
 };
 
 const META_FILENAME = ".meta.json";
