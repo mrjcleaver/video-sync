@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import type { VideoRecordJSON, PlatformLocationJSON, UpstreamLinkJSON } from "../lib/wasm";
 import type { LoomMetadata } from "../app/api/loom/metadata/route";
 import { videoStore, bootStore } from "../lib/store";
-import { addExclusion } from "../lib/rules";
+import { addExclusion, removeExclusion } from "../lib/rules";
 import {
   loadProcessingRules,
   loadPostProcessingRules,
@@ -4391,9 +4391,22 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         title="Delete this record?"
         description={`"${video.title}"${dateTag(video.recorded_at)} will be removed from the catalog. This cannot be undone — the record's history is preserved in the audit log but the card disappears.`}
         confirmLabel="Delete"
-        onConfirm={() => {
-          videoStore.remove(video.id);
-          onEvent(`VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}`, { video_id: video.id });
+        onConfirm={async () => {
+          // Delete = "start over":
+          //   1. Clear any exclusion pinned to this (source_platform,
+          //      source_id) so re-ingest isn't silently blocked by a
+          //      lingering rule from a prior Exclude action.
+          //   2. Await the server-side DELETE before closing the
+          //      dialog so a subsequent re-import doesn't see the
+          //      record still on the server (sync race). The store
+          //      also drops a tombstone that survives any racing
+          //      syncWithServer round-trip.
+          const removed = removeExclusion(video.source_platform, video.source_id);
+          const ok = await videoStore.removeAndAwait(video.id);
+          onEvent(
+            `VideoDeleted: "${video.title}"${dateTag(video.recorded_at)}${removed > 0 ? " (also cleared exclusion)" : ""}${ok ? "" : " — server DELETE did NOT confirm; re-import may still be blocked"}`,
+            { video_id: video.id },
+          );
           setConfirmDelete(false);
           onMutated();
         }}

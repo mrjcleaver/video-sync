@@ -139,6 +139,23 @@ export function isExcluded(platform: string, sourceId: string): boolean {
   );
 }
 
+/**
+ * Remove any exclusion pinned to (platform, sourceId). Returns the
+ * number of entries removed (0 or 1 in practice, but robust to any
+ * accidental duplicates). Used by VideoCard's Delete flow so a
+ * deleted record can be re-imported cleanly — Delete means "start
+ * over", and a lingering exclusion would silently block re-ingest.
+ */
+export function removeExclusion(platform: string, sourceId: string): number {
+  const list = loadExclusions();
+  const next = list.filter(
+    (e) => !(e.source_platform === platform && e.source_id === sourceId),
+  );
+  const removed = list.length - next.length;
+  if (removed > 0) saveExclusions(next);
+  return removed;
+}
+
 // ── Rule matching ────────────────────────────────────────
 
 export function matchesCriteria(c: RuleCriteria, video: VideoRecordJSON): boolean {

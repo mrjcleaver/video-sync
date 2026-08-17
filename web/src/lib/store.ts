@@ -225,6 +225,16 @@ class VideoStore {
       const localTime = localTs ? Date.parse(localTs) : 0;
       const serverTime = serverTs ? Date.parse(serverTs) : 0;
 
+      // Tombstone guard: an id the operator just deleted locally
+      // MUST NOT be re-hydrated by a racing sync, or a subsequent
+      // re-import would appear to be a duplicate. See
+      // recentlyDeletedIds comment for the full scenario.
+      if (this.recentlyDeletedIds.has(id) && serverJson) {
+        // Re-fire the DELETE so the server catches up; the tombstone
+        // clears when that succeeds (pushDelete's own res.ok branch).
+        this.scheduleReDelete(id);
+        continue;
+      }
       if (serverJson && (!localRecord || serverTime > localTime)) {
         try {
           const parsed = JSON.parse(serverJson) as { id?: string; transcript_text?: string | null };
@@ -439,18 +449,44 @@ class VideoStore {
     }
   }
 
-  private async pushDelete(id: string) {
+  /**
+   * Ids the operator just deleted locally. Prevents syncWithServer()
+   * from re-hydrating them if a sync races the DELETE round-trip
+   * (the operator deletes and immediately tries to re-import; a
+   * focus/visibility change fires syncWithServer before the server
+   * confirms the DELETE; the GET returns the still-present record;
+   * we'd add it back and then the import UI sees a duplicate).
+   *
+   * Cleared per-id when pushDelete succeeds. Also cleared on a
+   * safety timeout so a permanently-failing DELETE doesn't wedge a
+   * record locally out-of-sync forever.
+   */
+  private recentlyDeletedIds = new Set<string>();
+
+  private async pushDelete(id: string): Promise<boolean> {
+    let ok = false;
     try {
-      await fetch(`/api/catalog?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await fetch(`/api/catalog?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      ok = res.ok;
+      if (!ok) {
+        const txt = await res.text().catch(() => "");
+        clientLog("warn", "store", `catalog DELETE returned ${res.status}`, { video_id: id, body: txt.slice(0, 200) });
+      }
     } catch (err) {
       clientLog("warn", "store", "catalog delete push failed", { video_id: id, error: String(err) });
     }
-    // Best-effort delete of the transcript artifact (if any)
+    // Best-effort delete of the transcript artifact (if any). Doesn't
+    // affect the tombstone — server-side catalog is what the sync-race
+    // guard cares about.
     try {
       await fetch(`/api/artifacts/${encodeURIComponent(id)}/transcript`, { method: "DELETE" });
-    } catch {
-      // best-effort
-    }
+    } catch { /* best-effort */ }
+    // Safety timer — even on failure, drop the tombstone after 60s so
+    // a permanently-failing DELETE doesn't wedge a deleted-then-
+    // re-appeared record forever.
+    setTimeout(() => this.recentlyDeletedIds.delete(id), 60_000);
+    if (ok) this.recentlyDeletedIds.delete(id);
+    return ok;
   }
 
   private touch(id: string) {
@@ -499,8 +535,35 @@ class VideoStore {
     this.pendingBatchIds.delete(id);
     const trPush = this.pendingTranscriptPush.get(id);
     if (trPush) { clearTimeout(trPush); this.pendingTranscriptPush.delete(id); }
+    // Seed the tombstone BEFORE the push fires so any sync that races
+    // the round-trip finds the guard already in place.
+    this.recentlyDeletedIds.add(id);
     this.notify();
     this.pushDelete(id);
+  }
+
+  /**
+   * Async delete — awaits server confirmation before returning. Use
+   * this when the caller (VideoCard Delete + start-over) needs to
+   * KNOW the record is gone from the server before the next action
+   * (like re-import) runs. Returns true on server-confirmed deletion.
+   */
+  async removeAndAwait(id: string): Promise<boolean> {
+    this.records.delete(id);
+    this.transcripts.delete(id);
+    this.lastModified.delete(id);
+    this.pendingBatchIds.delete(id);
+    const trPush = this.pendingTranscriptPush.get(id);
+    if (trPush) { clearTimeout(trPush); this.pendingTranscriptPush.delete(id); }
+    this.recentlyDeletedIds.add(id);
+    this.notify();
+    return this.pushDelete(id);
+  }
+
+  private scheduleReDelete(id: string) {
+    // Cheap best-effort re-send. Doesn't need to be debounced —
+    // sync itself is already debounced upstream.
+    void this.pushDelete(id);
   }
 
   /** Store transcript text for a record in the JS-side cache (never touches WASM heap). */
