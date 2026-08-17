@@ -26,7 +26,7 @@ const MAX_INPUT_CHARS = 200_000;
 const MAX_OUTPUT_CHARS = 4800;
 
 async function handler(req: NextRequest) {
-  let body: { show_notes?: string; apiKey?: string; model?: string };
+  let body: { show_notes?: string; apiKey?: string; model?: string; no_cap?: boolean };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
@@ -34,6 +34,12 @@ async function handler(req: NextRequest) {
   if (showNotes.length < 100) {
     return NextResponse.json({ error: "show_notes text < 100 chars — nothing useful to render" }, { status: 400 });
   }
+  // ADR-074 follow-up — description-full callers ask for the same
+  // SHAPE as the shipped description (opening hook + chapter cues +
+  // highlights) but WITHOUT the 4800-char cap. Kept as a single
+  // endpoint so the prompt + timestamp-repair pipeline stays a
+  // single source of truth; toggled via the noCap flag.
+  const noCap = body.no_cap === true;
 
   const sharedOR = (await getSharedCredential("openrouter")) ?? {};
   const apiKey = body.apiKey?.trim() || (sharedOR as { apiKey?: string }).apiKey?.trim() || process.env.OPENROUTER_API_KEY;
@@ -42,7 +48,15 @@ async function handler(req: NextRequest) {
   }
   const model = body.model?.trim() || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   const cfg = await readDescriptionConfig();
-  const systemPrompt = cfg.show_notes_prompt;
+  // When no_cap is set, override the 4800-char constraint in the
+  // configured prompt so the model produces the full-length variant.
+  // The rest of the prompt (opening hook, chapter cue format,
+  // highlights section) stays the same, so shape is unchanged.
+  const systemPrompt = noCap
+    ? cfg.show_notes_prompt.replace(/Total output must be ≤ ?\d+ characters[^.\n]*\.?/i,
+        "Do NOT truncate. Expand each chapter description with the substantive detail present in the Show Notes (2–4 sentences per chapter, more if the section warrants). Include every distinct highlight and quote worth surfacing. Length is unbounded.")
+      + "\n\nADDITIONAL INSTRUCTION FOR THIS CALL: produce the full-length variant. Do not compress or truncate — a downstream chapter site will render this in full."
+    : cfg.show_notes_prompt;
 
   const trimmed = showNotes.length > MAX_INPUT_CHARS
     ? showNotes.slice(0, MAX_INPUT_CHARS) + "\n\n[show notes truncated]"
@@ -67,8 +81,10 @@ async function handler(req: NextRequest) {
         ],
         temperature: 0.4,
         // 5000 chars ≈ 1250 tokens; give the model 2000 to leave headroom
-        // for slight over-runs which we'll then hard-cap.
-        max_tokens: 2000,
+        // for slight over-runs which we'll then hard-cap. For no_cap
+        // callers we lift the ceiling significantly (~30k chars ≈ 8000
+        // tokens) since the whole point is "let it be long".
+        max_tokens: noCap ? 8000 : 2000,
       }),
     });
   }
@@ -121,8 +137,9 @@ async function handler(req: NextRequest) {
   text = repairChapterTimestamps(text, trimmed);
 
   // Cap: if the model overshoots 4800 chars, truncate at the last
-  // complete line under the limit and append an ellipsis.
-  if (text.length > MAX_OUTPUT_CHARS) {
+  // complete line under the limit and append an ellipsis. Skipped
+  // for no_cap callers — they want the whole thing.
+  if (!noCap && text.length > MAX_OUTPUT_CHARS) {
     const clip = text.slice(0, MAX_OUTPUT_CHARS - 20);
     const lastNewline = clip.lastIndexOf("\n");
     text = (lastNewline > 0 ? clip.slice(0, lastNewline) : clip) + "\n…";

@@ -1656,11 +1656,26 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         // ADR-074 follow-up — also write the un-capped variant so
         // consumers that don't have to squeeze into YouTube's 5000
         // chars (chapter site, Discord digest, MCP clients) get the
-        // long form. Fire-and-forget; the LLM-driven `description` is
-        // the shipped user-visible surface.
+        // long form. Same SHAPE as the shipped description (opening
+        // hook + chapter cues + highlights) — reruns the same LLM
+        // path with no_cap=true. Falls back to the deterministic
+        // strip only if the LLM call fails. Fire-and-forget; the
+        // shipped user-visible `description` is unaffected.
         void (async () => {
           try {
-            const fullText = showNotesToDescription(md, { noCap: true });
+            let fullText = "";
+            try {
+              const llmRes = await fetch("/api/description/from-show-notes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ show_notes: md, no_cap: true }),
+              });
+              if (llmRes.ok) {
+                const j = await llmRes.json();
+                fullText = (j as { text?: string }).text?.trim() ?? "";
+              }
+            } catch { /* fall through to deterministic */ }
+            if (fullText.length < 20) fullText = showNotesToDescription(md, { noCap: true });
             if (fullText.length < 20) return;
             await fetch(`/api/artifacts/${encodeURIComponent(video.id)}/description-full`, {
               method: "PUT",
