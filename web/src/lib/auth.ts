@@ -349,7 +349,15 @@ export async function getTrueActor(req: Request): Promise<Actor> {
   if (ALLOW_NO_IAP) return DEV_ACTOR;
 
   const jwt = req.headers.get("x-goog-iap-jwt-assertion");
-  if (!jwt) throw new Error("Missing X-Goog-IAP-JWT-Assertion header — request is not IAP-fronted");
+  if (!jwt) {
+    // ADR-076 §8.c-adjacent — the previous error text hard-coded IAP
+    // as the only accepted authenticator, which is misleading on the
+    // public MCP service (where a `Bearer vsync_*` token is the
+    // normal path and IAP is deliberately absent). Message now
+    // reflects both options so anonymous callers on either service
+    // get an accurate hint.
+    throw new Error("Missing authentication: expected either a `Bearer vsync_*` token or an IAP session (X-Goog-IAP-JWT-Assertion header).");
+  }
 
   const { email, sub } = await verifyIapJwt(jwt);
   const role = await lookupRole(email);
