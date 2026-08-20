@@ -170,10 +170,23 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 async function resolveActorForAudit(req: NextRequest): Promise<Record<string, unknown>> {
   try {
     const actor = await getActor(req);
+    // ADR-076 §8.b — machine tokens carry a `token_name` that we want
+    // in the audit log INSTEAD of the token-minter's email. The
+    // internal actor_email is retained under actor_owner_email so
+    // revocation flows still tie a token back to who minted it.
+    const isMachine = !!actor.token_name;
     return {
-      actor_email: actor.email,
+      actor_display: isMachine ? actor.token_name : actor.email,
       actor_role: actor.role,
       actor_user_id: actor.user_id,
+      // Keep actor_email pointing at the audit-primary identity.
+      // For humans: their own email. For machine tokens: the token
+      // name. This preserves grep-ability of "who did this" without
+      // per-consumer log-parser changes on our side.
+      actor_email: isMachine ? actor.token_name : actor.email,
+      ...(isMachine ? { actor_owner_email: actor.email } : {}),
+      // ADR-076 §8.c — free-text consumer attribution label.
+      ...(actor.consumer_ua ? { consumer_ua: actor.consumer_ua } : {}),
     };
   } catch (err) {
     return { actor_error: err instanceof Error ? err.message : String(err) };

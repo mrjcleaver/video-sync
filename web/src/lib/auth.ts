@@ -298,6 +298,11 @@ export async function getActor(req: Request): Promise<Actor> {
   // user_id at mint time) becomes the effective actor. Skips IAP
   // entirely for these calls — mcp-remote / Claude Desktop don't sit
   // behind an IAP session.
+  // ADR-076 §8.c — capture the consumer attribution header once, at
+  // getActor time, so every downstream path (log line, per-tool
+  // decision) has it without threading req around.
+  const consumer_ua = req.headers.get("x-consumer")?.trim() || undefined;
+
   const auth = req.headers.get("authorization");
   if (auth && auth.startsWith("Bearer vsync_")) {
     const plaintext = auth.slice("Bearer ".length);
@@ -310,6 +315,11 @@ export async function getActor(req: Request): Promise<Actor> {
         role: tok.actor_role,
         email: tok.actor_email,
         sub: `token:${tok.id}`,
+        // ADR-076 §8.b — expose the token label so audit-log lines
+        // attribute machine consumers by their token name rather
+        // than the operator who minted the token.
+        token_name: tok.name?.trim() || undefined,
+        consumer_ua,
       };
     }
     throw new Error("Invalid or revoked MCP bearer token");
@@ -322,9 +332,9 @@ export async function getActor(req: Request): Promise<Actor> {
   // gain privileges by forging the header.
   const viewAs = req.headers.get("x-view-as");
   if (viewAs && isRole(viewAs) && ROLE_ORDER[viewAs] < ROLE_ORDER[trueActor.role]) {
-    return { ...trueActor, role: viewAs };
+    return { ...trueActor, role: viewAs, consumer_ua };
   }
-  return trueActor;
+  return { ...trueActor, consumer_ua };
 }
 
 const ROLE_ORDER: Record<Role, number> = { Viewer: 0, Contributor: 1, Publisher: 2, Admin: 3 };

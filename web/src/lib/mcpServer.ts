@@ -67,15 +67,25 @@ function err(id: number | string | null, code: number, message: string, data?: u
 }
 
 /** Load the record list an actor is allowed to see, mirroring the
- *  role-scoped view /api/catalog GET applies. */
+ *  role-scoped view /api/catalog GET applies.
+ *
+ *  ADR-076 §8.a — Viewer-role callers do NOT receive contributor_email
+ *  on returned records. Publisher / Admin retain the field for
+ *  curator triage. Contributor role continues to see their own
+ *  record's email (it's their own address). Redaction happens once
+ *  here so no per-tool code path can leak it. */
 async function loadVisibleRecords(actor: Actor): Promise<VideoRecordJSON[]> {
   const store = await readCatalog();
+  const redactContributorEmail = actor.role === "Viewer";
   const out: VideoRecordJSON[] = [];
   for (const json of Object.values(store.records)) {
     try {
-      const rec = JSON.parse(json) as VideoRecordJSON;
+      const rec = JSON.parse(json) as VideoRecordJSON & { contributor_email?: string | null };
       if (actor.role === "Contributor") {
         if (rec.contributor_email !== actor.email) continue;
+      }
+      if (redactContributorEmail && rec.contributor_email) {
+        delete rec.contributor_email;
       }
       out.push(rec);
     } catch { /* skip malformed */ }

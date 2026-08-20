@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | Proposed |
 | **Date** | 2026-08-19 |
-| **Deciders** | Engineering, Community Operations, Chapter Website Team (ruflo) |
+| **Deciders** | Engineering, Community Operations, Chapter Website Team (agentics.org) |
 | **Supersedes** | — |
 | **Related** | ADR-036 (Google Workspace Auth + RBAC), ADR-042 (shared credential vault), ADR-065 (community contributor role — the producer side), ADR-066 (MCP show-notes server), ADR-074 (canonical artifact bag + MCP exposure), ADR-075 (series-driven destinations) |
 
@@ -14,7 +14,7 @@
 
 ADR-065 built the **producer** side of the community pipeline: contributors submit recordings via `/contribute`, get identified through the `video-sync-contributors@agentics.org` Google Group, and appear in the org catalog with clean attribution + provenance.
 
-This ADR pairs it with the **consumer** side: an external website (working name **ruflo**, also built on the same platform) that DISPLAYS the catalog — show notes, descriptions, chapter jumps, provenance — without needing operator-level catalog rights. Concretely, a chapter website like Agentics Toronto's would want to render:
+This ADR pairs it with the **consumer** side: the **agentics.org** website — public-facing, chapter-organised — that DISPLAYS the catalog: show notes, descriptions, chapter jumps, provenance. It reads the catalog without any operator-level rights. Concretely, agentics.org wants to render:
 
 - The last N Toronto-chapter sessions as cards
 - Each card's full Show Notes, opening hook, and chapter cues (deep-linked to YouTube)
@@ -72,7 +72,7 @@ Everything else in the tool list (`get_transcript`, `get_youtube_snippet`, `sear
 The MCP identity model is bearer-token-per-user. A consumer chapter website ISN'T a user; it's a machine. Two options:
 
 - **Machine token per site** (recommended for MVP). The chapter website is issued a dedicated `vsync_*` bearer by an operator (via `/config → MCP tokens`), with a role that matches "public catalog viewer" semantics. That token lives in the site's server-side secret store; the front-end never sees it. All calls made from the site's server carry it. Compromised token is revoked from `/config → MCP tokens`.
-- **Group-mapped identity** (deferred). If ruflo grows a per-user identity flow, per-viewer OAuth via `/api/mcp/oauth/authorize` is available and route through the same role model as any human operator.
+- **Group-mapped identity** (deferred). If agentics.org grows a per-user identity flow, per-viewer OAuth via `/api/mcp/oauth/authorize` is available and route through the same role model as any human operator.
 
 For the MVP consumer, video-sync commits to the following visibility rules — same as the human-operator model from ADR-036:
 
@@ -151,6 +151,16 @@ A consumer must be able to verify the contract against any deployment. We ship a
 
 The script is idempotent and non-destructive — no MCP writes, only reads.
 
+### 8. Privacy + attribution decisions (resolved 2026-08-19)
+
+Three questions raised in the first draft, now committed:
+
+**8.a. `contributor_email` is stripped from Viewer-scoped MCP returns.** Records fetched by a Viewer-role token — which chapter-website tokens SHALL be — do not carry `contributor_email` in any tool return. Publisher and Admin roles retain the field for curator triage. Contributor role continues to see their own record's email (unchanged; it's their own address). Redaction happens in `loadVisibleRecords` before hand-off to any tool implementation, so no per-tool leak is possible.
+
+**8.b. Audit log attributes machine tokens by the token's `name`, not by the operator who minted it.** MCP tokens carry a `name` field the operator supplies at mint time (e.g. "agentics.org public site — production"). The MCP request logger records the token name as the audit actor when the caller is authenticated via a bearer token. The token's frozen `actor_email` (from the operator who minted it) is retained internally for revoke / rotation flows but does NOT appear in per-request audit lines. Keeps the log meaningful: "agentics.org public site made 40 000 calls today" is legible; "martin.cleaver@ made 40 000 calls" would be misleading.
+
+**8.c. `X-Consumer` header is accepted and logged.** Consumers may send `X-Consumer: <free-text label>` on any MCP request (e.g. `X-Consumer: agentics.org/chapter/toronto`). The value is logged alongside the request line. No authorisation weight — purely observability so we can attribute usage patterns to specific site paths / build ids / cache-warming jobs. Absent header → logged as empty.
+
 ---
 
 ## Consequences
@@ -189,6 +199,4 @@ The script is idempotent and non-destructive — no MCP writes, only reads.
 
 ## Open questions
 
-- **Should chapter tokens see `contributor_email` on search results?** Current model: Viewer role sees the raw record JSON, which includes `contributor_email` when set. A public chapter site rendering that leaks the contributor's email. Options: (a) strip `contributor_email` from all Viewer-scoped returns, forcing consumers to explicitly request it via a Contributor-scoped call, (b) keep it and rely on the consumer to redact, (c) add a `redacted: true` flag on Viewer results. Leaning **(a) — strip it** in a follow-up; consumers rarely need per-viewer attribution.
-- **Should a chapter website's server-to-server token count toward audit-log user identity?** Today MCP tokens carry the operator's email who minted them. A single chapter-site token showing up in the audit log as "martin.cleaver@agentics.org made 40 000 requests today" is misleading. Options: (a) machine-token role on mint, (b) log the token's `name` field instead of the frozen actor email. Leaning **(b)**.
-- **Should we allow chapter sites to include a `User-Agent`-style identifier** so we can attribute traffic without leaking operator identity? Trivial to allow, useful for debugging.
+_No unresolved contract questions. The three items in the first draft (contributor_email redaction, machine-token audit identity, consumer attribution header) are now committed as §Decision.8._

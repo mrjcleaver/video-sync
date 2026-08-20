@@ -16,6 +16,15 @@ export interface Actor {
   role: Role;
   email: string;
   sub: string;
+  /** ADR-076 §8.b — set when the request was authenticated via an MCP
+   *  bearer token that carries a `name` field. The audit log emits
+   *  this instead of `actor_email` so machine consumers (e.g. the
+   *  agentics.org public site) show up under their token's label
+   *  rather than the operator who minted the token. */
+  token_name?: string;
+  /** ADR-076 §8.c — free-text consumer label from the X-Consumer
+   *  request header. Purely observability; no authorisation weight. */
+  consumer_ua?: string;
 }
 
 /** Client-side actor — same as server's but with `sub` stripped (ADR-036 §3).
