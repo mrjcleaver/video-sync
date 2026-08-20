@@ -168,6 +168,12 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * audit trail for unauthenticated requests).
  */
 async function resolveActorForAudit(req: NextRequest): Promise<Record<string, unknown>> {
+  // ADR-076 §8.c — capture the consumer attribution header FIRST,
+  // independent of auth, so anonymous / failing requests still show
+  // up in the log labelled by their consumer. Purely observational;
+  // no authorisation weight.
+  const consumer_ua = req.headers.get("x-consumer")?.trim() || undefined;
+  const consumerField = consumer_ua ? { consumer_ua } : {};
   try {
     const actor = await getActor(req);
     // ADR-076 §8.b — machine tokens carry a `token_name` that we want
@@ -185,11 +191,13 @@ async function resolveActorForAudit(req: NextRequest): Promise<Record<string, un
       // per-consumer log-parser changes on our side.
       actor_email: isMachine ? actor.token_name : actor.email,
       ...(isMachine ? { actor_owner_email: actor.email } : {}),
-      // ADR-076 §8.c — free-text consumer attribution label.
-      ...(actor.consumer_ua ? { consumer_ua: actor.consumer_ua } : {}),
+      ...consumerField,
     };
   } catch (err) {
-    return { actor_error: err instanceof Error ? err.message : String(err) };
+    return {
+      actor_error: err instanceof Error ? err.message : String(err),
+      ...consumerField,
+    };
   }
 }
 
