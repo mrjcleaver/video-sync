@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted — three decisions resolved 2026-08-23; §2 shipped, §1 next |
+| **Status** | Accepted — three decisions resolved 2026-08-23; §1 and §2 shipped, §3 next |
 | **Date** | 2026-08-23 |
 | **Deciders** | Engineering, Content Operations, Kaltura administrator (for §5's access-control mapping) |
 | **Supersedes** | — |

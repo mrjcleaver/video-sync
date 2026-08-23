@@ -34,6 +34,11 @@ pub enum CatalogError {
         external_id: String,
     },
 
+    /// ADR-077 §1 — a command whose fields don't hold together (e.g. a
+    /// successful destination push with no external_id to record).
+    #[error("Invalid command: {reason}")]
+    InvalidCommand { reason: String },
+
     #[error("Upstream link not found: platform={platform:?} external_id={external_id}")]
     LinkNotFound {
         platform: Platform,

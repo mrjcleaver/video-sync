@@ -72,6 +72,53 @@ pub struct MarkPublished {
     pub destination_platform: Option<Platform>,
 }
 
+/// ADR-077 §1 — one destination from the resolved set, as handed to
+/// `begin_publish`. Mirrors ADR-075's `DestinationSpec` reduced to what
+/// the aggregate needs: which platform, and what visibility was asked
+/// for in that platform's own vocabulary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclaredDestination {
+    pub platform: Platform,
+    #[serde(default)]
+    pub visibility: Option<String>,
+}
+
+/// ADR-077 §1 — open a publish over a known set of destinations.
+///
+/// Replaces `RequestPublish` for callers that have resolved a
+/// destination set (ADR-077 §2). `RequestPublish` remains for the
+/// legacy single-YouTube path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeginPublish {
+    pub actor: Actor,
+    pub destinations: Vec<DeclaredDestination>,
+}
+
+/// ADR-077 §1 — report what happened at one destination.
+///
+/// `error: Some(..)` means the push failed; `None` means it landed and
+/// `external_id` is required. Legal from both `Publishing` and
+/// `Published`, which is what lets a peer destination be a real
+/// event-sourced publish instead of the `add_location` side door.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordDestinationResult {
+    pub actor: Actor,
+    pub platform: Platform,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub external_url: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// ADR-077 §1/§5 — record a visibility read-back from the platform.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordObservedVisibility {
+    pub platform: Platform,
+    pub visibility: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkFailed {
     pub error_message: String,

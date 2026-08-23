@@ -26,6 +26,9 @@ pub enum CatalogEvent {
     UpstreamUnlinked(UpstreamUnlinked),
     SummaryGenerated(SummaryGenerated),
     SummaryLocked(SummaryLocked),
+    // ── ADR-077 §1: per-destination publish outcomes ──────────────
+    DestinationPublished(DestinationPublished),
+    DestinationFailed(DestinationFailed),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,6 +103,38 @@ pub struct MetadataUpdated {
     pub video_record_id: Uuid,
     pub updated_by: Uuid,
     pub edits: MetadataEdits,
+}
+
+/// ADR-077 §1 — one destination landed.
+///
+/// This is what ADR-075 §Follow-up #7 asked for: `StatusChanged` alone
+/// could never answer "where did this go, and with what visibility",
+/// because it carries no destination payload. A record publishing to
+/// three platforms emits three of these plus one `StatusChanged`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DestinationPublished {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub platform: Platform,
+    pub external_id: String,
+    pub external_url: Option<String>,
+    /// What the series asked for — recorded at publish time so a later
+    /// audit can compare intent against the platform's actual state
+    /// even if the series definition changes afterwards.
+    pub declared_visibility: Option<String>,
+}
+
+/// ADR-077 §1 — one destination failed, while its peers may have
+/// succeeded. Distinct from `StatusChanged → Failed`, which is a
+/// whole-record verdict.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DestinationFailed {
+    pub event_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub video_record_id: Uuid,
+    pub platform: Platform,
+    pub error: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

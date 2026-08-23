@@ -42,9 +42,68 @@ impl WasmVideoRecord {
     /// Restore from JSON.
     #[wasm_bindgen(js_name = "fromJson")]
     pub fn from_json(json: &str) -> Result<WasmVideoRecord, JsError> {
-        let record =
+        let mut record =
             VideoRecord::from_json(json).map_err(|e| JsError::new(&e.to_string()))?;
+        // ADR-077 §1 — synthesise per-destination outcomes from existing
+        // Destination locations on load. This is the migration: every
+        // record already on disk gains its outcomes the first time it is
+        // read, with no backfill job.
+        record.hydrate_outcomes();
         Ok(Self { inner: record })
+    }
+
+    /// ADR-077 §1 — open a publish over a resolved destination set.
+    #[wasm_bindgen(js_name = "beginPublish")]
+    pub fn begin_publish(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: BeginPublish =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .begin_publish(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// ADR-077 §1 — report one destination's result. Legal from both
+    /// Publishing and Published, so a peer destination no longer needs
+    /// the add_location side door.
+    #[wasm_bindgen(js_name = "recordDestinationResult")]
+    pub fn record_destination_result(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: RecordDestinationResult =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .record_destination_result(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// ADR-077 §1/§5 — record a visibility read-back. Emits no events.
+    #[wasm_bindgen(js_name = "recordObservedVisibility")]
+    pub fn record_observed_visibility(&mut self, cmd_json: &str) -> Result<String, JsError> {
+        let cmd: RecordObservedVisibility =
+            serde_json::from_str(cmd_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let events = self
+            .inner
+            .record_observed_visibility(cmd)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Self::events_to_json(&events)
+    }
+
+    /// ADR-077 §6 — declared destinations that have not landed. JSON
+    /// array of platform names; empty means fully conformant.
+    #[wasm_bindgen(js_name = "missingDestinations")]
+    pub fn missing_destinations(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.inner.missing_destinations())
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// ADR-077 §6 — true when every declared, non-skipped destination
+    /// landed. Distinct from `status == Published`, which means only
+    /// "at least one landed".
+    #[wasm_bindgen(js_name = "isFullyPublished")]
+    pub fn is_fully_published(&self) -> bool {
+        self.inner.is_fully_published()
     }
 
     /// Mark in-scope. Returns JSON array of emitted events.

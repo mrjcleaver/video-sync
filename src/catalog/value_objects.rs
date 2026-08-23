@@ -108,6 +108,81 @@ pub struct PlatformLocation {
     pub status: Option<String>,
 }
 
+/// ADR-077 §1 — how far one declared destination got.
+///
+/// `Skipped` is for a destination the operator removed at publish time
+/// (ADR-075's per-record override) — declared by the series but
+/// deliberately not attempted for this record, which is different from
+/// `Failed`.
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OutcomeState {
+    Pending,
+    Pushed,
+    Failed,
+    Skipped,
+}
+
+/// ADR-077 §1 — the per-destination outcome the aggregate was missing.
+///
+/// One of these exists per destination the series declared, so the
+/// record can answer "declared three, two attempted, one landed, and
+/// here is the visibility each actually has" — which nothing could
+/// answer while `destination_id` / `destination_url` were scalars.
+///
+/// `declared_visibility` and `observed_visibility` are deliberately
+/// separate and deliberately `String`, not an enum: each platform has
+/// its own vocabulary (YouTube public/unlisted/private, Kaltura
+/// public/members/unlisted, Drive share scopes) and forcing them
+/// through one enum is how the YouTube-shaped `privacy_status` ended up
+/// standing in for all three.
+///
+/// The pair also encodes the gap ADR-077 §5 closes: today only YouTube
+/// applies its declared visibility at push time, so for Kaltura and
+/// Drive `declared_visibility` is what was asked for and
+/// `observed_visibility` stays `None` until a read-back exists.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DestinationOutcome {
+    pub platform: Platform,
+    /// What the series asked for, in the platform's own vocabulary.
+    #[serde(default)]
+    pub declared_visibility: Option<String>,
+    pub state: OutcomeState,
+    /// Platform-native id once pushed (YouTube video id, Kaltura entry
+    /// id, Drive file id).
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub external_url: Option<String>,
+    #[serde(default)]
+    pub pushed_at: Option<DateTime<Utc>>,
+    /// Last visibility actually read back from the platform (ADR-077 §5).
+    #[serde(default)]
+    pub observed_visibility: Option<String>,
+    #[serde(default)]
+    pub observed_at: Option<DateTime<Utc>>,
+    /// Failure detail when `state` is `Failed`.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl DestinationOutcome {
+    /// A freshly declared, not-yet-attempted destination.
+    pub fn pending(platform: Platform, declared_visibility: Option<String>) -> Self {
+        Self {
+            platform,
+            declared_visibility,
+            state: OutcomeState::Pending,
+            external_id: None,
+            external_url: None,
+            pushed_at: None,
+            observed_visibility: None,
+            observed_at: None,
+            error: None,
+        }
+    }
+}
+
 /// Lifecycle status of a video within the curation pipeline.
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

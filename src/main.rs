@@ -118,6 +118,10 @@ fn format_events(events: &[video_sync::catalog::events::CatalogEvent]) -> String
             video_sync::catalog::events::CatalogEvent::UpstreamUnlinked(_) => "UpstreamUnlinked",
             video_sync::catalog::events::CatalogEvent::SummaryGenerated(_) => "SummaryGenerated",
             video_sync::catalog::events::CatalogEvent::SummaryLocked(_) => "SummaryLocked",
+            video_sync::catalog::events::CatalogEvent::DestinationPublished(_) => {
+                "DestinationPublished"
+            }
+            video_sync::catalog::events::CatalogEvent::DestinationFailed(_) => "DestinationFailed",
         })
         .collect::<Vec<_>>()
         .join(", ")

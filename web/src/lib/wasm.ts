@@ -50,6 +50,32 @@ export interface VideoRecordJSON {
   // ADR-065 — community-contributor attribution.
   contributor_email?: string | null;
   contributor_chapter?: string | null;
+  /** ADR-077 §1 — one entry per declared destination. Absent on records
+   *  not yet touched since the field landed; `WasmVideoRecord.fromJson`
+   *  synthesises entries from Destination locations on load, so anything
+   *  read through the store has them. */
+  destination_outcomes?: DestinationOutcomeJSON[];
+}
+
+/** ADR-077 §1 — how far one declared destination got.
+ *
+ *  `declared_visibility` and `observed_visibility` are separate on
+ *  purpose: today only YouTube applies its declared visibility at push
+ *  time, so for Kaltura and Drive the declared value is an intent and
+ *  `observed_visibility` stays null until ADR-077 §5 ships a read-back.
+ *  Both are strings rather than a union because each platform has its
+ *  own vocabulary — YouTube public/unlisted/private, Kaltura
+ *  public/members/unlisted, Drive share scopes. */
+export interface DestinationOutcomeJSON {
+  platform: string;
+  declared_visibility: string | null;
+  state: "Pending" | "Pushed" | "Failed" | "Skipped";
+  external_id: string | null;
+  external_url: string | null;
+  pushed_at: string | null;
+  observed_visibility: string | null;
+  observed_at: string | null;
+  error: string | null;
 }
 
 /** ADR-046 — counts surfaced as M:NN L:NN T:NN C:NN in the Overview. */

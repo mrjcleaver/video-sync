@@ -1094,3 +1094,455 @@ fn test_mark_published_skips_redundant_destination_for_same_video() {
     // role does NOT get added because the same-video check matched.
     assert_eq!(record.locations[0].role, LocationRole::Origin);
 }
+
+// ── ADR-077 §1: per-destination outcomes ──────────────────────────────
+
+/// Walk a record to Approved so a publish can be opened on it.
+fn approved_record() -> VideoRecord {
+    let (mut rec, _) = VideoRecord::index(make_index_cmd());
+    let admin = admin_actor();
+    rec.mark_in_scope(MarkInScope { actor: admin, rule_id: None }).unwrap();
+    rec.approve(ApproveVideo { actor: admin, metadata_edits: None }).unwrap();
+    rec
+}
+
+fn declared(platform: Platform, visibility: &str) -> DeclaredDestination {
+    DeclaredDestination {
+        platform,
+        visibility: Some(visibility.to_string()),
+    }
+}
+
+fn success(platform: Platform, id: &str) -> RecordDestinationResult {
+    RecordDestinationResult {
+        actor: admin_actor(),
+        platform,
+        external_id: Some(id.to_string()),
+        external_url: Some(format!("https://example.test/{id}")),
+        error: None,
+    }
+}
+
+fn failure(platform: Platform, err: &str) -> RecordDestinationResult {
+    RecordDestinationResult {
+        actor: admin_actor(),
+        platform,
+        external_id: None,
+        external_url: None,
+        error: Some(err.to_string()),
+    }
+}
+
+#[test]
+fn test_begin_publish_seeds_pending_outcomes() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+
+    assert_eq!(rec.status, VideoStatus::Publishing);
+    assert_eq!(rec.destination_outcomes.len(), 2);
+    assert!(rec
+        .destination_outcomes
+        .iter()
+        .all(|o| o.state == OutcomeState::Pending));
+    // Each platform's own visibility vocabulary is preserved verbatim.
+    let kal = rec
+        .destination_outcomes
+        .iter()
+        .find(|o| o.platform == Platform::Kaltura)
+        .unwrap();
+    assert_eq!(kal.declared_visibility.as_deref(), Some("members"));
+}
+
+#[test]
+fn test_begin_publish_requires_publisher() {
+    let mut rec = approved_record();
+    let viewer = Actor::new(Uuid::new_v4(), UserRole::Viewer);
+    let result = rec.begin_publish(BeginPublish {
+        actor: viewer,
+        destinations: vec![declared(Platform::YouTube, "public")],
+    });
+    assert_eq!(result, Err(CatalogError::Unauthorized));
+}
+
+#[test]
+fn test_first_destination_success_publishes_the_record() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+
+    let events = rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+
+    // ADR-077 §Decisions-resolved #1 — one landing is enough for Published.
+    assert_eq!(rec.status, VideoStatus::Published);
+    assert!(rec.published_at.is_some());
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CatalogEvent::DestinationPublished(_))));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CatalogEvent::StatusChanged(_))));
+    // ...but it is not fully published while Kaltura is outstanding.
+    assert!(!rec.is_fully_published());
+    assert_eq!(rec.missing_destinations(), vec![Platform::Kaltura]);
+}
+
+#[test]
+fn test_peer_destination_records_from_published_without_the_side_door() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+    assert_eq!(rec.status, VideoStatus::Published);
+
+    // The case that used to require add_location: recording a second
+    // destination on an already-Published record.
+    let events = rec.record_destination_result(success(Platform::Kaltura, "kal-1")).unwrap();
+
+    assert_eq!(rec.status, VideoStatus::Published);
+    assert!(rec.is_fully_published());
+    assert!(rec.missing_destinations().is_empty());
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CatalogEvent::DestinationPublished(_))));
+    // No second StatusChanged — it was already Published.
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, CatalogEvent::StatusChanged(_))));
+    // Both destinations are real locations.
+    assert_eq!(
+        rec.locations
+            .iter()
+            .filter(|l| l.role == LocationRole::Destination)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn test_second_destination_does_not_overwrite_the_first() {
+    // The scalar-field bug ADR-077 §1 exists to fix: publishing to a
+    // second platform used to clobber destination_id / destination_url.
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::GoogleDrive, "inherit"),
+        ],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+    rec.record_destination_result(success(Platform::GoogleDrive, "drive-1")).unwrap();
+
+    // Both outcomes survive independently...
+    assert_eq!(rec.destination_outcomes.len(), 2);
+    let drive = rec
+        .destination_outcomes
+        .iter()
+        .find(|o| o.platform == Platform::GoogleDrive)
+        .unwrap();
+    assert_eq!(drive.external_id.as_deref(), Some("drive-1"));
+    // ...and the legacy scalars still point at the YouTube copy, so every
+    // reader written before this field keeps its original meaning.
+    assert_eq!(rec.destination_id.as_deref(), Some("yt-1"));
+}
+
+#[test]
+fn test_partial_failure_leaves_the_record_published() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+
+    let events = rec
+        .record_destination_result(failure(Platform::Kaltura, "kaltura 503"))
+        .unwrap();
+
+    assert_eq!(rec.status, VideoStatus::Published);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CatalogEvent::DestinationFailed(_))));
+    assert!(!rec.is_fully_published());
+    let kal = rec
+        .destination_outcomes
+        .iter()
+        .find(|o| o.platform == Platform::Kaltura)
+        .unwrap();
+    assert_eq!(kal.state, OutcomeState::Failed);
+    assert_eq!(kal.error.as_deref(), Some("kaltura 503"));
+}
+
+#[test]
+fn test_total_failure_fails_the_record_rather_than_stranding_it() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![declared(Platform::YouTube, "public")],
+    })
+    .unwrap();
+
+    rec.record_destination_result(failure(Platform::YouTube, "quota exceeded"))
+        .unwrap();
+
+    // Nothing landed and nothing is pending, so the record must not sit
+    // in Publishing forever.
+    assert_eq!(rec.status, VideoStatus::Failed);
+}
+
+#[test]
+fn test_failure_with_a_peer_still_pending_holds_publishing() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+
+    rec.record_destination_result(failure(Platform::YouTube, "quota exceeded"))
+        .unwrap();
+
+    // Kaltura hasn't been attempted yet — the publish is still in flight.
+    assert_eq!(rec.status, VideoStatus::Publishing);
+}
+
+#[test]
+fn test_success_requires_an_external_id() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![declared(Platform::YouTube, "public")],
+    })
+    .unwrap();
+
+    let result = rec.record_destination_result(RecordDestinationResult {
+        actor: admin_actor(),
+        platform: Platform::YouTube,
+        external_id: None,
+        external_url: None,
+        error: None,
+    });
+    assert!(matches!(result, Err(CatalogError::InvalidCommand { .. })));
+}
+
+#[test]
+fn test_record_destination_result_rejected_before_publish_opens() {
+    let mut rec = approved_record();
+    let result = rec.record_destination_result(success(Platform::YouTube, "yt-1"));
+    assert!(matches!(
+        result,
+        Err(CatalogError::InvalidStatusTransition { .. })
+    ));
+}
+
+#[test]
+fn test_begin_publish_preserves_an_already_landed_destination() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![declared(Platform::YouTube, "public")],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+
+    // Re-open the publish to add Kaltura. The YouTube copy must not be
+    // forgotten or reset to Pending.
+    rec.mark_to_retry(MarkToRetry { actor: admin_actor(), reason: None }).unwrap();
+    rec.approve(ApproveVideo { actor: admin_actor(), metadata_edits: None }).unwrap();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+
+    let yt = rec
+        .destination_outcomes
+        .iter()
+        .find(|o| o.platform == Platform::YouTube)
+        .unwrap();
+    assert_eq!(yt.state, OutcomeState::Pushed);
+    assert_eq!(yt.external_id.as_deref(), Some("yt-1"));
+}
+
+#[test]
+fn test_observed_visibility_is_recorded_separately_from_declared() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![declared(Platform::YouTube, "public")],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+
+    let events = rec
+        .record_observed_visibility(RecordObservedVisibility {
+            platform: Platform::YouTube,
+            visibility: "unlisted".to_string(),
+        })
+        .unwrap();
+
+    // An observation, not a domain event — see the method's doc comment.
+    assert!(events.is_empty());
+    let yt = &rec.destination_outcomes[0];
+    // Declared and observed disagreeing is the whole point: this is a
+    // record that was meant to be public and isn't.
+    assert_eq!(yt.declared_visibility.as_deref(), Some("public"));
+    assert_eq!(yt.observed_visibility.as_deref(), Some("unlisted"));
+    assert!(yt.observed_at.is_some());
+}
+
+#[test]
+fn test_observed_visibility_rejects_an_undeclared_platform() {
+    let mut rec = approved_record();
+    let result = rec.record_observed_visibility(RecordObservedVisibility {
+        platform: Platform::Kaltura,
+        visibility: "members".to_string(),
+    });
+    assert!(matches!(result, Err(CatalogError::InvalidCommand { .. })));
+}
+
+#[test]
+fn test_hydrate_outcomes_synthesises_from_existing_locations() {
+    // The ADR-077 §1 migration: a record written before the field
+    // existed has Destination locations but no outcomes.
+    let mut rec = approved_record();
+    rec.add_location(AddLocation {
+        actor: admin_actor(),
+        platform: Platform::YouTube,
+        external_id: "yt-legacy".to_string(),
+        external_url: Some("https://youtu.be/yt-legacy".to_string()),
+        role: LocationRole::Destination,
+        ordinal: None,
+    })
+    .unwrap();
+    rec.destination_outcomes.clear();
+
+    rec.hydrate_outcomes();
+
+    assert_eq!(rec.destination_outcomes.len(), 1);
+    let yt = &rec.destination_outcomes[0];
+    assert_eq!(yt.state, OutcomeState::Pushed);
+    assert_eq!(yt.external_id.as_deref(), Some("yt-legacy"));
+    // Intent was never recorded historically, so it stays None rather
+    // than being fabricated from today's series definition.
+    assert!(yt.declared_visibility.is_none());
+}
+
+#[test]
+fn test_hydrate_outcomes_is_idempotent_and_does_not_clobber() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![declared(Platform::YouTube, "public")],
+    })
+    .unwrap();
+
+    rec.hydrate_outcomes();
+    rec.hydrate_outcomes();
+
+    assert_eq!(rec.destination_outcomes.len(), 1);
+    // Still Pending — hydration must not promote a declared-but-unpushed
+    // destination to Pushed.
+    assert_eq!(rec.destination_outcomes[0].state, OutcomeState::Pending);
+    assert_eq!(
+        rec.destination_outcomes[0].declared_visibility.as_deref(),
+        Some("public")
+    );
+}
+
+#[test]
+fn test_legacy_mark_published_still_records_an_outcome() {
+    // Pre-§3 call sites keep working, and stay consistent with records
+    // published through record_destination_result.
+    let mut rec = approved_record();
+    rec.request_publish(RequestPublish { actor: admin_actor() }).unwrap();
+    rec.mark_published(MarkPublished {
+        destination_id: "yt-legacy".to_string(),
+        destination_url: "https://youtu.be/yt-legacy".to_string(),
+        destination_platform: Some(Platform::YouTube),
+    })
+    .unwrap();
+
+    assert_eq!(rec.status, VideoStatus::Published);
+    assert_eq!(rec.destination_outcomes.len(), 1);
+    assert_eq!(rec.destination_outcomes[0].state, OutcomeState::Pushed);
+    assert!(rec.is_fully_published());
+}
+
+#[test]
+fn test_is_fully_published_is_false_with_no_destinations() {
+    let rec = approved_record();
+    // Nothing declared, nothing landed — "fully published" would be a
+    // vacuous truth and would read as conformant in §6's measurement.
+    assert!(!rec.is_fully_published());
+}
+
+#[test]
+fn test_outcomes_survive_a_json_round_trip() {
+    let mut rec = approved_record();
+    rec.begin_publish(BeginPublish {
+        actor: admin_actor(),
+        destinations: vec![
+            declared(Platform::YouTube, "public"),
+            declared(Platform::Kaltura, "members"),
+        ],
+    })
+    .unwrap();
+    rec.record_destination_result(success(Platform::YouTube, "yt-1")).unwrap();
+
+    let json = rec.to_json().unwrap();
+    let restored = VideoRecord::from_json(&json).unwrap();
+
+    assert_eq!(restored.destination_outcomes.len(), 2);
+    assert!(!restored.is_fully_published());
+    assert_eq!(restored.missing_destinations(), vec![Platform::Kaltura]);
+}
+
+#[test]
+fn test_a_record_stored_without_the_field_deserialises() {
+    // serde(default) on destination_outcomes is what stops every record
+    // already on disk from failing to load.
+    let mut rec = approved_record();
+    let json = rec.to_json().unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("destination_outcomes")
+        .expect("field present before removal");
+    let stripped = serde_json::to_string(&value).unwrap();
+
+    let restored = VideoRecord::from_json(&stripped).unwrap();
+    assert!(restored.destination_outcomes.is_empty());
+    rec.destination_outcomes.clear();
+}
