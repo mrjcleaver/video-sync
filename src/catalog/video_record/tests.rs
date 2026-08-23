@@ -19,6 +19,11 @@ fn make_index_cmd() -> IndexVideo {
         metadata_extra: None,
         initial_owner: None,
         recorded_at: None,
+        // ADR-065 — contributor attribution is optional; the default
+        // (operator-submitted, no contributor) is what these tests
+        // exercise. Tests covering the contributor path set them.
+        contributor_email: None,
+        contributor_chapter: None,
     }
 }
 

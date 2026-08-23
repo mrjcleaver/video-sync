@@ -23,6 +23,9 @@ fn main() {
         metadata_extra: None,
         initial_owner: Some(admin.user_id),
         recorded_at: None,
+        // ADR-065 — the demo indexes as an operator, not a contributor.
+        contributor_email: None,
+        contributor_chapter: None,
     };
 
     let (mut record, events) = video_sync::VideoRecord::index(cmd);
