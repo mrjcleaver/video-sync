@@ -835,82 +835,161 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     }
   }
 
-  async function publishToYouTube() {
+  /**
+   * ADR-077 §3 — publish to every destination the series declared.
+   *
+   * ADR-075 specified "Publish button pushes each destination in
+   * sequence. A single failing destination doesn't block the others."
+   * This is that button. Passing an explicit `only` list narrows it to
+   * one destination, which is what the per-platform buttons do.
+   *
+   * Per-destination work stays here because it is orchestration, not
+   * pushing: the privacy cache and the ADR-049 source-row ingest are
+   * YouTube-specific follow-ups, and the activity events name the
+   * platform. The pushing itself is the executor's job.
+   */
+  async function publishToDestinations(only?: DestinationSpec[]) {
     const attrs = publishAttrs ?? applyProcessingRules(loadProcessingRules(), video);
 
-    let connections: Record<string, { credentials?: Record<string, string> }> = {};
-    try {
-      const raw = localStorage.getItem("video-sync:connections");
-      if (raw) connections = JSON.parse(raw);
-    } catch { /* ignore */ }
-
-    const ytCreds = connections["YouTube"]?.credentials;
-    if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
-      promptYoutubeAuth("YouTube not authorised. Configure Client ID, Client Secret, and complete the Authorise step in Connections first.");
+    // Only the destinations we can actually push. A declared `Other`
+    // target stays a checklist item for the operator.
+    const targets = (only ?? resolvedDests.destinations).filter(isAutomatedDestination);
+    if (targets.length === 0) {
+      setPublishError({
+        message: "This record resolves to no automated destination.",
+        hint: "Add one to its series under Config → Series registry, or use a per-platform button.",
+      });
       return;
+    }
+
+    // YouTube credentials are only required when YouTube is a target —
+    // a Kaltura-only or Drive-only series must not be blocked by an
+    // unconfigured YouTube connection.
+    if (targets.some(d => d.platform === "YouTube")) {
+      let connections: Record<string, { credentials?: Record<string, string> }> = {};
+      try {
+        const raw = localStorage.getItem("video-sync:connections");
+        if (raw) connections = JSON.parse(raw);
+      } catch { /* ignore */ }
+      const ytCreds = connections["YouTube"]?.credentials;
+      if (!ytCreds?.refreshToken || !ytCreds?.clientId || !ytCreds?.clientSecret) {
+        promptYoutubeAuth("YouTube not authorised. Configure Client ID, Client Secret, and complete the Authorise step in Connections first.");
+        return;
+      }
     }
 
     setShowPreview(false);
     setUploading(true);
     setPublishError(null);
-    const isZoomSource = video.download_url.startsWith("zoom://");
-    const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
-    const isFirefliesSource = video.download_url.startsWith("fireflies://");
-    setUploadPhase(isZoomSource ? "Downloading from Zoom..." : isLoomSource ? "Downloading from Loom..." : isFirefliesSource ? "Downloading from Fireflies..." : "Uploading to YouTube...");
 
+    // Kaltura's fetch step prefers a non-YouTube upstream so we don't trip
+    // YouTube's anti-bot on every push; everything else takes the record's
+    // own download_url.
+    const kalturaSource = pickDownloadUrlForKaltura();
+    const sourceUrlFor = (spec: DestinationSpec) =>
+      spec.platform === "Kaltura" ? kalturaSource.url : video.download_url;
+
+    if (attrs.trim_start_seconds > 0) {
+      onEvent(`TrimApplied: "${video.title}"${dateTag(video.recorded_at)} — ${attrs.trim_start_seconds}s from start`, { video_id: video.id });
+    }
+
+    let lastPushedUrl: string | undefined;
     try {
-      // ADR-022 provenance footer — appended to the description so the
-      // YouTube video itself records its catalog origin, independent of
-      // the local store. ADR-077 §3: one builder, per-platform cap, and
-      // the footer survives truncation of an over-long description.
-      const descriptionWithFooter = withProvenanceFooter(
-        attrs.description,
-        recordProvenanceParts(video),
-        "YouTube",
-      );
-
-      // ADR-077 §3 — the upload, its SSE progress stream and the
-      // stream-died diagnostics now live in the YouTube adapter, driven
-      // by the shared executor. This handler keeps the orchestration:
-      // status transition, privacy cache, row ingest, post-rules.
-      if (attrs.trim_start_seconds > 0) {
-        onEvent(`TrimApplied: "${video.title}"${dateTag(video.recorded_at)} — ${attrs.trim_start_seconds}s from start`, { video_id: video.id });
-      }
-
       const report = await executePublish({
         record: video,
-        destinations: [{ platform: "YouTube", visibility: attrs.privacy_status }],
-        attrsFor: () => ({
-          title: attrs.title,
-          description: descriptionWithFooter,
-          tags: attrs.tags,
-          visibility: attrs.privacy_status,
+        destinations: targets,
+        attrsFor: (spec) => ({
+          title: attrs.title ?? video.title,
+          description: withProvenanceFooter(
+            attrs.description ?? video.description,
+            recordProvenanceParts(video),
+            spec.platform,
+          ),
+          tags: attrs.tags ?? video.tags ?? [],
+          // The preview's privacy dropdown is ADR-075's layer-4 per-record
+          // override, so for YouTube it beats the series' declared value.
+          // Other platforms have no preview control yet and take theirs
+          // from the declaration.
+          visibility: spec.platform === "YouTube"
+            ? attrs.privacy_status
+            : spec.platform === "Kaltura" ? spec.visibility : undefined,
           trimStartSeconds: attrs.trim_start_seconds,
         }),
-        sourceUrlFor: () => video.download_url,
+        sourceUrlFor,
         creds: buildPublishCredentials(video.download_url),
         onPhase: setUploadPhase,
+        onOutcome: (outcome) => {
+          const label = destinationLabel(outcome.spec);
+          if (outcome.status === "skipped") {
+            onEvent(`PublishSkipped: "${video.title}"${dateTag(video.recorded_at)} — ${outcome.skipReason}`, { video_id: video.id });
+            return;
+          }
+          if (outcome.status === "failed") {
+            onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${label}: ${outcome.error}`, { video_id: video.id });
+            return;
+          }
+
+          const id = outcome.external_id!;
+          const url = outcome.external_url ?? "";
+          lastPushedUrl = url || lastPushedUrl;
+          recordDestinationOutcome(
+            outcome.spec.platform as "YouTube" | "Kaltura" | "GoogleDrive",
+            id,
+            url,
+          );
+          const sourcedFrom = outcome.spec.platform === "Kaltura" && kalturaSource.chosenOverPrimary
+            ? ` (sourced from ${kalturaSource.platform})`
+            : "";
+          onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${label} ${url}${sourcedFrom}`, { video_id: video.id });
+
+          if (outcome.spec.platform === "YouTube") {
+            // We know what privacy we asked for — no round-trip needed. A
+            // later Check Status refreshes it if YouTube disagrees.
+            setPrivacy(id, normalisePrivacy(attrs.privacy_status));
+            void ingestYouTubeRowAfterPublish(id);
+          }
+        },
       });
 
-      const outcome = report.results[0];
-      if (outcome.status !== "pushed") {
-        throw new Error(outcome.error ?? outcome.skipReason ?? "Upload did not complete");
-      }
-      const result = { videoId: outcome.external_id!, videoUrl: outcome.external_url ?? "" };
-
-      recordDestinationOutcome("YouTube", result.videoId, result.videoUrl);
-      // Cache privacy now — we know what we asked for, no need for a round-trip.
-      // A later Check Status will refresh it if YouTube's privacy differs.
-      setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
-      onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${result.videoUrl}`, { video_id: video.id });
       onMutated();
-      void ingestYouTubeRowAfterPublish(result.videoId);
-      firePostProcessingRules(loadPostProcessingRules(), true, video, result.videoUrl);
+
+      if (!report.anyPushed) {
+        // Nothing landed. The aggregate has already moved the record to
+        // Failed via record_destination_result when every declared
+        // destination failed, so mark_failed is best-effort here — it
+        // covers the case where no outcome was recorded at all (e.g. every
+        // target skipped).
+        const detail = report.results
+          .map(r => `${destinationLabel(r.spec)}: ${r.error ?? r.skipReason ?? "not attempted"}`)
+          .join("; ");
+        try {
+          videoStore.mutate(video.id, (r) => r.mark_failed(JSON.stringify({ error_message: detail })));
+        } catch { /* already Failed, or not in a state that accepts it */ }
+        setPublishError(classifyPublishError(detail));
+        firePostProcessingRules(loadPostProcessingRules(), false, video, undefined, detail);
+        onMutated();
+        return;
+      }
+
+      if (report.failed > 0) {
+        // Partial publish: the record is Published (ADR-077
+        // §Decisions-resolved #1) but the operator needs to know which
+        // destination still needs attention.
+        const failedLabels = report.results
+          .filter(r => r.status === "failed")
+          .map(r => `${destinationLabel(r.spec)}: ${r.error}`)
+          .join("; ");
+        setPublishError(classifyPublishError(`Published, but ${report.failed} destination(s) failed — ${failedLabels}`));
+      }
+
+      firePostProcessingRules(loadPostProcessingRules(), true, video, lastPushedUrl);
     } catch (err) {
+      // The executor absorbs per-destination failures, so reaching here
+      // means something outside a push broke.
       const msg = err instanceof Error ? err.message : String(err);
-      videoStore.mutate(video.id, (r) =>
-        r.mark_failed(JSON.stringify({ error_message: msg }))
-      );
+      try {
+        videoStore.mutate(video.id, (r) => r.mark_failed(JSON.stringify({ error_message: msg })));
+      } catch { /* not in a state that accepts it */ }
       onEvent(`VideoPublishFailed: "${video.title}"${dateTag(video.recorded_at)} — ${msg}`, { video_id: video.id });
       setPublishError(classifyPublishError(msg));
       onMutated();
@@ -2359,6 +2438,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   const seriesDriven = resolvedDests.provenance.source === "series";
   const noMatchNoFallback = resolvedDests.provenance.source === "no_match_no_fallback";
   const wantsYouTube = resolvedDests.destinations.some(d => d.platform === "YouTube");
+  /** ADR-077 §3 — the destinations the Publish button will actually push.
+   *  Excludes `Other`, which stays a manual checklist item. */
+  const automatedDests = resolvedDests.destinations.filter(isAutomatedDestination);
   const wantsKaltura = resolvedDests.destinations.some(d => d.platform === "Kaltura");
   const driveDests   = resolvedDests.destinations.filter((d): d is Extract<import("../lib/youtubeTitleAlign").DestinationSpec, { platform: "GoogleDrive" }> => d.platform === "GoogleDrive");
   const otherDests   = resolvedDests.destinations.filter((d): d is Extract<import("../lib/youtubeTitleAlign").DestinationSpec, { platform: "Other" }> => d.platform === "Other");
@@ -3810,12 +3892,35 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
 
           <div className="form-actions" style={{ flexWrap: "wrap" }}>
             <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginRight: 6 }}>Publish to:</span>
-            <button className="btn btn-sm btn-green" onClick={publishToYouTube}>
-              YouTube
+            {/* ADR-077 §3 — the primary action publishes every destination
+                the series declared, in order, each succeeding or failing on
+                its own. The per-platform buttons remain for pushing a
+                single target. */}
+            <button
+              className="btn btn-sm btn-green"
+              onClick={() => publishToDestinations()}
+              title={
+                automatedDests.length > 1
+                  ? `Publish to all ${automatedDests.length} declared destinations in sequence: ${automatedDests.map(destinationLabel).join(", ")}`
+                  : "Publish to the destination this record's series declares"
+              }
+            >
+              {automatedDests.length > 1
+                ? `All ${automatedDests.length} destinations`
+                : automatedDests.length === 1
+                  ? destinationLabel(automatedDests[0])
+                  : "No destination"}
             </button>
-            <button className="btn btn-sm btn-green" onClick={publishToKaltura} title="Phase 1: single destination per Publish click. Run again to add Kaltura after YouTube.">
-              Kaltura
-            </button>
+            {automatedDests.length > 1 && automatedDests.map((d, i) => (
+              <button
+                key={`only-${i}`}
+                className="btn btn-sm"
+                onClick={() => publishToDestinations([d])}
+                title={`Publish only to ${destinationLabel(d)}`}
+              >
+                {d.platform}
+              </button>
+            ))}
             <button className="btn btn-sm" onClick={() => { setShowPreview(false); setPublishAttrs(null); }}>
               Cancel
             </button>

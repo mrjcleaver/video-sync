@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { VideoRecordJSON } from "../lib/wasm";
 import { videoStore } from "../lib/store";
 import {
@@ -15,6 +15,11 @@ import {
 } from "../lib/backfill";
 import HelpTip from "./HelpTip";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
+import { resolveDestinations, isAutomatedDestination, destinationLabel } from "../lib/destinationResolver";
+import { loadProcessingRules } from "../lib/processingRules";
+import { getSeriesRegistryCached } from "../lib/seriesRegistryClient";
+import { executePublish } from "../lib/publish/execute";
+import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
 import { useCurrentActor, actorCommand } from "../lib/useCurrentActor";
 
 const CONNECTIONS_KEY = "video-sync:connections";
@@ -185,49 +190,84 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
       onNavigateToVideo?.(videoId, "publish");
     } catch { /* may already be in Publishing */ }
 
-    const uploadBody: Record<string, unknown> = {
-      refreshToken: ytCreds.refreshToken,
-      clientId: ytCreds.clientId,
-      clientSecret: ytCreds.clientSecret,
-      title: attrs.title ?? video.title,
-      description: attrs.description ?? video.description ?? "",
-      tags: attrs.tags ?? video.tags ?? [],
-      downloadUrl: video.download_url,
-      privacyStatus: attrs.privacy_status ?? profile.default_privacy,
-      recordedAt: video.recorded_at,
-    };
+    // ADR-077 §3 — resolve the destinations this record's series declares
+    // and push each through the shared executor, instead of posting
+    // straight to YouTube.
+    //
+    // This also fixes a broken path: /api/youtube/upload always responds
+    // text/event-stream, so the `await res.json()` this replaced could
+    // never parse a successful upload. Every bulk publish threw and marked
+    // the record Failed even when the video had gone up.
+    const destinations = resolveDestinations(
+      video,
+      getSeriesRegistryCached(),
+      loadProcessingRules(),
+      profile,
+    ).destinations.filter(isAutomatedDestination);
 
-    if (video.download_url?.startsWith("zoom://")) {
-      const z = loadZoomCreds();
-      uploadBody.zoomAccountId = z.accountId;
-      uploadBody.zoomClientId = z.clientId;
-      uploadBody.zoomClientSecret = z.clientSecret;
-    }
-
-    if (video.download_url?.startsWith("fireflies://")) {
-      const ff = loadFirefliesCreds();
-      uploadBody.firefliesApiKey = ff.apiKey;
+    if (destinations.length === 0) {
+      setStatus(`Skipped "${video.title}" — no automated destination declared`);
+      onEvent(`Backfill: skipped "${video.title}"${dateTag(video.recorded_at)} — its series declares no automated destination`, { video_id: videoId });
+      removeFromQueue(videoId);
+      setQueueState(loadQueue());
+      return;
     }
 
     try {
-      const res = await fetch("/api/youtube/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(uploadBody),
+      const report = await executePublish({
+        record: video,
+        destinations,
+        attrsFor: (spec) => ({
+          title: attrs.title ?? video.title,
+          description: withProvenanceFooter(
+            attrs.description ?? video.description,
+            recordProvenanceParts(video),
+            spec.platform,
+          ),
+          tags: attrs.tags ?? video.tags ?? [],
+          visibility: spec.platform === "YouTube"
+            ? (attrs.privacy_status ?? profile.default_privacy)
+            : spec.platform === "Kaltura" ? spec.visibility : undefined,
+        }),
+        sourceUrlFor: () => video.download_url,
+        creds: {
+          source: {
+            ...(video.download_url?.startsWith("zoom://") ? (() => {
+              const z = loadZoomCreds();
+              return { zoomAccountId: z.accountId, zoomClientId: z.clientId, zoomClientSecret: z.clientSecret };
+            })() : {}),
+            ...(video.download_url?.startsWith("fireflies://")
+              ? { firefliesApiKey: loadFirefliesCreds().apiKey }
+              : {}),
+          },
+          youtube: {
+            refreshToken: ytCreds.refreshToken,
+            clientId: ytCreds.clientId,
+            clientSecret: ytCreds.clientSecret,
+          },
+        },
+        onPhase: (phase) => setStatus(`"${video.title}": ${phase}`),
+        onOutcome: (outcome) => {
+          if (outcome.status !== "pushed") {
+            onEvent(`Backfill: ${destinationLabel(outcome.spec)} failed for "${video.title}"${dateTag(video.recorded_at)} — ${outcome.error ?? outcome.skipReason}`, { video_id: videoId });
+            return;
+          }
+          videoStore.mutate(videoId, r => r.recordDestinationResult(cmd({
+            platform: outcome.spec.platform,
+            external_id: outcome.external_id,
+            external_url: outcome.external_url,
+          })));
+        },
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error ?? `Upload failed (${res.status})`);
+      if (!report.anyPushed) {
+        throw new Error(report.results.map(r => `${destinationLabel(r.spec)}: ${r.error ?? r.skipReason}`).join("; "));
       }
 
-      const { videoId: ytId, videoUrl } = await res.json() as { videoId: string; videoUrl: string };
+      const ytOutcome = report.results.find(r => r.spec.platform === "YouTube" && r.status === "pushed");
+      const ytId = ytOutcome?.external_id ?? "";
+      const videoUrl = report.results.find(r => r.status === "pushed")?.external_url ?? "";
 
-      videoStore.mutate(videoId, r => r.mark_published(cmd({
-        destination_id: ytId,
-        destination_url: videoUrl,
-        platform: "YouTube",
-      })));
       // Cache privacy — we know what we uploaded with
       setPrivacy(ytId, normalisePrivacy(attrs.privacy_status ?? profile.default_privacy));
       onMutated();
@@ -538,6 +578,35 @@ function fmtMins(s: number): string {
 }
 
 function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQueue }: QueueTabProps) {
+  /** ADR-077 §3 — resolve each queued record's declared destinations once
+   *  so the queue can show the split before a run starts. Registry and
+   *  rules are read once, not per record. */
+  const destinationPreflight = useMemo(() => {
+    const registry = getSeriesRegistryCached();
+    const rules = loadProcessingRules();
+    const tally = new Map<string, number>();
+    let none = 0;
+    for (const entry of readyEntries) {
+      const video = videos.find(v => v.id === entry.video_id);
+      if (!video) continue;
+      const profile = profiles.find(p => p.id === entry.profile_id) ?? profiles[0] ?? null;
+      const dests = resolveDestinations(video, registry, rules, profile)
+        .destinations.filter(isAutomatedDestination);
+      if (dests.length === 0) { none++; continue; }
+      for (const d of dests) {
+        const label = destinationLabel(d);
+        tally.set(label, (tally.get(label) ?? 0) + 1);
+      }
+    }
+    return {
+      counts: [...tally.entries()]
+        .map(([label, count]) => ({ label, count }))
+        .sort((a, b) => b.count - a.count),
+      none,
+      total: readyEntries.length,
+    };
+  }, [videos, queue, profiles, readyEntries]);
+
   const videoMap = new Map(videos.map(v => [v.id, v]));
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -556,6 +625,29 @@ function QueueTab({ videos, queue, profiles, readyEntries, onPopulate, onClearQu
           {readyEntries.length} ready · {queue.length - readyEntries.length} deferred
         </span>
       </div>
+
+      {/* ADR-075 §Batch publish / ADR-077 §3 — per-destination pre-flight, so
+          an operator can gut-check "150 → YouTube, 82 → Kaltura" before
+          starting the orchestrator rather than discovering the split
+          afterwards. */}
+      {destinationPreflight.total > 0 && (
+        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <span>Will publish to:</span>
+          {destinationPreflight.counts.map(({ label, count }: { label: string; count: number }) => (
+            <span key={label} style={{ color: "var(--text)" }}>
+              {count} → {label}
+            </span>
+          ))}
+          {destinationPreflight.none > 0 && (
+            <span
+              style={{ color: "var(--yellow)" }}
+              title="These records' series declare no automated destination, so the orchestrator will skip them."
+            >
+              {destinationPreflight.none} with no destination
+            </span>
+          )}
+        </div>
+      )}
 
       {queue.length === 0 && (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
