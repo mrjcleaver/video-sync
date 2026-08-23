@@ -11,6 +11,7 @@ import type { VideoRecordJSON } from "./wasm";
 import { actorCommand } from "./useCurrentActor";
 import type { ActorState } from "./useCurrentActor";
 import { withProvenanceFooter } from "./publish/provenanceFooter";
+import { youtubeAdapter } from "./publish/adapters/youtube";
 
 export interface ShortsActionCtx {
   actorState: ActorState;
@@ -129,68 +130,38 @@ export async function publishShort(clip: VideoRecordJSON, ctx: ShortsActionCtx):
       return;
     }
 
-    const body: Record<string, unknown> = {
-      refreshToken: ytCreds.refreshToken,
-      clientId: ytCreds.clientId,
-      clientSecret: ytCreds.clientSecret,
-      title: shortTitle,
-      description,
-      tags: [...(clip.tags ?? []), "Shorts"],
-      downloadUrl: clip.download_url,
-      privacyStatus: "public",
-    };
-
-    const res = await fetch("/api/youtube/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+    // ADR-077 §3 — the upload and its SSE stream come from the shared
+    // YouTube adapter. This was a fourth verbatim copy of that reader
+    // loop, with its own weaker stream-died message.
+    const pushed = await youtubeAdapter.push({
+      record: clip,
+      spec: { platform: "YouTube", visibility: "public" },
+      attrs: {
+        title: shortTitle,
+        description,
+        tags: [...(clip.tags ?? []), "Shorts"],
+        visibility: "public",
+      },
+      sourceUrl: clip.download_url,
+      creds: {
+        source: {},
+        youtube: {
+          refreshToken: ytCreds.refreshToken,
+          clientId: ytCreds.clientId,
+          clientSecret: ytCreds.clientSecret,
+        },
+      },
     });
-    if (!res.ok) {
-      let errMsg = `Upload failed (${res.status})`;
-      try { const d = await res.json(); errMsg = d.error ?? errMsg; } catch { /* ignore */ }
-      throw new Error(errMsg);
-    }
-    if (!res.body) throw new Error("No response stream from upload endpoint");
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let eventType = "";
-    let result: { videoId: string; videoUrl: string } | null = null;
-    let lastPhase = "(none)";
-    outer: while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          const payload = JSON.parse(line.slice(6)) as Record<string, string>;
-          if (eventType === "progress" && payload.phase) {
-            lastPhase = payload.phase;
-          } else if (eventType === "complete") {
-            result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
-            break outer;
-          } else if (eventType === "error") {
-            throw new Error(payload.message ?? "Upload failed");
-          }
-          eventType = "";
-        }
-      }
-    }
-    if (!result) throw new Error(`Upload stream ended without complete event (last phase: ${lastPhase})`);
+    const result = { videoId: pushed.external_id, videoUrl: pushed.external_url };
 
     videoStore.mutate(clip.id, (r) => {
       r.add_location(cmd({ platform: "YouTube",
-        external_id: result!.videoId,
-        external_url: result!.videoUrl,
+        external_id: result.videoId,
+        external_url: result.videoUrl,
         role: "Destination" }));
       return r.mark_published(JSON.stringify({
-        destination_id: result!.videoId,
-        destination_url: result!.videoUrl,
+        destination_id: result.videoId,
+        destination_url: result.videoUrl,
       }));
     });
 

@@ -40,6 +40,11 @@ import { formatDateHover } from "../lib/dateHover";
 import { resolveContributingAccount } from "../lib/contributingAccount";
 import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility } from "../lib/destinationResolver";
 import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
+import { executePublish } from "../lib/publish/execute";
+import type { PublishCredentials } from "../lib/publish/types";
+import type { DestinationSpec } from "../lib/youtubeTitleAlign";
+
+type DestinationSpecPlatform = DestinationSpec["platform"];
 import type { ResolvedDestinations } from "../lib/destinationResolver";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
@@ -851,12 +856,9 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     const isZoomSource = video.download_url.startsWith("zoom://");
     const isLoomSource = /loom\.com\/(?:share|v)\//i.test(video.download_url);
     const isFirefliesSource = video.download_url.startsWith("fireflies://");
-    const isYouTubeSource = video.download_url.startsWith("youtube://");
     setUploadPhase(isZoomSource ? "Downloading from Zoom..." : isLoomSource ? "Downloading from Loom..." : isFirefliesSource ? "Downloading from Fireflies..." : "Uploading to YouTube...");
 
     try {
-      const zoomCreds = connections["Zoom"]?.credentials;
-      const ffCreds = connections["Fireflies"]?.credentials;
       // ADR-022 provenance footer — appended to the description so the
       // YouTube video itself records its catalog origin, independent of
       // the local store. ADR-077 §3: one builder, per-platform cap, and
@@ -867,112 +869,36 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
         "YouTube",
       );
 
-      const uploadBody: Record<string, unknown> = {
-        refreshToken: ytCreds.refreshToken,
-        clientId: ytCreds.clientId,
-        clientSecret: ytCreds.clientSecret,
-        title: attrs.title,
-        description: descriptionWithFooter,
-        tags: attrs.tags,
-        downloadUrl: video.download_url,
-        privacyStatus: attrs.privacy_status,
-        recordedAt: video.recorded_at || undefined,
-      };
-
+      // ADR-077 §3 — the upload, its SSE progress stream and the
+      // stream-died diagnostics now live in the YouTube adapter, driven
+      // by the shared executor. This handler keeps the orchestration:
+      // status transition, privacy cache, row ingest, post-rules.
       if (attrs.trim_start_seconds > 0) {
-        uploadBody.trimStartSeconds = attrs.trim_start_seconds;
         onEvent(`TrimApplied: "${video.title}"${dateTag(video.recorded_at)} — ${attrs.trim_start_seconds}s from start`, { video_id: video.id });
       }
 
-      if (isZoomSource && zoomCreds) {
-        uploadBody.zoomAccountId = zoomCreds.accountId;
-        uploadBody.zoomClientId = zoomCreds.clientId;
-        uploadBody.zoomClientSecret = zoomCreds.clientSecret;
-      }
-
-      if (isFirefliesSource && ffCreds?.apiKey) {
-        uploadBody.firefliesApiKey = ffCreds.apiKey;
-      }
-
-      if (isYouTubeSource && connections["YouTube"]?.credentials?.ytCookies) {
-        uploadBody.ytCookies = connections["YouTube"].credentials.ytCookies;
-      }
-
-      // SSE streaming — single persistent connection, no cross-instance job lookup
-      const res = await fetch("/api/youtube/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(uploadBody),
+      const report = await executePublish({
+        record: video,
+        destinations: [{ platform: "YouTube", visibility: attrs.privacy_status }],
+        attrsFor: () => ({
+          title: attrs.title,
+          description: descriptionWithFooter,
+          tags: attrs.tags,
+          visibility: attrs.privacy_status,
+          trimStartSeconds: attrs.trim_start_seconds,
+        }),
+        sourceUrlFor: () => video.download_url,
+        creds: buildPublishCredentials(video.download_url),
+        onPhase: setUploadPhase,
       });
 
-      if (!res.ok) {
-        let errMsg = `Upload failed (${res.status})`;
-        try { const d = await res.json(); errMsg = d.error ?? errMsg; } catch { /* ignore */ }
-        throw new Error(errMsg);
+      const outcome = report.results[0];
+      if (outcome.status !== "pushed") {
+        throw new Error(outcome.error ?? outcome.skipReason ?? "Upload did not complete");
       }
+      const result = { videoId: outcome.external_id!, videoUrl: outcome.external_url ?? "" };
 
-      if (!res.body) throw new Error("No response stream from upload endpoint");
-
-      type UploadResult = { videoId: string; videoUrl: string };
-      let result: UploadResult | null = null;
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let eventType = "";
-      // Track the last `progress` phase so we can name it in the
-      // error message when the stream ends mid-flight (typically a
-      // Cloud Run SIGKILL/OOM that cuts the SSE connection without
-      // emitting an `error` event).
-      let lastPhase = "(none)";
-
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            const payload = JSON.parse(line.slice(6)) as Record<string, string>;
-            if (eventType === "progress" && payload.phase) {
-              lastPhase = payload.phase;
-              setUploadPhase(payload.phase);
-            } else if (eventType === "complete") {
-              result = { videoId: payload.videoId, videoUrl: payload.videoUrl };
-              break outer;
-            } else if (eventType === "error") {
-              throw new Error(payload.message ?? "Upload failed");
-            }
-            eventType = "";
-          }
-        }
-      }
-
-      if (!result) {
-        // Stream closed cleanly but never delivered `complete` —
-        // server-side process died mid-flight. Most common cause is
-        // Cloud Run OOM-killing the container during an ffmpeg trim
-        // of a multi-GB recording (the source MP4 + trimmed output
-        // both live in /tmp which is RAM-backed). Surface the last
-        // phase + a targeted hint when we recognise the pattern.
-        const trimmed = /^Trimming /i.test(lastPhase);
-        const hint = trimmed
-          ? ` Likely Cloud Run OOM during ffmpeg trim — the recording is too large for the 4 GiB tmpfs + working set. Try publishing with trim=0 (no trim) or ask Ops to bump Cloud Run memory.`
-          : ` Server-side process exited before completing — check Cloud Run logs (filter component="ext:youtube-upload") around this time.`;
-        throw new Error(`Upload stream ended without a result. Last phase: "${lastPhase}".${hint}`);
-      }
-
-      videoStore.mutate(video.id, (r) =>
-        r.mark_published(
-          JSON.stringify({
-            destination_id: result!.videoId,
-            destination_url: result!.videoUrl,
-          })
-        )
-      );
+      recordDestinationOutcome("YouTube", result.videoId, result.videoUrl);
       // Cache privacy now — we know what we asked for, no need for a round-trip.
       // A later Check Status will refresh it if YouTube's privacy differs.
       setPrivacy(result.videoId, normalisePrivacy(attrs.privacy_status));
@@ -1092,81 +1018,39 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setUploadPhase(`Uploading to Kaltura${phaseSuffix}…`);
 
     try {
-      // ADR-022 provenance footer — the Kaltura entry's own description
-      // self-documents its catalog origin so anyone looking at the entry
-      // can trace it back, and so ADR-044's footer-fallback presence
-      // match works when referenceId gets cleared (operators can edit
-      // referenceId in Kaltura's UI).
+      // ADR-077 §3 — one code path for every destination. The provenance
+      // footer, credential assembly and error handling all live in shared
+      // code now; this handler keeps only the orchestration that is
+      // genuinely Kaltura-specific (source picking, the activity event).
       //
-      // ADR-077 §3: passing "Kaltura" here is the fix — this path used
-      // to truncate at 5000, YouTube's limit, which Kaltura does not
-      // share. Long descriptions were being cut for no reason.
-      const descriptionWithFooter = withProvenanceFooter(
-        attrs.description ?? video.description,
-        recordProvenanceParts(video),
-        "Kaltura",
-      );
-
-      const body: Record<string, unknown> = {
-        title: attrs.title ?? video.title,
-        description: descriptionWithFooter,
-        tags: attrs.tags ?? video.tags ?? [],
-        downloadUrl: picked.url,
-        // ADR-044: stamp the catalog UUID as the Kaltura entry's referenceId
-        // so future presence-batch sweeps can find this entry by referenceId
-        // alone, without depending on description footers (which operators
-        // may edit in Kaltura's UI).
-        referenceId: video.id,
-      };
-      if (kaltura?.partnerId && localAdminSecret) {
-        body.partnerId = kaltura.partnerId;
-        body.adminSecret = localAdminSecret;
-      }
-      // Forward credentials matching the PICKED source (not the primary
-      // download_url) so an upstream Fireflies override gets Fireflies
-      // creds even when the catalog record's source is YouTube.
-      if (picked.url.startsWith("zoom://")) {
-        const z = connections["Zoom"]?.credentials ?? {};
-        body.zoomAccountId = z.accountId;
-        body.zoomClientId = z.clientId;
-        body.zoomClientSecret = z.clientSecret;
-      }
-      if (picked.url.startsWith("fireflies://")) {
-        body.firefliesApiKey = connections["Fireflies"]?.credentials?.apiKey;
-      }
-      if (picked.url.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(picked.url)) {
-        const yt = connections["YouTube"]?.credentials ?? {};
-        // ConnectionsPanel stores this at credentials.ytCookies (the
-        // key registered on line 85 there). A prior read of yt.cookies
-        // silently dropped the cookies for every operator who'd
-        // pasted them, so yt-dlp then failed on YouTube's bot check.
-        if (yt.ytCookies) body.ytCookies = yt.ytCookies;
-      }
-
-      const res = await fetch("/api/kaltura/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      // Passing "Kaltura" to the footer builder is the fix for this path
+      // truncating at 5000 — YouTube's limit, which Kaltura doesn't share.
+      const spec = specForPlatform("Kaltura");
+      const report = await executePublish({
+        record: video,
+        destinations: [spec],
+        attrsFor: (s) => ({
+          title: attrs.title ?? video.title,
+          description: withProvenanceFooter(
+            attrs.description ?? video.description,
+            recordProvenanceParts(video),
+            s.platform,
+          ),
+          tags: attrs.tags ?? video.tags ?? [],
+          visibility: s.platform === "Kaltura" ? s.visibility : undefined,
+        }),
+        sourceUrlFor: () => picked.url,
+        creds: buildPublishCredentials(picked.url),
+        onPhase: setUploadPhase,
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error ?? `Kaltura upload failed (${res.status})`);
-      }
-      const { entryId, playerUrl } = await res.json() as { entryId: string; playerUrl: string };
 
-      // ADR-077 §1 — record a per-destination outcome. This replaces the
-      // old split between mark_published (from Publishing) and
-      // add_location (from anywhere else): recordDestinationResult is
-      // legal from both Publishing and Published, so a peer destination
-      // on an already-published record is now a real event-sourced
-      // publish instead of a silent location edit.
-      //
-      // Approved still falls back to add_location: the aggregate won't
-      // accept a destination result before a publish has been opened, and
-      // opening one here would flip the record to Published as a
-      // side-effect of a Kaltura click. ADR-077 §3's executor drives
-      // begin_publish with the resolved set, which is where that path
-      // gets unified deliberately.
+      const outcome = report.results[0];
+      if (outcome.status !== "pushed") {
+        throw new Error(outcome.error ?? outcome.skipReason ?? "Kaltura publish did not complete");
+      }
+      const entryId = outcome.external_id!;
+      const playerUrl = outcome.external_url ?? "";
+
       const recorded = recordDestinationOutcome("Kaltura", entryId, playerUrl);
       const sourcedFrom = picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : "";
       onEvent(
@@ -1221,6 +1105,69 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
   }
 
   /**
+   * ADR-077 §3 — assemble the credentials a push needs.
+   *
+   * Source-fetch creds are chosen by the URL scheme of the media we are
+   * actually fetching, NOT by the record's source_platform: an upstream
+   * Fireflies copy needs Fireflies creds even when the catalog row's
+   * source is YouTube. That distinction was already load-bearing in both
+   * the YouTube and Kaltura handlers and duplicated between them.
+   */
+  function buildPublishCredentials(sourceUrl: string): PublishCredentials {
+    let connections: Record<string, { credentials?: Record<string, string> }> = {};
+    try {
+      const raw = localStorage.getItem("video-sync:connections");
+      if (raw) connections = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    const source: PublishCredentials["source"] = {};
+    if (sourceUrl.startsWith("zoom://")) {
+      const z = connections["Zoom"]?.credentials ?? {};
+      source.zoomAccountId = z.accountId;
+      source.zoomClientId = z.clientId;
+      source.zoomClientSecret = z.clientSecret;
+    }
+    if (sourceUrl.startsWith("fireflies://")) {
+      source.firefliesApiKey = connections["Fireflies"]?.credentials?.apiKey;
+    }
+    if (sourceUrl.startsWith("youtube://") || /youtube\.com|youtu\.be/i.test(sourceUrl)) {
+      // ConnectionsPanel stores this at credentials.ytCookies. A prior
+      // read of yt.cookies silently dropped the cookies for every
+      // operator who'd pasted them, so yt-dlp then failed YouTube's bot
+      // check.
+      const yt = connections["YouTube"]?.credentials ?? {};
+      if (yt.ytCookies) source.ytCookies = yt.ytCookies;
+    }
+
+    const yt = connections["YouTube"]?.credentials;
+    const kal = connections["Kaltura"]?.credentials;
+    return {
+      source,
+      youtube: yt?.refreshToken && yt?.clientId && yt?.clientSecret
+        ? { refreshToken: yt.refreshToken, clientId: yt.clientId, clientSecret: yt.clientSecret }
+        : undefined,
+      // ADR-042: Kaltura is shared-only by default — the server falls
+      // through to the Admin-managed Secret Manager entry when there is no
+      // local override. Legacy localStorage stored the secret under
+      // `apiKey`; current UI uses `adminSecret`. Accept either.
+      kaltura: kal ? { partnerId: kal.partnerId, adminSecret: kal.adminSecret || kal.apiKey } : undefined,
+    };
+  }
+
+  /** The declared spec for one platform, falling back to a bare spec when
+   *  the record's series doesn't name it — a side-publish to a platform
+   *  the series never declared is still a legitimate operator action. */
+  function specForPlatform(platform: DestinationSpecPlatform): DestinationSpec {
+    const declared = resolvedDests.destinations.find(d => d.platform === platform);
+    if (declared) return declared;
+    switch (platform) {
+      case "Kaltura":     return { platform: "Kaltura", visibility: "unlisted" };
+      case "GoogleDrive": return { platform: "GoogleDrive", folder_id: "", share_scope: "inherit" };
+      default:            return { platform: "YouTube", visibility: "unlisted" };
+    }
+  }
+
+  /**
    * ADR-077 §1 — record that a destination landed.
    *
    * Returns true when the outcome went through the aggregate's
@@ -1270,29 +1217,22 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setUploading(true);
     setUploadPhase(`Uploading to Drive folder…`);
     try {
-      let connections: Record<string, { credentials?: Record<string, string> }> = {};
-      try { const raw = localStorage.getItem("video-sync:connections"); if (raw) connections = JSON.parse(raw); }
-      catch { /* ignore */ }
-      const body: Record<string, string> = { record_id: video.id, folder_id: folderId };
-      const yt = connections["YouTube"]?.credentials ?? {};
-      if (yt.ytCookies) body.ytCookies = yt.ytCookies;
-      const z = connections["Zoom"]?.credentials ?? {};
-      if (z.accountId) body.zoomAccountId = z.accountId;
-      if (z.clientId) body.zoomClientId = z.clientId;
-      if (z.clientSecret) body.zoomClientSecret = z.clientSecret;
-      const ff = connections["Fireflies"]?.credentials ?? {};
-      if (ff.apiKey) body.firefliesApiKey = ff.apiKey;
-
-      const res = await fetch("/api/drive/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      // ADR-077 §3 — through the shared executor, same as Kaltura.
+      const report = await executePublish({
+        record: video,
+        destinations: [{ platform: "GoogleDrive", folder_id: folderId, share_scope: shareScope as "inherit" | "org_restricted" | "anyone_with_link" }],
+        attrsFor: () => ({ title: video.title, description: video.description ?? "", tags: video.tags ?? [] }),
+        sourceUrlFor: () => video.download_url,
+        creds: buildPublishCredentials(video.download_url),
+        onPhase: setUploadPhase,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+      const outcome = report.results[0];
+      if (outcome.status !== "pushed") {
+        throw new Error(outcome.error ?? outcome.skipReason ?? "Drive publish did not complete");
       }
-      const { drive_file_id: fileId, web_view_link: link, bytes } = data as { drive_file_id: string; web_view_link: string; bytes?: number };
+      const fileId = outcome.external_id!;
+      const link = outcome.external_url ?? "";
+      const bytes = outcome.bytes;
 
       // ADR-077 §1 — same per-destination outcome path as Kaltura.
       recordDestinationOutcome("GoogleDrive", fileId, link);
