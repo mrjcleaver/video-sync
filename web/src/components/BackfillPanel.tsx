@@ -17,6 +17,7 @@ import HelpTip from "./HelpTip";
 import { setPrivacy, normalisePrivacy } from "../lib/youtubePrivacyCache";
 import { resolveDestinations, isAutomatedDestination, destinationLabel } from "../lib/destinationResolver";
 import { loadProcessingRules } from "../lib/processingRules";
+import { isBulkAutomationEnabled, getAutomationSettings, BULK_DISABLED_HINT } from "../lib/bulkAutomation";
 import { getSeriesRegistryCached } from "../lib/seriesRegistryClient";
 import { executePublish } from "../lib/publish/execute";
 import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
@@ -165,6 +166,14 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
       return;
     }
 
+    if (!isBulkAutomationEnabled()) {
+      // Flipped off mid-run — stop at this boundary rather than finishing
+      // the queue.
+      setStatus(BULK_DISABLED_HINT);
+      stopOrchestrator();
+      return;
+    }
+
     const videoId = tickRes.next_id!;
     const video = videos.find(v => v.id === videoId);
     if (!video) {
@@ -303,6 +312,13 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
   }, [videos, onEvent, onMutated]);
 
   function startOrchestrator() {
+    // Bulk automation kill switch. This orchestrator publishes videos
+    // unattended on a timer, so it is the single most consequential thing
+    // the switch gates.
+    if (!isBulkAutomationEnabled()) {
+      setStatus(BULK_DISABLED_HINT);
+      return;
+    }
     setRunning(true);
     runTick();
     intervalRef.current = setInterval(runTick, 5 * 60 * 1000); // 5 min
@@ -315,6 +331,13 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
   }
 
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
+
+  // Warm the kill-switch cache; the sync accessor reads disabled until it
+  // resolves, so Start stays unavailable for the first moment after load.
+  const [bulkEnabled, setBulkEnabled] = useState(false);
+  useEffect(() => {
+    void getAutomationSettings().then(s => setBulkEnabled(s.bulk_enabled));
+  }, []);
 
   const readyEntries = readyQueue(queue);
   const uploadsToday = serverState?.uploads_today ?? clientState.uploads_today;
@@ -336,13 +359,32 @@ export default function BackfillPanel({ videos, onEvent, onMutated, onNavigateTo
           <button className="btn btn-sm" onClick={onMutated} title="Refresh video data">
             ↻
           </button>
+          {/* Stop is never blocked — an operator must always be able to halt
+              a run in progress, whatever the kill switch says. */}
           <button
             className={`btn btn-sm ${running ? "btn-primary" : "btn-green"}`}
             onClick={running ? stopOrchestrator : startOrchestrator}
-            disabled={profiles.filter(p => p.enabled).length === 0}
+            disabled={
+              running
+                ? false
+                : profiles.filter(p => p.enabled).length === 0 || !bulkEnabled
+            }
+            title={
+              !running && !bulkEnabled
+                ? BULK_DISABLED_HINT
+                : running ? "Stop the timed orchestrator" : "Begin the timed orchestrator"
+            }
           >
             {running ? "⏹ Stop" : "▶ Start"}
           </button>
+          {!bulkEnabled && (
+            <span
+              style={{ fontSize: "0.7rem", color: "var(--yellow)" }}
+              title={BULK_DISABLED_HINT}
+            >
+              automation off
+            </span>
+          )}
         </div>
       </div>
 

@@ -26,6 +26,7 @@ import { findOrphanClips, runOrphanClipsRepair, type OrphanRepairProgressEvent }
 import { findDuplicateClusters, runCatalogDedupe, type DedupeProgressEvent } from "../lib/catalogDedupe";
 import { discoverOpusProjects, parseProjectIds, getOpusApiKey, findClipsMissingKeywords, refreshOpusKeywords, type DiscoverProgressEvent, type KeywordsRefreshProgressEvent } from "../lib/opusClipsDiscovery";
 import DescriptionSyncPanel from "./DescriptionSyncPanel";
+import { isBulkAutomationEnabled, getAutomationSettings, BULK_DISABLED_HINT } from "../lib/bulkAutomation";
 
 interface Props {
   open: boolean;
@@ -78,6 +79,8 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
   const [maxRecords, setMaxRecords] = useState(1);
   const [costCapUsd, setCostCapUsd] = useState(10);
   const [runState, setRunState] = useState<RunState>("idle");
+  /** Bulk automation kill switch, for the disabled state on Run catch-up. */
+  const [bulkEnabled, setBulkEnabled] = useState(false);
   const [rows, setRows] = useState<Record<string, RecordRow>>({});
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
   const [summary, setSummary] = useState<{ processed: number; costSpent: number; readyToPublish: number; capHit: boolean; jobTag: string; taggedCount: number } | null>(null);
@@ -640,7 +643,22 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
     }
   }
 
+  useEffect(() => {
+    void getAutomationSettings().then(a => setBulkEnabled(a.bulk_enabled));
+  }, []);
+
   async function start() {
+    // Bulk automation kill switch. Catch-up sweeps the catalog generating
+    // summaries and links — it mutates in bulk and spends LLM budget, so
+    // it is gated alongside the publish orchestrator. Unlike those, it is
+    // operator-triggered rather than timed, so the check is here at the
+    // click rather than on a tick.
+    if (!isBulkAutomationEnabled()) {
+      setLogLines(prev => [...prev, {
+        ts: new Date().toISOString(), level: "warn", text: BULK_DISABLED_HINT,
+      }]);
+      return;
+    }
     setRunState("running");
     setRows({});
     setOrderedIds([]);
@@ -770,7 +788,12 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
           {runState === "running" ? (
             <button className="btn btn-sm btn-red" onClick={cancel}>Cancel</button>
           ) : (
-            <button className="btn btn-sm btn-primary" onClick={start} disabled={eligible.length === 0}>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={start}
+              disabled={eligible.length === 0 || !bulkEnabled}
+              title={!bulkEnabled ? BULK_DISABLED_HINT : undefined}
+            >
               {runState === "idle" ? "Run catch-up" : "Run again"}
             </button>
           )}

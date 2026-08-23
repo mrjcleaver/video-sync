@@ -11,6 +11,7 @@
  * both operator-tunable prompts live in the same place.
  */
 
+import AutomationPanel from "../../../components/AutomationPanel";
 import ConnectionsPanel from "../../../components/ConnectionsPanel";
 import RulesPanel from "../../../components/RulesPanel";
 import ProcessingRulesPanel from "../../../components/ProcessingRulesPanel";
@@ -48,6 +49,7 @@ export default function ConfigPage() {
       <div id="connections" ref={connectionsRef}>
         <ConnectionsPanel open={showConnections} onToggle={() => setShowConnections(v => !v)} />
       </div>
+      <AutomationPanel />
       <RulesPanel
         isRunnerRunning={ruleRunner.isRunning}
         lastRun={ruleRunner.lastRun}

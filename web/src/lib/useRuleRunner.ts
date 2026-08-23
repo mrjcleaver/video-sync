@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { videoStore } from "./store";
 import { loadRules, runRules, type RuleAction } from "./rules";
 import { useCurrentActor, actorCommand } from "./useCurrentActor";
+import { isBulkAutomationEnabled, getAutomationSettings } from "./bulkAutomation";
 
 interface UseRuleRunnerOpts {
   intervalMs?: number;
@@ -34,6 +35,13 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const executeRules = useCallback(() => {
+    // Bulk automation kill switch. This runner mutates records
+    // unattended — scoping, approving and skipping on a 60s timer — so it
+    // is gated alongside bulk publish. Checked per execution rather than
+    // only at start, so flipping the switch off takes effect at the next
+    // tick without a reload.
+    if (!isBulkAutomationEnabled()) return;
+
     const rules = loadRules();
     if (rules.length === 0) return;
 
@@ -75,6 +83,10 @@ export function useRuleRunner(opts: UseRuleRunnerOpts = {}): UseRuleRunnerResult
     setLastRun(new Date());
     setIsRunning(false);
   }, [onEvent, onMutated, cmd]);
+
+  // Warm the kill-switch cache so the sync accessor is populated before
+  // the first tick fires.
+  useEffect(() => { void getAutomationSettings(); }, []);
 
   // Set up interval, pause when hidden
   useEffect(() => {
