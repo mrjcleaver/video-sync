@@ -38,7 +38,7 @@ import { getDescriptionConfigCached } from "../lib/descriptionConfig";
 import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
 import { resolveContributingAccount } from "../lib/contributingAccount";
-import { resolveDestinations, destinationLabel, isAutomatedDestination } from "../lib/destinationResolver";
+import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility } from "../lib/destinationResolver";
 import type { ResolvedDestinations } from "../lib/destinationResolver";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
@@ -3199,6 +3199,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                 {destinationsPreview.destinations.map((d, i) => {
                   const automated = isAutomatedDestination(d);
+                  // Automated means we push the media. Whether the declared
+                  // visibility comes with it is a separate question — Kaltura
+                  // and Drive uploads don't carry it, so say so rather than
+                  // letting a ✓ imply the whole declaration was honoured.
+                  const visibilityApplied = appliesDeclaredVisibility(d);
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}>
                       <span style={{ minWidth: 90, color: automated ? "var(--text)" : "var(--text-muted)" }}>
@@ -3207,6 +3212,11 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                       {!automated && (
                         <span title="This destination is not wired to an automated push. Publish shows a checklist marker; the operator must action it by hand." style={{ fontSize: "0.68rem", color: "var(--yellow)" }}>
                           manual
+                        </span>
+                      )}
+                      {automated && !visibilityApplied && (
+                        <span title="Publish uploads the media to this destination, but does not set the visibility shown above — set it on the platform by hand." style={{ fontSize: "0.68rem", color: "var(--yellow)" }}>
+                          set visibility by hand
                         </span>
                       )}
                     </div>
@@ -4173,15 +4183,16 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
           </button>
         )}
         {/* ADR-075 Phase 2 — Drive folder destination(s) from the series.
-             Manual for now (per §Follow-ups): opens the target folder in a
-             new tab, adds the location, records an audit event. The actual
-             file-copy step is operator-driven until the endpoint ships. */}
+             §Follow-up #4 shipped: this uploads the media server-side via
+             /api/drive/publish, records the location, and opens the folder so
+             the operator can eyeball the result. The one thing it does NOT do
+             is apply share_scope — the file inherits the folder's sharing. */}
         {(canPublish || status === "Published") && showDriveBtn && !alreadyOnDrive && driveDests.map((d, i) => (
           <button
             key={`drive-${i}`}
             className="btn btn-sm btn-green"
             onClick={() => publishToDriveFolder(d.folder_id, d.share_scope)}
-            title={`Open the target Drive folder + record the destination. Manual file copy required (share: ${d.share_scope}).`}
+            title={`Upload this video to the target Drive folder and record the destination. The file inherits the folder's sharing — declared share scope (${d.share_scope}) is not applied.`}
           >
             📁 Publish to Drive
           </button>

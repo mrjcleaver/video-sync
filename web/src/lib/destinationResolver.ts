@@ -138,13 +138,53 @@ export function destinationLabel(d: DestinationSpec): string {
 }
 
 /**
- * Whether this destination is automated by the tool (Publish button
- * pushes it) or a manual reminder (Publish button shows a checklist
- * marker but doesn't act). Kaltura and Drive are automated once their
- * endpoints ship — currently only YouTube is; Kaltura + Drive stay
- * "manual" (checklist marker) until their endpoints land per the
- * ADR-075 §Follow-ups.
+ * Whether the tool can push the media to this destination itself, or
+ * whether Publish can only show a checklist marker for an operator to
+ * action by hand.
+ *
+ * All three real platforms now have push endpoints, so all three are
+ * automated:
+ *   YouTube      → /api/youtube/upload
+ *   Kaltura      → /api/kaltura/upload  (ADR-037)
+ *   GoogleDrive  → /api/drive/publish   (ADR-075 §Follow-up #4)
+ *
+ * `Other` is the declared-but-not-wired escape hatch and stays manual
+ * by design — that's the whole point of the variant.
+ *
+ * This returned YouTube-only until 2026-08-23, long after the Kaltura
+ * and Drive endpoints shipped, so the Publish preview was labelling
+ * working automation "⚠ manual".
+ *
+ * NOTE: "automated" here means the MEDIA gets pushed. It does not mean
+ * the destination's declared visibility is applied — see
+ * appliesDeclaredVisibility below.
  */
 export function isAutomatedDestination(d: DestinationSpec): boolean {
+  return d.platform === "YouTube"
+    || d.platform === "Kaltura"
+    || d.platform === "GoogleDrive";
+}
+
+/**
+ * Whether pushing this destination also applies the visibility the
+ * series declared for it.
+ *
+ * Only YouTube does: /api/youtube/upload takes `privacyStatus` and sets
+ * it on the video. The other two push the media and leave visibility
+ * wherever the platform defaults put it:
+ *
+ *   Kaltura      — the upload body carries categoryIds but no access-control
+ *                  id, so a declared `public` / `members` / `unlisted` is
+ *                  never applied to the entry.
+ *   GoogleDrive  — /api/drive/publish sets no file permissions, so the file
+ *                  inherits the target folder's sharing. That happens to be
+ *                  correct for share_scope `inherit`, and silently wrong for
+ *                  `org_restricted` and `anyone_with_link`.
+ *
+ * Kept separate from isAutomatedDestination so the Publish preview can
+ * tell an operator "we'll upload it, you still have to set visibility"
+ * instead of implying the declaration was honoured end to end.
+ */
+export function appliesDeclaredVisibility(d: DestinationSpec): boolean {
   return d.platform === "YouTube";
 }
