@@ -10,6 +10,7 @@ import { videoStore } from "./store";
 import type { VideoRecordJSON } from "./wasm";
 import { actorCommand } from "./useCurrentActor";
 import type { ActorState } from "./useCurrentActor";
+import { withProvenanceFooter } from "./publish/provenanceFooter";
 
 export interface ShortsActionCtx {
   actorState: ActorState;
@@ -59,13 +60,18 @@ export async function publishShort(clip: VideoRecordJSON, ctx: ShortsActionCtx):
   const parentBlock = parentYtId
     ? `▶ Watch the full recording:\nhttps://youtu.be/${parentYtId}\n\n`
     : "";
-  const footerParts = [
-    `catalog:${clip.id}`,
-    `source:OpusClip:${clip.source_id}`,
-    clip.metadata_extra?.parent_source_id ? `parent:${clip.metadata_extra.parent_source_id}` : null,
-  ].filter(Boolean);
-  const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
-  const description = `${parentBlock}${provenanceFooter}`.slice(0, 5000);
+  // ADR-022 footer via the shared builder (ADR-077 §3). A clip's parts
+  // differ from a full record's: no upstream_links, but a `parent:`
+  // pointer back to the recording it was cut from.
+  const description = withProvenanceFooter(
+    parentBlock,
+    [
+      `catalog:${clip.id}`,
+      `source:OpusClip:${clip.source_id}`,
+      clip.metadata_extra?.parent_source_id ? `parent:${clip.metadata_extra.parent_source_id}` : null,
+    ],
+    "YouTube",
+  );
   const shortTitle = clip.title.includes("#Shorts") ? clip.title : `${clip.title} #Shorts`;
 
   ctx.onPublishingStart?.(clip.id);

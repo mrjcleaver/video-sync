@@ -39,6 +39,7 @@ import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
 import { resolveContributingAccount } from "../lib/contributingAccount";
 import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility } from "../lib/destinationResolver";
+import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
 import type { ResolvedDestinations } from "../lib/destinationResolver";
 import { useRouter } from "next/navigation";
 import { approveShort, rejectShort, publishShort as publishShortLib } from "../lib/shortsPublish";
@@ -856,17 +857,15 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     try {
       const zoomCreds = connections["Zoom"]?.credentials;
       const ffCreds = connections["Fireflies"]?.credentials;
-      // Build provenance footer (ADR-022) — appended to description so the
-      // YouTube video itself records its catalog origin, independent of local store.
-      const footerParts = [
-        `catalog:${video.id}`,
-        `source:${video.source_platform}:${video.source_id}`,
-      ];
-      for (const link of video.upstream_links ?? []) {
-        footerParts.push(`upstream:${link.platform}:${link.external_id}`);
-      }
-      const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
-      const descriptionWithFooter = `${attrs.description ?? ""}${provenanceFooter}`.slice(0, 5000);
+      // ADR-022 provenance footer — appended to the description so the
+      // YouTube video itself records its catalog origin, independent of
+      // the local store. ADR-077 §3: one builder, per-platform cap, and
+      // the footer survives truncation of an over-long description.
+      const descriptionWithFooter = withProvenanceFooter(
+        attrs.description,
+        recordProvenanceParts(video),
+        "YouTube",
+      );
 
       const uploadBody: Record<string, unknown> = {
         refreshToken: ytCreds.refreshToken,
@@ -1093,21 +1092,20 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     setUploadPhase(`Uploading to Kaltura${phaseSuffix}…`);
 
     try {
-      // ADR-022 provenance footer — mirrors publishToYouTube. The Kaltura
-      // entry's own description should self-document its catalog origin so
-      // anyone looking at the entry on Kaltura can trace it back, and so
-      // ADR-044's footer-fallback presence match works when referenceId
-      // gets cleared (operators can edit referenceId in Kaltura's UI).
-      const footerParts = [
-        `catalog:${video.id}`,
-        `source:${video.source_platform}:${video.source_id}`,
-      ];
-      for (const link of video.upstream_links ?? []) {
-        footerParts.push(`upstream:${link.platform}:${link.external_id}`);
-      }
-      const provenanceFooter = `\n\n---\nvideo-sync | ${footerParts.join(" | ")}`;
-      const rawDescription = attrs.description ?? video.description ?? "";
-      const descriptionWithFooter = `${rawDescription}${provenanceFooter}`.slice(0, 5000);
+      // ADR-022 provenance footer — the Kaltura entry's own description
+      // self-documents its catalog origin so anyone looking at the entry
+      // can trace it back, and so ADR-044's footer-fallback presence
+      // match works when referenceId gets cleared (operators can edit
+      // referenceId in Kaltura's UI).
+      //
+      // ADR-077 §3: passing "Kaltura" here is the fix — this path used
+      // to truncate at 5000, YouTube's limit, which Kaltura does not
+      // share. Long descriptions were being cut for no reason.
+      const descriptionWithFooter = withProvenanceFooter(
+        attrs.description ?? video.description,
+        recordProvenanceParts(video),
+        "Kaltura",
+      );
 
       const body: Record<string, unknown> = {
         title: attrs.title ?? video.title,
@@ -1156,32 +1154,27 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
       const { entryId, playerUrl } = await res.json() as { entryId: string; playerUrl: string };
 
-      // mark_published is only valid from Publishing (WASM aggregate). The
-      // preview-dialog flow goes through requestPublish first so the record
-      // is in Publishing — use mark_published there. Any other entry point
-      // (side-publish button on a Published or Approved-with-YouTube record)
-      // means we're appending a peer destination, not driving the
-      // status state machine — use add_location and leave status alone.
-      if (video.status === "Publishing") {
-        videoStore.mutate(video.id, (r) =>
-          r.mark_published(JSON.stringify({
-            destination_id: entryId,
-            destination_url: playerUrl,
-            destination_platform: "Kaltura",
-          })),
-        );
-        onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
-      } else {
-        videoStore.mutate(video.id, (r) =>
-          r.add_location(cmd({
-            platform: "Kaltura",
-            external_id: entryId,
-            external_url: playerUrl,
-            role: "Destination",
-          })),
-        );
-        onEvent(`Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : ""}`, { video_id: video.id });
-      }
+      // ADR-077 §1 — record a per-destination outcome. This replaces the
+      // old split between mark_published (from Publishing) and
+      // add_location (from anywhere else): recordDestinationResult is
+      // legal from both Publishing and Published, so a peer destination
+      // on an already-published record is now a real event-sourced
+      // publish instead of a silent location edit.
+      //
+      // Approved still falls back to add_location: the aggregate won't
+      // accept a destination result before a publish has been opened, and
+      // opening one here would flip the record to Published as a
+      // side-effect of a Kaltura click. ADR-077 §3's executor drives
+      // begin_publish with the resolved set, which is where that path
+      // gets unified deliberately.
+      const recorded = recordDestinationOutcome("Kaltura", entryId, playerUrl);
+      const sourcedFrom = picked.chosenOverPrimary ? ` (sourced from ${picked.platform})` : "";
+      onEvent(
+        recorded
+          ? `VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> Kaltura ${playerUrl}${sourcedFrom}`
+          : `Kaltura destination added: "${video.title}"${dateTag(video.recorded_at)} -> ${playerUrl}${sourcedFrom}`,
+        { video_id: video.id },
+      );
       onMutated();
       firePostProcessingRules(loadPostProcessingRules(), true, video, playerUrl);
     } catch (err) {
@@ -1227,6 +1220,49 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     return s;
   }
 
+  /**
+   * ADR-077 §1 — record that a destination landed.
+   *
+   * Returns true when the outcome went through the aggregate's
+   * per-destination command (status Publishing or Published), false when
+   * it fell back to a bare location edit because no publish is open on
+   * the record yet. Callers phrase their event text accordingly, so the
+   * activity log distinguishes "published to Kaltura" from "Kaltura
+   * destination attached".
+   */
+  function recordDestinationOutcome(
+    platform: "YouTube" | "Kaltura" | "GoogleDrive",
+    externalId: string,
+    externalUrl: string,
+  ): boolean {
+    const canRecord = video.status === "Publishing" || video.status === "Published";
+    if (canRecord) {
+      try {
+        videoStore.mutate(video.id, (r) =>
+          r.recordDestinationResult(cmd({
+            platform,
+            external_id: externalId,
+            external_url: externalUrl,
+          })),
+        );
+        return true;
+      } catch {
+        // Fall through to the location edit rather than losing the
+        // destination entirely — a rejected command must not mean the
+        // operator's successful upload goes unrecorded.
+      }
+    }
+    videoStore.mutate(video.id, (r) =>
+      r.add_location(cmd({
+        platform,
+        external_id: externalId,
+        external_url: externalUrl,
+        role: "Destination",
+      })),
+    );
+    return false;
+  }
+
   async function publishToDriveFolder(folderIdOrUrl: string, shareScope: string) {
     const folderId = extractDriveFolderId(folderIdOrUrl);
     const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
@@ -1258,14 +1294,8 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
       const { drive_file_id: fileId, web_view_link: link, bytes } = data as { drive_file_id: string; web_view_link: string; bytes?: number };
 
-      videoStore.mutate(video.id, (r) =>
-        r.add_location(cmd({
-          platform: "GoogleDrive",
-          external_id: fileId,
-          external_url: link,
-          role: "Destination",
-        })),
-      );
+      // ADR-077 §1 — same per-destination outcome path as Kaltura.
+      recordDestinationOutcome("GoogleDrive", fileId, link);
       const mb = bytes ? ` (${(bytes / (1024 * 1024)).toFixed(1)} MB)` : "";
       onEvent(`VideoPublishedToDrive: "${video.title}"${dateTag(video.recorded_at)} → ${link}${mb} (share: ${shareScope})`, { video_id: video.id });
       onMutated();
