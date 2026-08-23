@@ -16,11 +16,18 @@
  *
  * This module implements steps 1-3. Step 4 (per-record override) is
  * the Publish preview's job.
+ *
+ * ADR-077 §2 — the layering logic is pure: `resolveDestinationsWith`
+ * takes every input explicitly and touches no browser API, so server
+ * routes, cron jobs and MCP tools can resolve a record's destinations
+ * (see destinationResolverServer.ts). `resolveDestinations` keeps the
+ * original signature for client callers and supplies the registry
+ * config from the AppContext-warmed cache.
  */
 
 import type { VideoRecordJSON } from "./wasm";
 import type { DestinationSpec, SeriesRegistryEntry } from "./youtubeTitleAlign";
-import { getSeriesRegistryConfigCached } from "./seriesRegistryClient";
+import { getSeriesRegistryConfigCached, type SeriesRegistryConfig } from "./seriesRegistryClient";
 import type { ProcessingRule } from "./processingRules";
 import { matchesCriteria } from "./rules";
 import type { BackfillProfile } from "./backfill";
@@ -48,6 +55,19 @@ function findMatchingSeries(title: string, registry: SeriesRegistryEntry[]): Ser
     } catch { /* malformed pattern — skip */ }
   }
   return null;
+}
+
+/** Every input the layering needs, passed explicitly. ADR-077 §2 —
+ *  keeping this a plain record is what makes the resolver callable
+ *  from a server route, where there is no localStorage to read rules
+ *  from and no warmed registry cache. */
+export interface ResolverInputs {
+  registry: SeriesRegistryEntry[];
+  rules: ProcessingRule[];
+  /** Backfill profile driving this publish, for the legacy
+   *  default_privacy fallback. null when no profile is in play. */
+  profile: BackfillProfile | null;
+  config: SeriesRegistryConfig;
 }
 
 export interface ResolvedDestinations {
@@ -81,6 +101,27 @@ export function resolveDestinations(
   rules: ProcessingRule[],
   profile: BackfillProfile | null,
 ): ResolvedDestinations {
+  return resolveDestinationsWith(record, {
+    registry,
+    rules,
+    profile,
+    config: getSeriesRegistryConfigCached(),
+  });
+}
+
+/**
+ * The pure layering core. Same rules as resolveDestinations, but every
+ * input is supplied by the caller, so this function has no dependency
+ * on localStorage, fetch, or the warmed registry cache.
+ *
+ * Server callers should go through destinationResolverServer.ts, which
+ * loads the inputs from FUSE and calls this.
+ */
+export function resolveDestinationsWith(
+  record: VideoRecordJSON,
+  inputs: ResolverInputs,
+): ResolvedDestinations {
+  const { registry, rules, profile, config } = inputs;
   let destinations: DestinationSpec[];
   let provenance: ResolvedDestinations["provenance"];
 
@@ -97,8 +138,7 @@ export function resolveDestinations(
     // (ADR-075 Phase 2 §Follow-up). When OFF, records not covered by
     // a series-with-destinations produce an empty destination set
     // and the publish UI hides.
-    const cfg = getSeriesRegistryConfigCached();
-    if (!cfg.youtube_fallback_when_no_series_match) {
+    if (!config.youtube_fallback_when_no_series_match) {
       destinations = [];
       provenance = { source: "no_match_no_fallback" };
     } else if (profile) {

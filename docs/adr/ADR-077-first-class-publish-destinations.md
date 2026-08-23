@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Proposed |
+| **Status** | Accepted — three decisions resolved 2026-08-23; §2 shipped, §1 next |
 | **Date** | 2026-08-23 |
 | **Deciders** | Engineering, Content Operations, Kaltura administrator (for §5's access-control mapping) |
 | **Supersedes** | — |
@@ -73,7 +73,7 @@ Two deliberate cost controls:
 - **`destination_id` / `destination_url` survive as derived read-only accessors** over the primary outcome (first `Pushed`, preferring YouTube for continuity). Only 24 sites across 6 files read them; none has to change.
 - **No migration script.** When `destination_outcomes` is empty, synthesise `Pushed` outcomes from existing `locations[]` entries with `role: Destination` on read. Idempotent, no backfill job, and it avoids repeating ADR-075 §Follow-up #5, which was specified as a one-off script and never built.
 
-`Published` continues to mean "at least one destination landed" (ADR-075's leaning, now committed — see §Open questions). A new derived `is_fully_published()` means "every declared non-`Other` outcome is `Pushed`", and that is what §6 measures.
+`Published` continues to mean "at least one destination landed" (ADR-075's leaning, now committed — see §Decisions resolved #1). A new derived `is_fully_published()` means "every declared non-`Other` outcome is `Pushed`", and that is what §6 measures.
 
 The `DestinationPublished` event discharges ADR-075 §Follow-up #7.
 
@@ -160,10 +160,31 @@ The measurement operators actually asked for: **declared minus landed**, per rec
 
 ---
 
+## Decisions resolved (2026-08-23)
+
+1. **A partial publish means `Published`.** Confirmed: `Published` continues to mean "at least
+   one destination landed", preserving every existing consumer. Because ADR-076 §3 makes
+   `Published` the gate for external chapter-site visibility, **§7 is therefore a dependency of
+   §1, not an optional finish** — the Viewer gate must move to per-destination
+   `observed_visibility` before a Drive-only publish can exist, or such a record would be
+   exposed to a public site with no public video behind it. §1 and §7 land in the same release.
+
+2. **The YouTube global default survives.** `destinationResolver.ts:65` keeps its YouTube
+   fallback so existing catalogues are unchanged; the registry-level
+   `youtube_fallback_when_no_series_match` toggle ships **off for new deployments**, so a
+   record matching no series produces an empty destination set there rather than an implicit
+   YouTube publish.
+
+3. **`Other` is excluded from the conformance denominator until it can be acknowledged.**
+   Counting a manual target that cannot be ticked off would keep every matching record
+   permanently incomplete. §6's conformance label states the exclusion explicitly ("2 of 2
+   automated destinations; 1 manual target not tracked") so it reads as a known gap rather than
+   a clean bill of health. It joins the denominator once Deferred #2 gives `Other` a
+   representable outcome.
+
+---
+
 ## Open questions
 
-1. **Does a partial publish mean `Published`?** §1 commits to yes — "at least one destination landed" — because it preserves every existing consumer. But that choice now carries a consequence it did not when ADR-075 raised it: ADR-076 §3 makes `Published` the gate for what an external chapter website can see, so a Drive-only publish would expose a record to a public site with no public video behind it. §7's amendment (gate on `observed_visibility`, not status) is the mitigation, which means **§7 is not optional if §1 lands as specified**. Confirmation needed from Content Operations.
-
-2. **Does the YouTube global default survive?** A record matching no series becomes a YouTube record by construction (`destinationResolver.ts:65`). The registry already carries a `youtube_fallback_when_no_series_match` toggle, so the machinery to disable it exists. Neutrality argues for defaulting to no destinations and making the operator choose; convenience argues for the status quo. Leaning: keep the default, flip the toggle off for new deployments.
-
-3. **Does a declared `Other` destination count in the conformance denominator?** If it does, a manual Vimeo target keeps every matching record permanently incomplete until someone ticks it off — which requires Deferred #2 first. If it does not, the checklist stops being a commitment and goes back to being a reminder. Leaning: count it, but only once the acknowledgement affordance exists; until then exclude it and say so in the conformance label.
+_None blocking. The three questions carried from ADR-075 are resolved above; Deferred #2
+(`Platform::Other`) is a design task, not an open question._
