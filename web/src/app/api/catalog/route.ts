@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import { join } from "path";
 import { withRequestLogging, serverLog } from "../../../lib/serverLogger";
 import { getActor } from "../../../lib/auth";
+import { readCatalog, writeCatalog, withLock, type CatalogStore } from "../../../lib/catalogStore";
 
 // ADR-035 Level 2 — server-side catalog. Records persisted as
 // WASM-serialised JSON strings, keyed by record id, with a sidecar
@@ -16,63 +17,6 @@ import { getActor } from "../../../lib/auth";
 // Persistence is currently ephemeral on Cloud Run (FUSE mount blocked
 // on IAM — ADR-035 Level 1). Clients re-push from localStorage on boot
 // after cold starts; same self-seeding pattern as data/rules.json.
-
-const CATALOG_FILE = join(process.cwd(), "data", "catalog.json");
-
-export interface CatalogStore {
-  records: Record<string, string>;
-  lastModified: Record<string, string>;
-}
-
-// In-process mutex. Node's event loop is single-threaded but the
-// read-merge-write cycle awaits between steps, so two concurrent
-// requests can interleave and overwrite each other. Serializing
-// ensures the bulk initial push from a fresh browser doesn't lose
-// records. (Limitation: across Cloud Run instances this lock is
-// per-instance — multi-instance race remains until ADR-035 Tier 2 SQLite.)
-let writeQueue: Promise<unknown> = Promise.resolve();
-function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = writeQueue.then(fn);
-  writeQueue = next.then(() => undefined, () => undefined);
-  return next;
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-export async function readCatalog(): Promise<CatalogStore> {
-  try {
-    const raw = await fs.readFile(CATALOG_FILE, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<CatalogStore>;
-    // Defensive: an out-of-band script could clobber these fields to
-    // the wrong type and every subsequent write would TypeError on
-    // property assignment. Coerce wrong-type values to {} and warn —
-    // the route then self-heals on the next successful write.
-    // See ADR-035; incident 2026-06-07 (`lastModified` clobbered to
-    // a string by a Python migration → all POSTs 500'd silently).
-    let records: Record<string, string> = {};
-    if (isPlainObject(parsed.records)) {
-      records = parsed.records as Record<string, string>;
-    } else if (parsed.records !== undefined) {
-      serverLog("warn", "api:catalog", "records-shape-corrupt", { actualType: typeof parsed.records, coercedTo: "{}" });
-    }
-    let lastModified: Record<string, string> = {};
-    if (isPlainObject(parsed.lastModified)) {
-      lastModified = parsed.lastModified as Record<string, string>;
-    } else if (parsed.lastModified !== undefined) {
-      serverLog("warn", "api:catalog", "lastModified-shape-corrupt", { actualType: typeof parsed.lastModified, coercedTo: "{}" });
-    }
-    return { records, lastModified };
-  } catch {
-    return { records: {}, lastModified: {} };
-  }
-}
-
-async function writeCatalog(store: CatalogStore) {
-  await fs.mkdir(join(process.cwd(), "data"), { recursive: true });
-  await fs.writeFile(CATALOG_FILE, JSON.stringify(store), "utf-8");
-}
 
 async function getHandler(req: NextRequest) {
   const store = await readCatalog();

@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { getSharedCredential } from "../../../../lib/sharedCredentials";
-import { readDescriptionConfig } from "../../description/config/route";
+import { readDescriptionConfig } from "../../../../lib/descriptionConfigServer";
 
 // google/gemini-2.0-flash-001 was retired upstream — OpenRouter returns
 // 404 "No endpoints found" for it. Default to the current Flash tier;

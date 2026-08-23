@@ -156,7 +156,12 @@ export function resolveDestinationsWith(
   // but only to the YouTube destination.
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (!matchesCriteria(record, rule.criteria)) continue;
+    // Arguments were swapped: the signature is (criteria, video). Passing the
+    // record as `criteria` meant every `if (c.<field>)` guard saw undefined,
+    // so the function fell through to `return true` for EVERY rule — each
+    // enabled rule's privacy_status applied to every record regardless of its
+    // criteria. Correcting the order restores criteria matching.
+    if (!matchesCriteria(rule.criteria, record)) continue;
     const v = rule.transforms.privacy_status;
     if (!v) continue;
     for (const d of destinations) {

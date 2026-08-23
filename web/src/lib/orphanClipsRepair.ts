@@ -15,6 +15,7 @@
  * imperative repair — no LLM cost, no network.
  */
 
+import type { ActorState } from "./useCurrentActor";
 import { videoStore } from "./store";
 import type { VideoRecordJSON } from "./wasm";
 import { actorCommand } from "./useCurrentActor";
@@ -108,7 +109,10 @@ export interface OrphanRepairProgressEvent {
  * CatchUpPanel can render it with the same UX vocabulary.
  */
 export async function runOrphanClipsRepair(
-  actorState: { actor?: { user_id: string; role: Role } | null },
+  // Was declared structurally narrower than what it forwards to
+  // repairOneOrphanClip, which needs the full ActorState. The only caller
+  // (CatchUpPanel) already passes one.
+  actorState: ActorState,
   onEvent: (ev: OrphanRepairProgressEvent) => void,
   log?: (msg: string, ctx?: Record<string, unknown>) => void,
 ): Promise<{ repaired: number; errors: number }> {

@@ -32,7 +32,7 @@ export interface RegionSet {
 
 export interface ExtractorOpts {
   /** Section codes to extract from. Default ["M", "C"]. */
-  sections?: Array<"M" | "L" | "T" | "C">;
+  sections?: ReadonlyArray<"M" | "L" | "T" | "C">;
   /** Seconds of padding before each highlight. Default 30. */
   radius_before_sec?: number;
   /** Seconds of padding after each highlight. Default 90. */
@@ -64,7 +64,7 @@ const SECTION_HEADINGS: Record<"M" | "L" | "T" | "C", RegExp[]> = {
  */
 export function extractHighlightTimestamps(
   markdown: string,
-  sections: Array<"M" | "L" | "T" | "C"> = ["M", "C"],
+  sections: ReadonlyArray<"M" | "L" | "T" | "C"> = ["M", "C"],
 ): Array<{ section: "M" | "L" | "T" | "C"; index: number; second: number }> {
   const out: Array<{ section: "M" | "L" | "T" | "C"; index: number; second: number }> = [];
   const wantSection = new Set(sections);

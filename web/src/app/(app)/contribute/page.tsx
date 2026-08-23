@@ -21,7 +21,7 @@ import { useCurrentActor } from "../../../lib/useCurrentActor";
 import { useRouter } from "next/navigation";
 
 export default function ContributePage() {
-  const { videos, addEvent, refreshVideos } = useApp();
+  const { videos, addEvent, refresh } = useApp();
   const actorState = useCurrentActor();
   const router = useRouter();
   const [chapter, setChapter] = useState("");
@@ -60,7 +60,7 @@ export default function ContributePage() {
       });
       setPastedTranscript("");
     }
-    void refreshVideos?.();
+    refresh();
     addEvent(`Contributed: ${ids.length} record${ids.length === 1 ? "" : "s"} by ${email}${chapter ? ` (${chapter})` : ""}`);
   }
 

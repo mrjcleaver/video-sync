@@ -53,7 +53,9 @@ interface AppContextValue {
   // Rule runner
   ruleRunner: {
     isRunning: boolean;
-    lastRun: number | null;
+    // useRuleRunner returns a Date and RulesPanel consumes a Date; only this
+    // declaration said number, so it broke at both ends.
+    lastRun: Date | null;
     matchCount: number;
     runNow: () => void;
   };

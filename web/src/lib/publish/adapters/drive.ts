@@ -14,25 +14,11 @@
  */
 
 import type { DestinationAdapter, PushRequest, PushResult } from "../types";
+import { extractDriveFolderId } from "../driveFolderId";
 
-/**
- * Series config sometimes stores a whole Drive folder URL where a bare id
- * is expected. Normalise both shapes.
- *
- * Mirrors extractDriveFolderId in the publish route — duplicated rather
- * than imported because that module is server-only (it pulls in node:fs
- * via the catalog route) and this adapter runs in the browser.
- */
-export function extractDriveFolderId(input: string): string {
-  const s = (input ?? "").trim();
-  if (!s) return "";
-  const m1 = s.match(/\/folders\/([A-Za-z0-9_-]{20,})/);
-  if (m1) return m1[1];
-  const m2 = s.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
-  if (m2) return m2[1];
-  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
-  return s;
-}
+// Re-exported so existing importers (and the adapter test) keep working.
+export { extractDriveFolderId };
+
 
 export const driveAdapter: DestinationAdapter = {
   platform: "GoogleDrive",

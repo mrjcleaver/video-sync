@@ -61,7 +61,9 @@ function fixtureStore() {
   return { records, lastModified };
 }
 
-vi.mock("../src/app/api/catalog/route", () => ({
+// readCatalog moved to lib/catalogStore (a route module may only export
+// handlers), so the mock follows it.
+vi.mock("../src/lib/catalogStore", () => ({
   readCatalog: vi.fn(async () => fixtureStore()),
 }));
 

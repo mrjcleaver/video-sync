@@ -40,7 +40,7 @@ const DEFAULT_CONFIG: DescriptionConfig = {
   show_notes_prompt: DEFAULT_SHOW_NOTES_PROMPT,
 };
 
-export async function readDescriptionConfig(): Promise<DescriptionConfig> {
+async function readDescriptionConfig(): Promise<DescriptionConfig> {
   try {
     const raw = await fs.readFile(CONFIG_FILE, "utf-8");
     const parsed = JSON.parse(raw) as Partial<DescriptionConfig>;

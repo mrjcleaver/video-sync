@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
-import { readCatalog } from "../../catalog/route";
+import { readCatalog } from "../../../../lib/catalogStore";
 import { downloadFromSource, type SourceCreds } from "../../../../lib/sourceDownload";
 import { getDrive } from "../../../../lib/drive";
 import { getSharedCredential } from "../../../../lib/sharedCredentials";
@@ -31,26 +31,11 @@ import {
   type DriveShareScope,
   type ObservedDriveScope,
 } from "../../../../lib/publish/driveShareScope";
+import { extractDriveFolderId } from "../../../../lib/publish/driveFolderId";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
-/**
- * Google Drive folder ids are 25+ chars of URL-safe base64. Series
- * config sometimes stores the whole "https://drive.google.com/drive/…
- * /folders/<id>" URL; this normalises both shapes to the bare id.
- */
-export function extractDriveFolderId(input: string): string {
-  const s = (input ?? "").trim();
-  if (!s) return "";
-  const m1 = s.match(/\/folders\/([A-Za-z0-9_-]{20,})/);
-  if (m1) return m1[1];
-  const m2 = s.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
-  if (m2) return m2[1];
-  // Bare-id fallback: alphanumeric + _ + - only, ≥ 20 chars.
-  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
-  return s; // leave anything else alone; Drive API will 404 loudly
-}
 
 interface Body {
   record_id?: string;

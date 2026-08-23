@@ -3,7 +3,7 @@ import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { captureBackup } from "../../../../lib/descriptionBackups";
 import { getActor } from "../../../../lib/auth";
 import { setArtifact } from "../../../../lib/driveArtifactStore";
-import { readCatalog } from "../../catalog/route";
+import { readCatalog } from "../../../../lib/catalogStore";
 import { generateAndStoreReference } from "../../../../lib/referenceRenderer";
 import type { VideoRecordJSON } from "../../../../lib/wasm";
 

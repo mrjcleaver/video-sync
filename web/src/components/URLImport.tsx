@@ -224,7 +224,11 @@ async function fetchDrive(id: string, raw: string): Promise<FetchedItem> {
 }
 
 interface Props {
-  onImported: () => void;
+  /** Called once after a batch of records is created, with the ids of the
+   *  records created. Handlers that don't need the ids can take no
+   *  arguments — the contribute page uses them to stamp contributor
+   *  attribution and apply a pasted transcript. */
+  onImported: (result: { ids: string[] }) => void;
   onEvent: (event: string, fields?: { video_id?: string }) => void;
 }
 
@@ -302,6 +306,7 @@ export default function URLImport({ onImported, onEvent }: Props) {
   function importSelected() {
     if (needsTosCheck && !tosAccepted) return;
     let count = 0;
+    const createdIds: string[] = [];
     for (const item of items) {
       if (!selected.has(item.id) || item.fetchError) continue;
       const sourcePlatform =
@@ -372,10 +377,11 @@ export default function URLImport({ onImported, onEvent }: Props) {
       : item.platform === "google-drive"  ? (item.drivePendingCurator ? "Drive (pending curator)" : "Google Drive")
       : item.platform;
       onEvent(`VideoIndexed: "${item.title}" (${platformLabel} import${transcriptNote})`);
+      createdIds.push(record.id());
       count++;
     }
     if (count > 0) {
-      onImported();
+      onImported({ ids: createdIds });
       setInput("");
       setItems([]);
       setSelected(new Set());

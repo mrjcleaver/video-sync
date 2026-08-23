@@ -18,7 +18,7 @@ import type { ClientActor as Actor, Role } from "./types/actor";
 export type { Role };
 export type { ClientActor as Actor } from "./types/actor";
 
-interface ActorState {
+export interface ActorState {
   actor: Actor | null;
   loading: boolean;
   error: string | null;

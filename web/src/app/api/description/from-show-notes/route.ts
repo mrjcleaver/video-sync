@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { getSharedCredential } from "../../../../lib/sharedCredentials";
-import { readDescriptionConfig } from "../config/route";
+import { readDescriptionConfig } from "../../../../lib/descriptionConfigServer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

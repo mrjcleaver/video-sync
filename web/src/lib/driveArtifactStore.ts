@@ -307,13 +307,14 @@ export async function deleteArtifact(record_id: string, kind: ArtifactKind): Pro
   metaCache.delete(record_id);
 }
 
-export interface WebhookArtifactBlock {
+/** Derived from ARTIFACT_KINDS rather than listed by hand: the hand-written
+ *  version stopped at the original four and never gained ADR-074's
+ *  youtube-snippet / reference / description-full, even though the builder
+ *  loop below emits every kind. The payload was already correct; only the
+ *  type was behind. */
+export type WebhookArtifactBlock = {
   folder: { drive_web_url?: string; drive_id: string };
-  transcript?: ArtifactRefForWebhook;
-  description?: ArtifactRefForWebhook;
-  summary?: ArtifactRefForWebhook;
-  chat?: ArtifactRefForWebhook;
-}
+} & Partial<Record<ArtifactKind, ArtifactRefForWebhook>>;
 
 export interface ArtifactRefForWebhook {
   drive_web_url?: string;

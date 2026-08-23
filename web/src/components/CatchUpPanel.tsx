@@ -1119,7 +1119,7 @@ export default function CatchUpPanel({ open, videos, onEvent, onClose, variant =
         )}
 
         {/* ADR-064-adjacent — YouTube description sync with backups. */}
-        <DescriptionSyncPanel videos={videos} onEvent={onEvent} />
+        <DescriptionSyncPanel videos={videos} onEvent={(msg, ctx) => onEvent?.(msg, ctx)} />
 
         {/* ADR-055 — YouTube title alignment. Fourth maintenance card.
             Rewrites undated YouTube-source titles to the dated form

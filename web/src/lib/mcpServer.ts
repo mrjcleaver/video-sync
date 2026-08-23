@@ -19,7 +19,7 @@
  * Notification frames (no `id` on the request) return no body.
  */
 
-import { readCatalog } from "../app/api/catalog/route";
+import { readCatalog } from "./catalogStore";
 import { getDrive } from "./drive";
 import type { Actor } from "./types/actor";
 import type { VideoRecordJSON } from "./wasm";

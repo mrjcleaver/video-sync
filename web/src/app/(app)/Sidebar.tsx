@@ -31,13 +31,13 @@ import { useCurrentActor } from "../../lib/useCurrentActor";
 
 const NAV = [
   { path: "/catalog",    label: "Catalog",    icon: "📚", badge: "catalog" as const, roles: ["Admin", "Publisher", "Viewer"] as const },
-  { path: "/overview",   label: "Overview",   icon: "📅", badge: null       as const, roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
-  { path: "/provenance", label: "Provenance", icon: "🔗", badge: null       as const, roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
-  { path: "/contribute", label: "Contribute", icon: "🎁", badge: null       as const, roles: ["Admin", "Publisher", "Contributor"] as const },
+  { path: "/overview",   label: "Overview",   icon: "📅", badge: null                , roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
+  { path: "/provenance", label: "Provenance", icon: "🔗", badge: null                , roles: ["Admin", "Publisher", "Contributor", "Viewer"] as const },
+  { path: "/contribute", label: "Contribute", icon: "🎁", badge: null                , roles: ["Admin", "Publisher", "Contributor"] as const },
   { path: "/import",     label: "Import",     icon: "⬇️", badge: "import"  as const, roles: ["Admin", "Publisher"] as const },
   { path: "/maintain",   label: "Maintain",   icon: "🧰", badge: "maintain" as const, roles: ["Admin", "Publisher"] as const },
-  { path: "/shorts",     label: "Shorts",     icon: "✂️", badge: null       as const, roles: ["Admin", "Publisher"] as const },
-  { path: "/config",     label: "Config",     icon: "⚙️", badge: null       as const, roles: ["Admin"] as const },
+  { path: "/shorts",     label: "Shorts",     icon: "✂️", badge: null                , roles: ["Admin", "Publisher"] as const },
+  { path: "/config",     label: "Config",     icon: "⚙️", badge: null                , roles: ["Admin"] as const },
 ] as const;
 
 export function Sidebar() {
@@ -184,7 +184,7 @@ export function Sidebar() {
             title="Preview the app as if you were a lower-role user. Reloads the page. Server ignores elevation attempts, so this can only demote."
           >
             {actorState.trueRole === "Admin" && <option value="Admin">Admin (you)</option>}
-            {actorState.trueRole !== "Viewer" && actorState.trueRole !== "Contributor" && (
+            {actorState.trueRole !== "Contributor" && (
               <option value="Publisher">{actorState.trueRole === "Publisher" ? "Publisher (you)" : "Publisher"}</option>
             )}
             <option value="Contributor">Contributor</option>

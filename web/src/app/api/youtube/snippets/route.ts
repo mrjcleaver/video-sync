@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging, serverLog } from "../../../../lib/serverLogger";
 import { setArtifact } from "../../../../lib/driveArtifactStore";
-import { readCatalog } from "../../catalog/route";
+import { readCatalog } from "../../../../lib/catalogStore";
 import type { VideoRecordJSON } from "../../../../lib/wasm";
 
 export const dynamic = "force-dynamic";

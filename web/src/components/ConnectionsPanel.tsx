@@ -290,7 +290,9 @@ export default function ConnectionsPanel({ open }: Props) {
   }
 
   async function confirmDeleteShared() {
-    if (!deleteSharedPlatform) return;
+    // Narrow to a shared-eligible platform: the state is a plain string, and
+    // only these have a shared vault entry to delete.
+    if (!deleteSharedPlatform || !isSharedPlatformName(deleteSharedPlatform)) return;
     setSavingShared(true);
     try {
       const res = await fetch(`/api/credentials/shared/${sharedPlatformKey(deleteSharedPlatform)}`, { method: "DELETE" });

@@ -87,7 +87,7 @@ describe("findDuplicateClusters", () => {
       rec({
         id: "has-links", source_id: "zoom-1", status: "Published",
         upstream_links: [
-          { platform: "Fireflies", relation: "SameEvent", external_id: "ff-1", video_id: null, linked_at: "2026-01-01T00:00:00Z", linked_by_actor_id: null, linked_by: "Auto", account_hint: null },
+          { platform: "Fireflies", relation: "SameEvent", external_id: "ff-1", video_id: null, linked_at: "2026-01-01T00:00:00Z", linked_by: "Auto", account_hint: null },
         ] as VideoRecordJSON["upstream_links"],
       }),
     ];

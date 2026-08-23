@@ -41,6 +41,7 @@ import { resolveContributingAccount } from "../lib/contributingAccount";
 import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility } from "../lib/destinationResolver";
 import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
 import { executePublish } from "../lib/publish/execute";
+import { extractDriveFolderId } from "../lib/publish/driveFolderId";
 import type { PublishCredentials } from "../lib/publish/types";
 import type { DestinationSpec } from "../lib/youtubeTitleAlign";
 
@@ -1191,15 +1192,6 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
    * side normalises both. Historical series entries that pasted the
    * full URL keep working without a migration.
    */
-  function extractDriveFolderId(input: string): string {
-    const s = (input ?? "").trim();
-    const m1 = s.match(/\/folders\/([A-Za-z0-9_-]{20,})/);
-    if (m1) return m1[1];
-    const m2 = s.match(/[?&]id=([A-Za-z0-9_-]{20,})/);
-    if (m2) return m2[1];
-    if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
-    return s;
-  }
 
   /**
    * ADR-077 §3 — assemble the credentials a push needs.

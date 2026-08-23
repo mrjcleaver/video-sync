@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withRequestLogging } from "../../../../../lib/serverLogger";
-import { readCatalog } from "../../../catalog/route";
+import { readCatalog } from "../../../../../lib/catalogStore";
 import { generateAndStoreReference } from "../../../../../lib/referenceRenderer";
 import type { VideoRecordJSON } from "../../../../../lib/wasm";
 

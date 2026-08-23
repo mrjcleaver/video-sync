@@ -100,7 +100,10 @@ async function handler(req: NextRequest) {
   // ingest. The contributor path uses auth=public and hits Drive
   // un-authenticated, so contributor identity doesn't matter here.
   if (authMode === "service_account") {
-    const actor = await getActor(req.headers).catch(() => null);
+    // getActor takes the Request, not its Headers — passing headers made it
+    // read `headers.headers.get(...)`, throw, and get swallowed by the catch
+    // below, so every service-account ingest 403'd regardless of role.
+    const actor = await getActor(req).catch(() => null);
     const role = actor?.role ?? "Viewer";
     if (role !== "Admin" && role !== "Publisher") {
       return NextResponse.json({ error: "service-account ingest requires Publisher role" }, { status: 403 });
