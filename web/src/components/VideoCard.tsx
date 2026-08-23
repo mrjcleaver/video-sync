@@ -38,7 +38,7 @@ import { getDescriptionConfigCached } from "../lib/descriptionConfig";
 import { showNotesToDescription } from "../lib/showNotesToDescription";
 import { formatDateHover } from "../lib/dateHover";
 import { resolveContributingAccount } from "../lib/contributingAccount";
-import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility } from "../lib/destinationResolver";
+import { resolveDestinations, destinationLabel, isAutomatedDestination, appliesDeclaredVisibility, withPreviewVisibilityOverride } from "../lib/destinationResolver";
 import { withProvenanceFooter, recordProvenanceParts } from "../lib/publish/provenanceFooter";
 import { executePublish } from "../lib/publish/execute";
 import { extractDriveFolderId } from "../lib/publish/driveFolderId";
@@ -1242,6 +1242,18 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       kaltura: kal ? { partnerId: kal.partnerId, adminSecret: kal.adminSecret || kal.apiKey } : undefined,
     };
   }
+
+  /** Whether this publish will touch YouTube at all — the privacy control
+   *  below governs YouTube and nothing else, so it hides when YouTube isn't
+   *  a target. Falls back to true when destinations haven't resolved yet,
+   *  preserving the pre-ADR-075 single-destination behaviour. */
+  const previewTargetsYouTube = destinationsPreview
+    ? destinationsPreview.destinations.some(d => d.platform === "YouTube")
+    : true;
+  /** Whether anything OTHER than YouTube is targeted, in which case the
+   *  per-platform caveat is worth stating. */
+  const previewHasNonYouTube = !!destinationsPreview
+    && destinationsPreview.destinations.some(d => d.platform !== "YouTube");
 
   /** The declared spec for one platform, falling back to a bare spec when
    *  the record's series doesn't name it — a side-publish to a platform
@@ -3245,7 +3257,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             </div>
           )}
           <div>
-            <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>Privacy (legacy field): </span>
+            <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>YouTube privacy (from rules): </span>
             <span>{attrsPreview.privacy_status}</span>
           </div>
           {destinationsPreview && (
@@ -3269,7 +3281,7 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}>
                       <span style={{ minWidth: 90, color: automated ? "var(--text)" : "var(--text-muted)" }}>
-                        {automated ? "✓" : "⚠"} {destinationLabel(d)}
+                        {automated ? "✓" : "⚠"} {destinationLabel(withPreviewVisibilityOverride(d, publishAttrs?.privacy_status))}
                       </span>
                       {!automated && (
                         <span title="This destination is not wired to an automated push. Publish shows a checklist marker; the operator must action it by hand." style={{ fontSize: "0.68rem", color: "var(--yellow)" }}>
@@ -3861,18 +3873,32 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
               }
             />
           </div>
-          <div className="form-field">
-            <label>Privacy</label>
-            <select
-              value={publishAttrs.privacy_status}
-              onChange={(e) => setPublishAttrs({ ...publishAttrs, privacy_status: e.target.value as PublishAttributes["privacy_status"] })}
-              style={{ width: "100%", fontSize: "0.75rem", padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
-            >
-              <option value="unlisted">Unlisted</option>
-              <option value="private">Private</option>
-              <option value="public">Public</option>
-            </select>
-          </div>
+          {/* This control sets YouTube's privacy and nothing else: Kaltura
+              takes its declared visibility and Drive its share scope, each in
+              that platform's own vocabulary. Labelling it plain "Privacy"
+              read as one setting for the whole publish, which it never was.
+              Hidden entirely when YouTube isn't a target, since it would
+              then govern nothing. */}
+          {previewTargetsYouTube && (
+            <div className="form-field">
+              <label>YouTube privacy</label>
+              <select
+                value={publishAttrs.privacy_status}
+                onChange={(e) => setPublishAttrs({ ...publishAttrs, privacy_status: e.target.value as PublishAttributes["privacy_status"] })}
+                style={{ width: "100%", fontSize: "0.75rem", padding: "6px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
+              >
+                <option value="unlisted">Unlisted</option>
+                <option value="private">Private</option>
+                <option value="public">Public</option>
+              </select>
+              {previewHasNonYouTube && (
+                <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: 2 }}>
+                  Applies to YouTube only — other destinations use the visibility
+                  their series declares, shown per row above.
+                </div>
+              )}
+            </div>
+          )}
           {/* Trim offset */}
           <div className="form-field">
             <label>Trim start (seconds)</label>

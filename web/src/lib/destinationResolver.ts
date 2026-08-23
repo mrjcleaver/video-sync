@@ -172,6 +172,27 @@ export function resolveDestinationsWith(
   return { destinations, provenance };
 }
 
+/**
+ * Apply the Publish preview's privacy override — ADR-075's layer-4
+ * per-record override.
+ *
+ * It applies to YouTube ONLY. Kaltura keeps its declared visibility and
+ * Drive its share scope, because each platform has its own vocabulary and
+ * the preview offers a YouTube enum. Exported so the preview can show what
+ * will actually be pushed rather than what the series declared — those two
+ * disagreed on screen while a single "Privacy" control implied it governed
+ * the whole publish.
+ */
+export function withPreviewVisibilityOverride(
+  d: DestinationSpec,
+  youtubePrivacy: string | undefined,
+): DestinationSpec {
+  if (d.platform === "YouTube" && youtubePrivacy) {
+    return { ...d, visibility: youtubePrivacy as typeof d.visibility };
+  }
+  return d;
+}
+
 /** Format a DestinationSpec for a compact single-line label. */
 export function destinationLabel(d: DestinationSpec): string {
   switch (d.platform) {

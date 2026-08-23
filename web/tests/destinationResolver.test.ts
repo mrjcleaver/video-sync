@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isAutomatedDestination, appliesDeclaredVisibility, destinationLabel } from "../src/lib/destinationResolver";
+import {
+  isAutomatedDestination,
+  appliesDeclaredVisibility,
+  destinationLabel,
+  withPreviewVisibilityOverride,
+} from "../src/lib/destinationResolver";
 import type { DestinationSpec } from "../src/lib/youtubeTitleAlign";
 
 const YOUTUBE: DestinationSpec = { platform: "YouTube", visibility: "public" };
@@ -64,5 +69,40 @@ describe("destinationLabel", () => {
     expect(destinationLabel(KALTURA)).toBe("Kaltura (members)");
     expect(destinationLabel(DRIVE)).toBe("Drive folder (org_restricted)");
     expect(destinationLabel(OTHER)).toBe("Vimeo (manual)");
+  });
+});
+
+describe("withPreviewVisibilityOverride — the preview's privacy control", () => {
+  it("overrides YouTube's visibility", () => {
+    expect(withPreviewVisibilityOverride(YOUTUBE, "private"))
+      .toMatchObject({ platform: "YouTube", visibility: "private" });
+  });
+
+  it("leaves Kaltura's declared visibility alone", () => {
+    // The preview offers a YouTube enum; Kaltura's vocabulary is
+    // public/members/unlisted and its value comes from the series.
+    expect(withPreviewVisibilityOverride(KALTURA, "private"))
+      .toMatchObject({ platform: "Kaltura", visibility: "members" });
+  });
+
+  it("leaves Drive's share scope alone", () => {
+    expect(withPreviewVisibilityOverride(DRIVE, "private"))
+      .toMatchObject({ platform: "GoogleDrive", share_scope: "org_restricted" });
+  });
+
+  it("leaves Other alone", () => {
+    expect(withPreviewVisibilityOverride(OTHER, "private")).toEqual(OTHER);
+  });
+
+  it("is a no-op when no override is set", () => {
+    expect(withPreviewVisibilityOverride(YOUTUBE, undefined)).toEqual(YOUTUBE);
+  });
+
+  it("does not mutate the input spec", () => {
+    // Specs come from the cached series registry; writing through would
+    // silently repoint every future publish for that series.
+    const spec = { ...YOUTUBE };
+    withPreviewVisibilityOverride(spec, "private");
+    expect(spec.visibility).toBe("public");
   });
 });
