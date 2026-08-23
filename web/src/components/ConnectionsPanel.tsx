@@ -102,6 +102,19 @@ const PLATFORMS: PlatformInfo[] = [
       // the user-facing label "Admin Secret". Legacy local-storage entries
       // wrote this under `apiKey` — handlers accept either form.
       { key: "adminSecret", label: "Admin Secret", type: "password", placeholder: "Your Kaltura Admin Secret", required: true },
+      // ADR-077 §5 — access-control profile ids, so a series declaring
+      // `visibility: members` can be applied to the Kaltura entry rather
+      // than silently ignored. The ids are partner-specific integers from
+      // KMC → Settings → Access Control; there is no universal mapping,
+      // which is why they have to be configured rather than inferred.
+      //
+      // Optional: leave blank and Kaltura entries keep taking the
+      // partner's default profile, which is the behaviour before this
+      // existed. Non-secret config, but it lives with the partnerId it
+      // belongs to rather than in a separate store for three integers.
+      { key: "accessControlPublic", label: "Access Control ID — public", type: "text", placeholder: "e.g. 42 — KMC → Settings → Access Control", required: false },
+      { key: "accessControlMembers", label: "Access Control ID — members", type: "text", placeholder: "Profile requiring a KMS login", required: false },
+      { key: "accessControlUnlisted", label: "Access Control ID — unlisted", type: "text", placeholder: "Profile reachable by link, not listed", required: false },
     ],
   },
   {
