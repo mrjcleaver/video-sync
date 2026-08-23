@@ -2292,39 +2292,6 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
     onEvent(`TitleEdited: "${oldTitle}"${dateTag(video.recorded_at)} → "${draft}"`, { video_id: video.id });
     onMutated();
     setEditingTitle(false);
-  }
-
-  /**
-   * Manual recorded_at override. Accepts either an ISO datetime or a
-   * bare `YYYY-MM-DD` from the date input; normalises to noon UTC on
-   * the given day when only a date was picked (an operator picking a
-   * date rarely means midnight in some timezone — noon UTC is the
-   * safest default that renders the same day in every viewer TZ).
-   * Clearing the field sets recorded_at back to null.
-   */
-  async function saveRecordedAtEdit() {
-    const draft = recordedAtDraft.trim();
-    setSavingRecordedAt(true);
-    let normalised: string | null = null;
-    if (draft) {
-      // <input type="datetime-local"> gives "YYYY-MM-DDTHH:MM"; type="date" gives "YYYY-MM-DD"
-      const bareDate = /^\d{4}-\d{2}-\d{2}$/.test(draft);
-      normalised = bareDate ? `${draft}T12:00:00Z` : new Date(draft).toISOString();
-    }
-    const previous = video.recorded_at ?? "unset";
-    try {
-      videoStore.mutate(video.id, (r) =>
-        r.update_metadata(actorCommand(actorState, { edits: { recorded_at: normalised } })),
-      );
-    } catch (err) {
-      onEvent(`RecordedAtEditFailed: "${video.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
-      setSavingRecordedAt(false);
-      return;
-    }
-    onEvent(`RecordedAtEdited: "${video.title}" ${previous} → ${normalised ?? "unset"}`, { video_id: video.id });
-    onMutated();
-    setEditingRecordedAt(false);
-    setSavingRecordedAt(false);
 
     if (pushToYouTube) {
       const ytLoc = (video.locations ?? []).find(l => l.platform === "YouTube" && l.role === "Destination" && l.external_id)
@@ -2377,6 +2344,39 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
       }
     }
     setSavingTitle(false);
+  }
+
+  /**
+   * Manual recorded_at override. Accepts either an ISO datetime or a
+   * bare `YYYY-MM-DD` from the date input; normalises to noon UTC on
+   * the given day when only a date was picked (an operator picking a
+   * date rarely means midnight in some timezone — noon UTC is the
+   * safest default that renders the same day in every viewer TZ).
+   * Clearing the field sets recorded_at back to null.
+   */
+  async function saveRecordedAtEdit() {
+    const draft = recordedAtDraft.trim();
+    setSavingRecordedAt(true);
+    let normalised: string | null = null;
+    if (draft) {
+      // <input type="datetime-local"> gives "YYYY-MM-DDTHH:MM"; type="date" gives "YYYY-MM-DD"
+      const bareDate = /^\d{4}-\d{2}-\d{2}$/.test(draft);
+      normalised = bareDate ? `${draft}T12:00:00Z` : new Date(draft).toISOString();
+    }
+    const previous = video.recorded_at ?? "unset";
+    try {
+      videoStore.mutate(video.id, (r) =>
+        r.update_metadata(actorCommand(actorState, { edits: { recorded_at: normalised } })),
+      );
+    } catch (err) {
+      onEvent(`RecordedAtEditFailed: "${video.title}" — ${err instanceof Error ? err.message : String(err)}`, { video_id: video.id });
+      setSavingRecordedAt(false);
+      return;
+    }
+    onEvent(`RecordedAtEdited: "${video.title}" ${previous} → ${normalised ?? "unset"}`, { video_id: video.id });
+    onMutated();
+    setEditingRecordedAt(false);
+    setSavingRecordedAt(false);
   }
 
   const status = video.status;
