@@ -10,7 +10,7 @@
  * deserialized JSON before returning the store.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "fs";
 
 const ROUTE_MODULE = "../src/app/api/catalog/route";
@@ -35,6 +35,10 @@ function makePostReq(body: unknown): Request {
 describe("catalog/route readCatalog — shape guard (incident 2026-06-07)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    delete process.env.ALLOW_NO_IAP;
   });
 
   it("returns the parsed store unchanged when both fields are plain objects", async () => {
@@ -109,6 +113,11 @@ describe("catalog/route readCatalog — shape guard (incident 2026-06-07)", () =
       stored = String(data);
     });
     vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+    // POST requires an actor (ADR-065 role-scoped writes); GET degrades to
+    // unfiltered when auth is absent, so only this test needs dev-mode auth.
+    // ALLOW_NO_IAP=1 yields DEV_ACTOR (Admin) so the request reaches the
+    // shape-guard logic under test rather than short-circuiting at 401.
+    process.env.ALLOW_NO_IAP = "1";
     const mod = await importRoute();
 
     const req = makePostReq({

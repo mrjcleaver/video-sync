@@ -66,17 +66,39 @@ function err(id: number | string | null, code: number, message: string, data?: u
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
 
-/** Load the record list an actor is allowed to see, mirroring the
- *  role-scoped view /api/catalog GET applies.
+/** ADR-076 §3 — the only status a Viewer-role token may see. A
+ *  chapter-website consumer token SHALL be minted at Viewer, so this
+ *  is the gate that keeps in-flight and abandoned work off a public
+ *  site.
+ *
+ *  §3's first bullet also admits records whose YouTube / Kaltura
+ *  visibility is `public`. Per-destination privacy is NOT persisted on
+ *  the record — it's fetched live from the YouTube API and cached
+ *  client-side (see youtubePrivacyCache) — so `Published` is the only
+ *  server-authoritative signal available here. In practice it covers
+ *  the public case: a record reaches Published either by a successful
+ *  upload or by the ADR-051 ingest path, which auto-advances an
+ *  already-on-YouTube video straight to Published. */
+const VIEWER_VISIBLE_STATUSES: ReadonlySet<string> = new Set(["Published"]);
+
+/** Load the record list an actor is allowed to see.
+ *
+ *  ADR-076 §3 — Viewer-role callers see ONLY Published records.
+ *  Discovered / InScope / Approved / Publishing / Failed / ToRetry /
+ *  Skipped / Abandoned are operator-facing states and stay visible to
+ *  Publisher / Admin only. Contributor callers keep seeing every record
+ *  they own, at any status — it's their own submission.
  *
  *  ADR-076 §8.a — Viewer-role callers do NOT receive contributor_email
  *  on returned records. Publisher / Admin retain the field for
  *  curator triage. Contributor role continues to see their own
- *  record's email (it's their own address). Redaction happens once
- *  here so no per-tool code path can leak it. */
+ *  record's email (it's their own address).
+ *
+ *  Both rules are applied once here so no per-tool code path can
+ *  widen visibility or leak the email. */
 async function loadVisibleRecords(actor: Actor): Promise<VideoRecordJSON[]> {
   const store = await readCatalog();
-  const redactContributorEmail = actor.role === "Viewer";
+  const isViewer = actor.role === "Viewer";
   const out: VideoRecordJSON[] = [];
   for (const json of Object.values(store.records)) {
     try {
@@ -84,8 +106,9 @@ async function loadVisibleRecords(actor: Actor): Promise<VideoRecordJSON[]> {
       if (actor.role === "Contributor") {
         if (rec.contributor_email !== actor.email) continue;
       }
-      if (redactContributorEmail && rec.contributor_email) {
-        delete rec.contributor_email;
+      if (isViewer) {
+        if (!VIEWER_VISIBLE_STATUSES.has(rec.status)) continue;
+        if (rec.contributor_email) delete rec.contributor_email;
       }
       out.push(rec);
     } catch { /* skip malformed */ }
@@ -555,7 +578,12 @@ async function toolSearchRecords(actor: Actor, args: Record<string, unknown>) {
     });
     if (hits.length >= limit) break;
   }
-  return textResult(JSON.stringify({ query, count: hits.length, results: hits }, null, 2));
+  // ADR-076 §4 documents this array as `hits`, and the §7 contract
+  // harness asserts that name; the original ADR-066 implementation
+  // emitted `results`. Emit both — `hits` is the contract field,
+  // `results` is a deprecated alias kept for callers written against
+  // the pre-ADR-076 shape. Drop `results` once no client reads it.
+  return textResult(JSON.stringify({ query, count: hits.length, hits, results: hits }, null, 2));
 }
 
 async function toolGetShowNotes(actor: Actor, args: Record<string, unknown>) {

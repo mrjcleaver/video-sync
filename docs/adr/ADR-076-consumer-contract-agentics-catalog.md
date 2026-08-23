@@ -83,6 +83,25 @@ For the MVP consumer, video-sync commits to the following visibility rules — s
 
 Chapter-website tokens SHOULD be minted at Viewer role.
 
+**Implementation note (2026-08-23).** The Viewer gate is enforced in one place —
+`loadVisibleRecords` in `web/src/lib/mcpServer.ts` — which every tool routes
+through, so no per-tool path can widen it. Two deviations from the bullets above,
+both narrowing:
+
+- The `youtube-visibility = public` / `kaltura-visibility = public` bullet is NOT
+  evaluated. Per-destination privacy isn't persisted on the record; it's fetched
+  live from the YouTube API and cached client-side (`youtubePrivacyCache`), so
+  it isn't available to a server-side MCP call. `status = Published` is the only
+  server-authoritative signal, and it covers the public case in practice: a
+  record reaches Published either through a successful upload or through the
+  ADR-051 ingest path, which auto-advances an already-on-YouTube video straight
+  to Published.
+- This is stricter than the operator UI, where `GET /api/catalog` returns the
+  full store to a Viewer. That's a deliberate split, not drift: an IAP-gated
+  human Viewer is inside the org, whereas a Viewer-role bearer token is the
+  consumer contract's public surface. ADR-036's "Viewers can see the catalog"
+  continues to describe the UI path only.
+
 ### 4. Response-shape guarantees
 
 For each tool below, the consumer contract commits to the following field set (additive: additional fields may appear; listed fields will not disappear within a semver-minor release):
@@ -99,9 +118,13 @@ For each tool below, the consumer contract commits to the following field set (a
 ] }
 ```
 
-**`search_records` result**
+**`search_records` result** — the array is `hits`. The original ADR-066
+implementation named it `results`; the server now emits BOTH, `results` being a
+deprecated alias for callers written against the pre-ADR-076 shape. Consumers
+SHOULD read `hits`; `results` will be dropped once no client reads it.
 ```
-{ hits: [
+{ query: string, count: number,
+  hits: [
     { id: string,               // record uuid
       title: string,
       recorded_at: string | null,

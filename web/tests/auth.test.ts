@@ -60,7 +60,7 @@ describe("ADR-036 auth", () => {
       process.env.IAP_AUDIENCE = "/projects/123/global/backendServices/456";
       const { getActor } = await importAuth();
       const req = new Request("https://localhost");
-      await expect(getActor(req)).rejects.toThrow(/Missing X-Goog-IAP-JWT-Assertion/);
+      await expect(getActor(req)).rejects.toThrow(/Missing authentication/);
     });
   });
 
