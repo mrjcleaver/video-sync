@@ -17,3 +17,12 @@ web/.next/
 key.json
 *-key.json
 gcp-*.json
+# Runtime + build artifacts that were tracked by accident. Ignoring a
+# tracked file has no effect, so these were also untracked with
+# `git rm --cached` — the working copies are left in place.
+web/data/server.log
+web/data/server.log.1
+*.tsbuildinfo
+
+# Claude Code per-machine settings (local permission grants) — not shared.
+.claude/settings.local.json
