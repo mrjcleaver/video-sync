@@ -273,20 +273,48 @@ describe("drive adapter", () => {
     expect(extractDriveFolderId("abcdefghijklmnopqrstuv")).toBe("abcdefghijklmnopqrstuv");
   });
 
-  it("does not send a share scope, which is why visibility stays unapplied", async () => {
+  it("sends the declared share scope and surfaces the read-back", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       drive_file_id: "d-1", web_view_link: "https://drive/1", bytes: 1024,
+      share_scope_applied: true, observed_share_scope: "org_restricted",
     }));
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await driveAdapter.push({
-      record, spec: DRIVE, attrs: { title: "T", description: "D", tags: [] },
+      record,
+      spec: { platform: "GoogleDrive", folder_id: "folder-abcdefghijklmnopqrst", share_scope: "org_restricted" },
+      attrs: { title: "T", description: "D", tags: [] },
       sourceUrl: "zoom://1", creds,
     });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body).not.toHaveProperty("share_scope");
+    expect(body.share_scope).toBe("org_restricted");
     expect(out.bytes).toBe(1024);
+    // ADR-077 §5 — what the file actually has, not what we asked for.
+    expect(out.observed_visibility).toBe("org_restricted");
+    expect(out.visibility_applied).toBe(true);
+  });
+
+  it("reports a scope that landed but could not be applied", async () => {
+    // The upload succeeded; only the sharing didn't. Failing the whole
+    // publish here would be worse than reporting it accurately.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      drive_file_id: "d-2", web_view_link: "https://drive/2",
+      share_scope_applied: false, share_scope_error: "insufficient permissions",
+      observed_share_scope: "restricted",
+    })));
+
+    const out = await driveAdapter.push({
+      record,
+      spec: { platform: "GoogleDrive", folder_id: "folder-abcdefghijklmnopqrst", share_scope: "anyone_with_link" },
+      attrs: { title: "T", description: "D", tags: [] },
+      sourceUrl: "zoom://1", creds,
+    });
+
+    expect(out.external_id).toBe("d-2");
+    expect(out.visibility_applied).toBe(false);
+    expect(out.visibility_error).toBe("insufficient permissions");
+    expect(out.observed_visibility).toBe("restricted");
   });
 
   it("refuses a destination with no folder configured", async () => {

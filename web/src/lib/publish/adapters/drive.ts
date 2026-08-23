@@ -6,11 +6,11 @@
  * runtime service account (ADR-042). No client credentials for Drive
  * itself — only the source-fetch creds.
  *
- * Does NOT apply the declared share scope: the route sets no file
- * permissions, so the file inherits the folder's sharing. That is correct
- * for `share_scope: inherit` and silently wrong for `org_restricted` and
- * `anyone_with_link`. ADR-077 §5 closes it; until then
- * appliesDeclaredVisibility("GoogleDrive") is false.
+ * ADR-077 §5 — applies the declared share scope and reads the resulting
+ * permissions back. The route reports both separately: a scope that could
+ * not be applied does not fail the publish (the bytes are already in the
+ * folder), so the outcome records "landed, sharing not as declared" rather
+ * than pretending either that it worked or that the upload failed.
  */
 
 import type { DestinationAdapter, PushRequest, PushResult } from "../types";
@@ -54,6 +54,7 @@ export const driveAdapter: DestinationAdapter = {
       body: JSON.stringify({
         record_id: req.record.id,
         folder_id: folderId,
+        share_scope: req.spec.share_scope,
         ...req.creds.source,
       }),
     });
@@ -62,6 +63,9 @@ export const driveAdapter: DestinationAdapter = {
       web_view_link?: string;
       bytes?: number;
       error?: string;
+      share_scope_applied?: boolean;
+      share_scope_error?: string;
+      observed_share_scope?: string;
     };
     if (!res.ok) {
       throw new Error(data.error ?? `Drive publish failed (${res.status})`);
@@ -73,6 +77,9 @@ export const driveAdapter: DestinationAdapter = {
       external_id: data.drive_file_id,
       external_url: data.web_view_link ?? `https://drive.google.com/file/d/${data.drive_file_id}/view`,
       bytes: data.bytes,
+      observed_visibility: data.observed_share_scope,
+      visibility_applied: data.share_scope_applied,
+      visibility_error: data.share_scope_error,
     };
   },
 };

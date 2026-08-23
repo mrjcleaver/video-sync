@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted — three decisions resolved 2026-08-23; §1, §2, §3 shipped; §5 next (blocked on the Kaltura access-control mapping) |
+| **Status** | Accepted — three decisions resolved 2026-08-23; §1, §2, §3 shipped; §5 Drive half shipped, Kaltura half blocked on the KMC access-control mapping |
 | **Date** | 2026-08-23 |
 | **Deciders** | Engineering, Content Operations, Kaltura administrator (for §5's access-control mapping) |
 | **Supersedes** | — |
@@ -102,7 +102,36 @@ Both halves land together; read-back alone would verify a value nothing sets.
 - **Apply** — send an access-control id with the Kaltura upload; set file permissions per `share_scope` in `/api/drive/publish`. Note that Drive's current behaviour (inherit the folder's sharing) is correct by accident for `share_scope: inherit` and silently wrong for `org_restricted` and `anyone_with_link`.
 - **Read back** — consume the `accessControlId` that `api/kaltura/status/route.ts:85` already returns and discards; add a Drive permissions read. Generalise `youtubePrivacyCache` from "YouTube privacy" into a per-destination observed-visibility cache writing through to §1's `observed_visibility`.
 
-**External dependency:** Kaltura access-control profile ids are partner-specific. There is no universal `public` / `members` / `unlisted` → id mapping; the org's KMC administrator must supply ours, and it needs a home (the ADR-042 credential vault, or per-series config). This is the only part of this ADR blocked on someone outside engineering.
+**External dependency (Kaltura half).** Access-control profile ids are
+partner-specific integers, so there is no universal `public` / `members` /
+`unlisted` → id mapping. What is needed from whoever administers the KMC
+(**KMC → Settings → Access Control**, which lists each profile with its
+numeric id):
+
+| Needed | Why |
+|--------|-----|
+| id for **public** | set on entries a series declares `visibility: public` |
+| id for **members** | requires a KMS login / domain restriction |
+| id for **unlisted** | reachable by direct link, not listed in the catalog |
+| the partner's **default** profile id | what entries published so far have actually been getting — needed to interpret the read-back on existing entries, and for §6's conformance on records published before this shipped |
+| whether more than one **partnerId** is in play | the mapping is per-partner, so a sub-account needs its own set |
+
+Insertion points are already identified: `mediaEntry.accessControlId` in the
+`media.add` call of `/api/kaltura/upload` (one field), and the read-back is
+the `accessControlId` that `/api/kaltura/status` already returns and
+currently discards. Storage goes in the ADR-042 shared credential vault
+keyed by partnerId, since this is account-level config rather than
+per-series.
+
+**Drive half — shipped 2026-08-23.** `/api/drive/publish` applies the
+declared `share_scope` as a file permission and reads the resulting
+permissions back, returning both `share_scope_applied` and
+`observed_share_scope`. A permission failure does not fail the publish: the
+bytes are already in the folder, so the outcome records "landed, sharing not
+as declared" rather than claiming either success or upload failure. Mapping
+lives in `lib/publish/driveShareScope.ts` with apply and read-back in one
+module so they cannot drift. `appliesDeclaredVisibility("GoogleDrive")` is
+now true.
 
 On completion, `appliesDeclaredVisibility()` returns true for all three platforms and the preview's "set visibility by hand" note retires itself.
 

@@ -25,6 +25,12 @@ import { promises as fs, createReadStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { VideoRecordJSON } from "../../../../lib/wasm";
+import {
+  permissionForScope,
+  scopeFromPermissions,
+  type DriveShareScope,
+  type ObservedDriveScope,
+} from "../../../../lib/publish/driveShareScope";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -49,6 +55,9 @@ export function extractDriveFolderId(input: string): string {
 interface Body {
   record_id?: string;
   folder_id?: string;
+  /** ADR-077 §5 — the declared share scope. Omitted or "inherit" leaves
+   *  the file with whatever the target folder confers. */
+  share_scope?: DriveShareScope;
   // yt-dlp cookies for YouTube-sourced records — passed through the
   // same way /api/kaltura/upload accepts them.
   ytCookies?: string;
@@ -146,8 +155,61 @@ async function handler(req: NextRequest) {
 
     const fileId = uploadRes.data.id ?? "";
     const webViewLink = uploadRes.data.webViewLink ?? `https://drive.google.com/file/d/${fileId}/view`;
+
+    // Stage 3 — ADR-077 §5: apply the declared share scope. Before this,
+    // the route set no permissions, so a declared org_restricted or
+    // anyone_with_link was silently ignored.
+    //
+    // A permission failure does NOT fail the publish: the bytes are
+    // already in the folder, and reporting the upload as failed would be
+    // worse than reporting it as landed-but-not-shared. The response says
+    // which happened so the caller records the truth rather than assuming.
+    const declaredScope: DriveShareScope = body.share_scope ?? "inherit";
+    let scopeApplied = true;
+    let scopeError: string | undefined;
+    try {
+      const permission = permissionForScope(declaredScope, process.env.WS_DOMAIN);
+      if (permission) {
+        await drive.permissions.create({
+          fileId,
+          requestBody: permission,
+          supportsAllDrives: true,
+          // Drive emails everyone a new permission touches unless told
+          // not to. An archival copy landing in a chapter folder should
+          // not notify the org.
+          sendNotificationEmail: false,
+        });
+      }
+    } catch (err) {
+      scopeApplied = false;
+      scopeError = err instanceof Error ? err.message : String(err);
+      serverLog("warn", "api:drive/publish", "share-scope-failed", {
+        record_id: recordId, drive_file_id: fileId, share_scope: declaredScope, error: scopeError,
+      });
+    }
+
+    // Stage 4 — read the permissions back, so the caller records what the
+    // file actually has rather than what we asked for.
+    let observedScope: ObservedDriveScope | undefined;
+    try {
+      const got = await drive.files.get({
+        fileId,
+        fields: "permissions(type,role,domain)",
+        supportsAllDrives: true,
+      });
+      observedScope = scopeFromPermissions(got.data.permissions ?? []);
+    } catch (err) {
+      // Reading permissions needs a broader scope than writing the file;
+      // a service account without it still published successfully.
+      serverLog("warn", "api:drive/publish", "share-scope-readback-failed", {
+        record_id: recordId, drive_file_id: fileId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     serverLog("info", "api:drive/publish", "complete", {
       record_id: recordId, drive_file_id: fileId, bytes: uploadRes.data.size,
+      share_scope: declaredScope, share_scope_applied: scopeApplied, observed_scope: observedScope,
     });
     return NextResponse.json({
       ok: true,
@@ -155,6 +217,10 @@ async function handler(req: NextRequest) {
       web_view_link: webViewLink,
       filename,
       bytes: Number(uploadRes.data.size ?? 0),
+      share_scope: declaredScope,
+      share_scope_applied: scopeApplied,
+      share_scope_error: scopeError,
+      observed_share_scope: observedScope,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

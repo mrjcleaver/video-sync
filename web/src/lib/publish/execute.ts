@@ -44,6 +44,12 @@ export interface DestinationResult {
   external_url?: string;
   bytes?: number;
   error?: string;
+  /** ADR-077 §5 — what the platform's visibility actually is after the
+   *  push, where the adapter can read it back. */
+  observed_visibility?: string;
+  /** False when the media landed but the declared visibility didn't take. */
+  visibility_applied?: boolean;
+  visibility_error?: string;
   /** Why it was skipped, for the operator-facing summary. */
   skipReason?: string;
 }
@@ -116,6 +122,9 @@ export async function executePublish(
             external_id: pushed.external_id,
             external_url: pushed.external_url,
             bytes: pushed.bytes,
+            observed_visibility: pushed.observed_visibility,
+            visibility_applied: pushed.visibility_applied,
+            visibility_error: pushed.visibility_error,
           };
         } catch (err) {
           // One destination failing must not abort its peers — that is

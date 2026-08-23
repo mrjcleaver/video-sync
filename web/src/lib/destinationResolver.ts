@@ -209,22 +209,22 @@ export function isAutomatedDestination(d: DestinationSpec): boolean {
  * Whether pushing this destination also applies the visibility the
  * series declared for it.
  *
- * Only YouTube does: /api/youtube/upload takes `privacyStatus` and sets
- * it on the video. The other two push the media and leave visibility
- * wherever the platform defaults put it:
+ * YouTube and Drive do; Kaltura does not:
  *
+ *   YouTube      — /api/youtube/upload takes `privacyStatus` and sets it.
+ *   GoogleDrive  — /api/drive/publish applies the declared share_scope as a
+ *                  file permission and reads the result back (ADR-077 §5).
  *   Kaltura      — the upload body carries categoryIds but no access-control
- *                  id, so a declared `public` / `members` / `unlisted` is
- *                  never applied to the entry.
- *   GoogleDrive  — /api/drive/publish sets no file permissions, so the file
- *                  inherits the target folder's sharing. That happens to be
- *                  correct for share_scope `inherit`, and silently wrong for
- *                  `org_restricted` and `anyone_with_link`.
+ *                  id, so a declared `public` / `members` / `unlisted` never
+ *                  reaches the entry. The ids are partner-specific, so
+ *                  closing this needs the mapping from the org's KMC
+ *                  administrator — the one ADR-077 dependency outside
+ *                  engineering.
  *
  * Kept separate from isAutomatedDestination so the Publish preview can
  * tell an operator "we'll upload it, you still have to set visibility"
  * instead of implying the declaration was honoured end to end.
  */
 export function appliesDeclaredVisibility(d: DestinationSpec): boolean {
-  return d.platform === "YouTube";
+  return d.platform === "YouTube" || d.platform === "GoogleDrive";
 }

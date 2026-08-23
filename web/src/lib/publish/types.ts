@@ -80,6 +80,14 @@ export interface PushResult {
   external_url: string;
   /** Bytes transferred, when the endpoint reports it (Drive does). */
   bytes?: number;
+  /** ADR-077 §5 — the visibility the platform actually has after the
+   *  push, read back rather than assumed. Absent when the platform has no
+   *  read-back yet (Kaltura, pending its access-control mapping). */
+  observed_visibility?: string;
+  /** False when the push landed but the declared visibility could not be
+   *  applied. The media is there; the sharing is not what was asked for. */
+  visibility_applied?: boolean;
+  visibility_error?: string;
 }
 
 export interface DestinationAdapter {

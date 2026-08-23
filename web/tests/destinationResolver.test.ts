@@ -30,16 +30,18 @@ describe("isAutomatedDestination — can the tool push the media itself?", () =>
 });
 
 describe("appliesDeclaredVisibility — does the push honour the declared visibility?", () => {
-  it("is true only for YouTube, which sends privacyStatus with the upload", () => {
+  it("is true for YouTube, which sends privacyStatus with the upload", () => {
     expect(appliesDeclaredVisibility(YOUTUBE)).toBe(true);
+  });
+
+  it("is true for Drive, which applies share_scope as a file permission", () => {
+    // ADR-077 §5 (Drive half) — /api/drive/publish creates the permission
+    // and reads the result back.
+    expect(appliesDeclaredVisibility(DRIVE)).toBe(true);
   });
 
   it("is false for Kaltura — the upload body carries no access-control id", () => {
     expect(appliesDeclaredVisibility(KALTURA)).toBe(false);
-  });
-
-  it("is false for Drive — the file inherits the folder's sharing", () => {
-    expect(appliesDeclaredVisibility(DRIVE)).toBe(false);
   });
 
   it("is false for Other", () => {

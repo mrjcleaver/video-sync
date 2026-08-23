@@ -942,6 +942,24 @@ export default function VideoCard({ video, allVideos, broadcastPairs, onMutated,
             : "";
           onEvent(`VideoPublished: "${video.title}"${dateTag(video.recorded_at)} -> ${label} ${url}${sourcedFrom}`, { video_id: video.id });
 
+          // ADR-077 §5 — record what the platform's visibility actually
+          // is, where the adapter could read it back. Declared vs observed
+          // living side by side on the outcome is what makes §6's
+          // conformance check possible.
+          if (outcome.observed_visibility) {
+            try {
+              videoStore.mutate(video.id, (r) =>
+                r.recordObservedVisibility(JSON.stringify({
+                  platform: outcome.spec.platform,
+                  visibility: outcome.observed_visibility,
+                })),
+              );
+            } catch { /* no outcome for this platform yet — nothing to annotate */ }
+          }
+          if (outcome.visibility_applied === false) {
+            onEvent(`PublishVisibilityNotApplied: "${video.title}"${dateTag(video.recorded_at)} — ${label} landed but its declared visibility did not take: ${outcome.visibility_error ?? "unknown reason"}`, { video_id: video.id });
+          }
+
           if (outcome.spec.platform === "YouTube") {
             // We know what privacy we asked for — no round-trip needed. A
             // later Check Status refreshes it if YouTube disagrees.
