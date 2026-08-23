@@ -81,7 +81,8 @@ This directory contains the Architecture Decision Records for **video-sync** (a.
 | [ADR-073](ADR-073-zoom-share-to-youtube-pipeline.md) | Zoom-Share → YouTube Publication Pipeline | Proposed |
 | [ADR-074](ADR-074-canonical-artifact-bag-and-mcp-exposure.md) | Canonical Artifact Bag per Record, Fully MCP-Exposed | Proposed |
 | [ADR-075](ADR-075-series-driven-destinations.md) | Series-Driven Destinations + Per-Platform Visibility | Accepted — Phase 2 MVP shipped 2026-08-11; Phase 1 (interim default flip) rejected in favour of Phase 2 |
-| [ADR-076](ADR-076-consumer-contract-ruflo-catalog.md) | Consumer Contract — External Sites Reading the Show Notes Catalog | Proposed |
+| [ADR-076](ADR-076-consumer-contract-agentics-catalog.md) | Consumer Contract — External Sites Reading the Show Notes Catalog | Proposed |
+| [ADR-077](ADR-077-first-class-publish-destinations.md) | First-Class Publish Destinations — Per-Destination Outcomes | Proposed |
 
 ## ADR Format
 
